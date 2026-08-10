@@ -1,0 +1,3 @@
+resources:
+  - bases/terasky.com_xrdconversionconfigs.yaml
+  - bases/terasky.com_conversionwebhookservers.yaml

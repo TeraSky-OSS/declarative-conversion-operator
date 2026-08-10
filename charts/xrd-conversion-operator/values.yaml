@@ -1,0 +1,127 @@
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+image:
+  registry: ghcr.io
+  manager:
+    repository: vrabbi/xrd-conversion-operator
+    tag: ""
+  webhookServer:
+    repository: vrabbi/xrd-conversion-webhook-server
+    tag: ""
+  pullPolicy: IfNotPresent
+
+# CRDs are installed from the crds/ directory (Helm's built-in convention):
+# applied once at `helm install`, never touched by `helm upgrade` or
+# `helm uninstall`. This is the safest default for a CRD-heavy chart — no
+# accidental data loss from a schema change — at the cost of requiring a
+# manual `kubectl apply -f charts/xrd-conversion-operator/crds/` step
+# whenever the CRD schema changes across an upgrade. See NOTES.txt.
+crds:
+  install: true
+
+manager:
+  replicaCount: 1
+  leaderElection:
+    enabled: true
+  image: {}
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  extraArgs: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+
+rbac:
+  create: true
+serviceAccount:
+  create: true
+  name: ""
+  webhookServerName: ""
+  annotations: {}
+
+# Surface #1: this operator's OWN admission webhook validating
+# XRDConversionConfig/ConversionWebhookServer objects themselves at
+# kubectl-apply time. Served by the manager. Distinct from the
+# conversion-webhook-server surface below, which serves per-XRD CRD
+# conversion requests.
+admissionWebhook:
+  enabled: true
+  failurePolicy: Fail
+  certificate:
+    issuerRef: {}
+    duration: 8760h
+    renewBefore: 720h
+
+# cert-manager is a required external prerequisite for both webhook
+# surfaces. If issuerRef is left empty, the chart creates a bootstrap
+# self-signed ClusterIssuer so `helm install` works zero-config once
+# cert-manager itself is installed; production users should override this
+# with a real CA-backed Issuer/ClusterIssuer.
+certManager:
+  issuerRef:
+    name: ""
+    kind: ClusterIssuer
+  selfSigned:
+    enabled: true
+
+# Surface #2: the default ConversionWebhookServer instance. The chart
+# templates exactly ONE ConversionWebhookServer custom resource (never a
+# raw Deployment/Service/HPA/PDB directly) — the operator's own controller
+# reconciles that CR into the real child resources, so templating them here
+# too would fight the controller's reconciliation loop. Create additional
+# instances directly as ConversionWebhookServer CRs for scale-out/tenancy.
+conversionWebhookServer:
+  create: true
+  name: default
+  default: true
+  namespace: ""
+  replicaCount: 2
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  certificate:
+    issuerRef: {}
+    duration: 2160h
+    renewBefore: 360h
+  service:
+    type: ClusterIP
+    port: 443
+    annotations: {}
+  extraArgs: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    # Opt-in by value, not auto-detected: `.Capabilities` presence-checks
+    # silently no-op under `helm template` / offline GitOps rendering, so a
+    # chart that behaved differently depending on how it's rendered would
+    # be a worse default than a plain, explicit opt-in.
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}

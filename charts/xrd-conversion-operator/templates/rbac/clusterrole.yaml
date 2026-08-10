@@ -1,0 +1,67 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "xrd-conversion-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["apiextensions.crossplane.io"]
+    resources: ["compositeresourcedefinitions"]
+    verbs: ["get", "list", "patch", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["terasky.com"]
+    resources: ["conversionwebhookservers", "xrdconversionconfigs"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["terasky.com"]
+    resources: ["conversionwebhookservers/finalizers", "xrdconversionconfigs/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["terasky.com"]
+    resources: ["conversionwebhookservers/status", "xrdconversionconfigs/status"]
+    verbs: ["get", "patch", "update"]
+---
+# RBAC for cmd/webhook-server pods. Deliberately minimal and read-only:
+# each replica runs its own controller-runtime informers directly against
+# the API server so it can compile its own in-memory registry without
+# depending on the operator manager at request time. Nothing here grants
+# write access — the webhook-server binary never mutates any object.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "xrd-conversion-operator.fullname" . }}-webhook-server-role
+  labels:
+    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["terasky.com"]
+    resources: ["xrdconversionconfigs", "conversionwebhookservers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.crossplane.io"]
+    resources: ["compositeresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+{{- end }}

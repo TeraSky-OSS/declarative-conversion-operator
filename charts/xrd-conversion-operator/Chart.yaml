@@ -1,0 +1,16 @@
+apiVersion: v2
+name: xrd-conversion-operator
+description: Declarative conversion webhooks for Crossplane XRDs — configure hub/spoke version conversions without hand-writing a webhook.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/vrabbi/xrd-conversion-operator
+keywords:
+  - crossplane
+  - kubernetes-operator
+  - admission-webhook
+  - crd-conversion
+maintainers:
+  - name: vrabbi
+sources:
+  - https://github.com/vrabbi/xrd-conversion-operator

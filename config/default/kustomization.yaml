@@ -1,0 +1,13 @@
+# Kustomize overlay wiring the kubebuilder dev-loop together (make
+# install/deploy, envtest-based e2e). The Helm chart under charts/ is the
+# supported end-user installation path; this overlay exists for local
+# development and CI, and is the source of truth the chart's crds/ and
+# templates/rbac/ are kept in sync with.
+namespace: xrd-conversion-operator-system
+
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager
+  - ../webhook
+  - ../certmanager

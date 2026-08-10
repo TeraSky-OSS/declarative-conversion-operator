@@ -1,0 +1,67 @@
+{{- if .Values.conversionWebhookServer.create }}
+apiVersion: terasky.com/v1alpha1
+kind: ConversionWebhookServer
+metadata:
+  name: {{ .Values.conversionWebhookServer.name }}
+  labels:
+    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+spec:
+  default: {{ .Values.conversionWebhookServer.default }}
+  {{- if .Values.conversionWebhookServer.namespace }}
+  namespace: {{ .Values.conversionWebhookServer.namespace }}
+  {{- else }}
+  namespace: {{ .Release.Namespace }}
+  {{- end }}
+  serviceAccountName: {{ include "xrd-conversion-operator.webhookServerServiceAccountName" . }}
+  {{- if .Values.conversionWebhookServer.autoscaling.enabled }}
+  autoscaling:
+    minReplicas: {{ .Values.conversionWebhookServer.autoscaling.minReplicas }}
+    maxReplicas: {{ .Values.conversionWebhookServer.autoscaling.maxReplicas }}
+    targetCPUUtilizationPercentage: {{ .Values.conversionWebhookServer.autoscaling.targetCPUUtilizationPercentage }}
+  {{- else }}
+  replicas: {{ .Values.conversionWebhookServer.replicaCount }}
+  {{- end }}
+  image:
+    repository: {{ .Values.image.registry }}/{{ .Values.image.webhookServer.repository }}
+    tag: {{ .Values.image.webhookServer.tag | default .Chart.AppVersion | quote }}
+    pullPolicy: {{ .Values.image.pullPolicy }}
+  resources:
+    {{- toYaml .Values.conversionWebhookServer.resources | nindent 4 }}
+  service:
+    type: {{ .Values.conversionWebhookServer.service.type }}
+    port: {{ .Values.conversionWebhookServer.service.port }}
+    {{- with .Values.conversionWebhookServer.service.annotations }}
+    annotations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  certificate:
+    duration: {{ .Values.conversionWebhookServer.certificate.duration | quote }}
+    renewBefore: {{ .Values.conversionWebhookServer.certificate.renewBefore | quote }}
+    issuerRef:
+      {{- if .Values.conversionWebhookServer.certificate.issuerRef.name }}
+      name: {{ .Values.conversionWebhookServer.certificate.issuerRef.name }}
+      kind: {{ .Values.conversionWebhookServer.certificate.issuerRef.kind | default "ClusterIssuer" }}
+      {{- else if .Values.certManager.issuerRef.name }}
+      name: {{ .Values.certManager.issuerRef.name }}
+      kind: {{ .Values.certManager.issuerRef.kind | default "ClusterIssuer" }}
+      {{- else }}
+      name: {{ include "xrd-conversion-operator.fullname" . }}-selfsigned-issuer
+      kind: ClusterIssuer
+      {{- end }}
+  {{- if .Values.conversionWebhookServer.podDisruptionBudget.enabled }}
+  podDisruptionBudget:
+    minAvailable: {{ .Values.conversionWebhookServer.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

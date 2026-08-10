@@ -1,0 +1,24 @@
+{{- if .Values.admissionWebhook.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "xrd-conversion-operator.fullname" . }}-webhook-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "xrd-conversion-operator.fullname" . }}-webhook-cert
+  dnsNames:
+    - {{ include "xrd-conversion-operator.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "xrd-conversion-operator.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  duration: {{ .Values.admissionWebhook.certificate.duration | quote }}
+  renewBefore: {{ .Values.admissionWebhook.certificate.renewBefore | quote }}
+  issuerRef:
+    {{- if .Values.admissionWebhook.certificate.issuerRef.name }}
+    name: {{ .Values.admissionWebhook.certificate.issuerRef.name }}
+    kind: {{ .Values.admissionWebhook.certificate.issuerRef.kind | default "ClusterIssuer" }}
+    {{- else }}
+    name: {{ include "xrd-conversion-operator.fullname" . }}-selfsigned-issuer
+    kind: ClusterIssuer
+    {{- end }}
+{{- end }}

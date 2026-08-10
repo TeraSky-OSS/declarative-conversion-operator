@@ -1,0 +1,6 @@
+apiVersion: example.org/v1
+kind: Foo
+metadata:
+  name: sample1
+spec:
+  storageSize: "100"
