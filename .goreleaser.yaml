@@ -33,7 +33,12 @@ checksum:
 sboms:
   # One CycloneDX SBOM per archive (${artifact}.sbom); requires syft on PATH
   # (installed via anchore/sbom-action/download-syft in the release workflow).
+  # GoReleaser's own default is spdx-json, so the format is set explicitly.
   - artifacts: archive
+    args:
+      - "$artifact"
+      - "--output"
+      - "cyclonedx-json=$document"
 
 signs:
   # Keyless-sign checksums.txt with cosign, using the workflow's GitHub OIDC

@@ -13,8 +13,6 @@ on:
 permissions:
   contents: write
   packages: write
-  id-token: write # keyless cosign signing + GitHub attestations (OIDC)
-  attestations: write # actions/attest-build-provenance, actions/attest-sbom
 
 env:
   REGISTRY: ghcr.io
@@ -34,6 +32,11 @@ jobs:
     name: Build & push ${{ matrix.component }} image
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing + GitHub attestations (OIDC)
+      attestations: write # actions/attest-build-provenance, actions/attest-sbom
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +129,11 @@ jobs:
     name: Package & push Helm chart
     runs-on: ubuntu-latest
     needs: images
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing + GitHub attestations (OIDC)
+      attestations: write # actions/attest-build-provenance
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -201,6 +209,10 @@ jobs:
     name: Release CLI binaries (GoReleaser)
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      contents: write # goreleaser creates the GitHub release and uploads assets
+      id-token: write # keyless cosign signing + GitHub attestations (OIDC)
+      attestations: write # actions/attest-build-provenance
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -259,7 +271,7 @@ jobs:
             echo ""
             echo "## Signed artifacts"
             echo ""
-            echo "The container images and Helm chart below are signed keylessly with [cosign](https://github.com/sigstore/cosign) using this workflow's GitHub OIDC identity, and carry [GitHub build provenance](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) and SBOM attestations. The CLI \`checksums.txt\` (covering all archives) is likewise cosign-signed and carries a build provenance attestation; each archive has an accompanying SBOM."
+            echo "The container images and Helm chart below are signed keylessly with [cosign](https://github.com/sigstore/cosign) using this workflow's GitHub OIDC identity, and carry a [GitHub build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds). The container images additionally carry an SBOM attestation (the Helm chart does not — it has no dependency graph of its own). The CLI \`checksums.txt\` (covering all archives) is likewise cosign-signed and carries a build provenance attestation; each archive has an accompanying SBOM."
             echo ""
             echo "| Artifact | Digest |"
             echo "|---|---|"
