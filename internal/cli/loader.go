@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package cli implements the convctl command tree. It works entirely
-// offline against local YAML files — an XRD, an XRDConversionConfig, and a
-// directory of sample objects — by importing pkg/engine directly, so it
-// exercises exactly the same conversion code path used in-cluster by the
-// controller and the webhook server, never a reimplementation of it.
+// Package cli implements the convctl command tree for TeraSky's
+// declarative-conversion-operator. It drives pkg/engine against local YAML
+// (an XRDConversionConfig or CRDConversionConfig, the matching XRD/CRD schema,
+// and optional sample objects) — the same conversion code path used in-cluster
+// by the controller and webhook server, never a reimplementation of it.
 package cli
 
 import (

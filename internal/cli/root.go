@@ -38,8 +38,16 @@ const (
 // process exit code the caller should use.
 func Execute() int {
 	root := &cobra.Command{
-		Use:           "convctl",
-		Short:         "Offline test harness for XRDConversionConfig declarative conversions",
+		Use:   "convctl",
+		Short: "CLI for TeraSky's declarative-conversion-operator",
+		Long: `convctl is the CLI for TeraSky's declarative-conversion-operator.
+
+It exercises the same conversion engine the operator and webhook server use, so you
+can validate and test declarative conversion configs before they ever touch a
+cluster. Every command works against either resource type:
+
+  XRDConversionConfig   Crossplane CompositeResourceDefinition version conversions
+  CRDConversionConfig   native CustomResourceDefinition version conversions`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -76,7 +84,13 @@ func newValidateCmd() *cobra.Command {
 	var configPath, xrdPath, crdPath, output string
 	cmd := &cobra.Command{
 		Use:   "validate",
-		Short: "Run the same static checks the admission webhook performs, offline",
+		Short: "Validate a conversion config the same way the admission webhook does",
+		Long: `Validate an XRDConversionConfig or CRDConversionConfig offline, using the same
+static checks the operator's admission webhook runs at apply time.
+
+Without --xrd/--crd, only structural checks on the config itself run. Supply the
+matching schema file to also compile every rule against the real hub and spoke
+schemas.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			res, err := RunValidate(configPath, xrdPath, crdPath)
 			if err != nil {
@@ -111,7 +125,12 @@ func newAnalyzeCmd() *cobra.Command {
 	var xrdPath, crdPath, configPath, output string
 	cmd := &cobra.Command{
 		Use:   "analyze",
-		Short: "Schema-only lossy/coverage analysis, no samples needed",
+		Short: "Report lossiness and rule coverage from schemas alone",
+		Long: `Schema-only analysis of an XRDConversionConfig or CRDConversionConfig — no sample
+objects required.
+
+Answers whether the config would validate against the target XRD/CRD, which rules
+are lossy in which direction, and whether every schema field is covered.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out, err := RunAnalyze(xrdPath, crdPath, configPath)
 			if err != nil {
@@ -146,27 +165,26 @@ func newTestCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
-		Short: "Run every sample through every conversion path and report timing, loss, and rule coverage",
-		Long: `Run every sample through every conversion path and report timing, loss, and rule coverage.
+		Short: "Round-trip samples through every conversion path",
+		Long: `Run every sample through every served-version conversion path and report pass/loss,
+timing, and rule coverage.
 
-Works against either an XRDConversionConfig (pass --xrd) or a CRDConversionConfig (pass --crd) —
-which one is required is determined by --config's own kind.
+Works against an XRDConversionConfig (--xrd) or a CRDConversionConfig (--crd). The
+config's own kind decides which schema flag is required.
 
-Samples come from one of two places, chosen with --samples or --live:
+Samples come from exactly one of:
 
-  --samples <dir>  a directory of hand-written sample object YAML files (offline, the default workflow)
-  --live           every existing instance of the XRD's/CRD's generated type, fetched live from a
-                   cluster at its hub/storage version — a pre-upgrade check: does a config-to-be-applied
-                   hold up against every object that already exists, not just fixtures?
+  --samples <dir>  offline fixtures — one YAML file (or multi-doc) per sample object
+  --live           every existing instance of the target type, fetched from a cluster
+                   at its hub/storage version (a pre-upgrade check against real objects)
 
---live resolves the target cluster the same way kubectl does: --kubeconfig (falling back to $KUBECONFIG,
-then ~/.kube/config) and --context (falling back to the kubeconfig's current-context). It only needs
-get/list on the target resource type — no write access, and no access to this operator's own CRDs or
-webhook server.
+--live resolves the cluster the same way kubectl does (--kubeconfig / --context, with
+the usual $KUBECONFIG and ~/.kube/config fallbacks). It only needs get/list on the
+target resource — no write access, and no access to the operator's own CRDs.
 
---output selects table (default), json, or junit; junit is meant for CI test-result reporting (e.g.
-GitHub Actions' test-reporting integrations, GitLab, Jenkins). --output-file writes the full report to
-a file instead of stdout — a short pass/loss/fail/error summary is still printed to stdout either way.`,
+--output selects table (default), json, or junit (for CI test-result reporters).
+--output-file writes the full report to a path instead of stdout; a short
+pass/loss/fail/error summary still prints to stdout either way.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch output {
 			case "table", "json", "junit":
