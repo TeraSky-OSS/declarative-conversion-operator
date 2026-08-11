@@ -50,3 +50,38 @@ func TestPathMatchesAny_ArrayIndex(t *testing.T) {
 		t.Fatalf("expected spec.other[0].name not to match an unrelated declared lossy path")
 	}
 }
+
+// TestDiffLeaves_Int64VsFloat64IsNotALoss is a regression test for a real
+// false-positive caught by `convctl test --live`: samples fetched via
+// client-go's dynamic client decode whole numbers as int64, while every
+// number pkg/engine.Convert produces is canonically float64. Comparing
+// them with reflect.DeepEqual alone reported a numerically-identical
+// round trip as an unacknowledged loss purely because of the Go type,
+// not because any data actually changed.
+func TestDiffLeaves_Int64VsFloat64IsNotALoss(t *testing.T) {
+	a := map[string]any{"spec": map[string]any{"priority": int64(5)}}
+	b := map[string]any{"spec": map[string]any{"priority": float64(5)}}
+	if diffs := diffLeaves(a, b); len(diffs) != 0 {
+		t.Fatalf("expected no diffs for a numerically-equal int64/float64 pair, got %v", diffs)
+	}
+}
+
+func TestDiffLeaves_GenuinelyDifferentNumbersStillDiff(t *testing.T) {
+	a := map[string]any{"spec": map[string]any{"priority": int64(5)}}
+	b := map[string]any{"spec": map[string]any{"priority": float64(6)}}
+	if diffs := diffLeaves(a, b); len(diffs) != 1 || diffs[0] != "spec.priority" {
+		t.Fatalf("expected exactly one diff at spec.priority, got %v", diffs)
+	}
+}
+
+func TestValuesEqual_NonNumericFallsBackToDeepEqual(t *testing.T) {
+	if !valuesEqual("x", "x") {
+		t.Fatalf("expected identical strings to be equal")
+	}
+	if valuesEqual("x", "y") {
+		t.Fatalf("expected different strings to be unequal")
+	}
+	if valuesEqual("5", int64(5)) {
+		t.Fatalf("expected a string and a number never to compare equal")
+	}
+}

@@ -1,5 +1,8 @@
 # declarative-conversion-operator
 
+> [!WARNING]
+> **Alpha, under active development.** APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome.
+
 A Kubernetes operator that lets admins declare field-level conversions between [Crossplane](https://crossplane.io) XRD (`CompositeResourceDefinition`) versions, and between plain native Kubernetes CRD versions, using built-in strategies — no hand-written conversion webhook required.
 
 Both Crossplane XRDs and native CRDs support multiple version schemas, but wiring up a real Kubernetes conversion webhook to convert between them today means writing and deploying custom Go code. This operator replaces that with a declarative custom resource — `XRDConversionConfig` for Crossplane XRDs, `CRDConversionConfig` for plain native CRDs — sharing the exact same rule vocabulary: pick a hub version, describe how each spoke version's fields map to it using named strategies (`fieldRename`, `scalarToObject`, `toAnnotation`, `enumRemap`, …), and the operator validates the mapping, compiles it, and — only once everything is verified healthy — patches the target resource to route conversion requests to a shared, horizontally-scalable webhook server.
@@ -129,6 +132,10 @@ make test                  # go vet + unit tests (race-enabled)
 make build                  # build all three binaries into bin/
 make helm-lint helm-template
 ```
+
+### Local dev environment
+
+`make dev-up` stands up a full local environment — a [kind](https://kind.sigs.k8s.io/) cluster, cert-manager, Crossplane, and this operator's own Helm chart installed with images built from your local checkout — and leaves it running for interactive use. It's the same setup the e2e tests use (see below), minus the test assertions and the teardown. Safe to re-run after every code change: it rebuilds the images, reloads them into the cluster, and restarts the running pods so the new code actually takes effect. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; tear it down with `make dev-down`.
 
 ### End-to-end tests
 

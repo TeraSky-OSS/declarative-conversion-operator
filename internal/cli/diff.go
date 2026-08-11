@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 // diffLeaves recursively compares two unstructured trees and returns the
@@ -61,9 +63,26 @@ func diffInto(path string, a, b any, out *[]string) {
 		}
 		return
 	}
-	if !reflect.DeepEqual(a, b) {
+	if !valuesEqual(a, b) {
 		*out = append(*out, path)
 	}
+}
+
+// valuesEqual compares two leaf values, treating any two Go numeric types
+// as equal whenever their numeric value matches. `test --live` fetches
+// samples via client-go's dynamic client, which decodes whole JSON numbers
+// as int64, while every value pkg/engine.Convert produces is canonically
+// float64 (what plain encoding/json, the real admission-webhook path,
+// decodes numbers as) -- see engine.AsFloat64's doc comment. Without this,
+// reflect.DeepEqual(int64(5), float64(5)) is false, so every numeric field
+// round-tripped through a live sample would report as a false-positive
+// loss even when its value never actually changed.
+func valuesEqual(a, b any) bool {
+	if af, aok := engine.AsFloat64(a); aok {
+		bf, bok := engine.AsFloat64(b)
+		return bok && af == bf
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func joinPath(prefix, seg string) string {

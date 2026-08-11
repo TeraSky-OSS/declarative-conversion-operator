@@ -44,6 +44,10 @@ The engine computes lossiness per rule, per direction, from fixed logic specific
 
 If it's not structurally identical between hub and spoke, it's an **uncovered-field error** — the config is rejected, not silently accepted with that field dropped. This is the concrete meaning of "unknown means assume lossy": `unmappedFieldPolicy: Warn` (with a required `unmappedFieldReason`) downgrades this to a warning if you deliberately want to allow it.
 
+### What about fields that aren't in my XRD's schema at all — like Crossplane's `status.conditions`?
+
+That's a different case from the one above, and it's handled automatically — for fields nested inside a container your schema already declares (`spec`, `status`), which is what `status.conditions` and `spec.crossplane` actually are. Crossplane injects that standard shape into every generated CRD version, but those specific fields are never part of the XRD's own authored `openAPIV3Schema` — the schema the controller actually compiles against. Since the engine has no schema information about them at all, on either side, it can't reason about their shape the way it does for a field you declared but forgot to write a rule for. Rather than silently dropping them (the bug this behavior fixes) or forcing you to hand-declare Crossplane's own boilerplate in every version just to satisfy the compiler, the engine copies any such nested field straight through, unchanged, on every conversion. You don't need a rule for it, and it never shows up as an uncovered-field error. This deliberately does *not* extend to a brand-new top-level sibling of `spec`/`status` your schema never mentions at all — that's a structurally different, much rarer situation, and outside what this behavior covers.
+
 ### Can two configs target the same XRD or CRD?
 
 No — this is blocked structurally by a unique index plus the admission webhook, not resolved by a race at runtime. Creating a second `XRDConversionConfig`/`CRDConversionConfig` for a target that already has one is rejected at `kubectl apply` time.

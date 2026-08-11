@@ -116,6 +116,79 @@ helm-lint: ## Lint the Helm chart.
 helm-template: ## Render the Helm chart with default values.
 	helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 
+##@ Local Dev Environment
+
+# Same shape as hack/e2e-common.sh's setup (kind + cert-manager + Crossplane
+# + this operator's own Helm chart), but left running afterward for
+# interactive use instead of being torn down by a test script. A fixed image
+# tag (rather than e2e's timestamped one) keeps `make dev-up` idempotent and
+# safe to re-run after every code change: it rebuilds, reloads, and restarts
+# the running pods so the new code actually takes effect.
+DEV_CLUSTER_NAME ?= declarative-conversion-dev
+DEV_NAMESPACE ?= declarative-conversion-system
+DEV_RELEASE_NAME ?= declarative-conversion-operator
+DEV_IMG_TAG ?= dev
+DEV_MANAGER_IMG ?= ghcr.io/terasky-oss/declarative-conversion-operator:$(DEV_IMG_TAG)
+DEV_WEBHOOK_IMG ?= ghcr.io/terasky-oss/declarative-conversion-webhook-server:$(DEV_IMG_TAG)
+DEV_CERT_MANAGER_VERSION ?= v1.21.1
+
+.PHONY: dev-up
+dev-up: ## Stand up (or refresh) a full local dev environment: kind cluster + cert-manager + Crossplane + this operator's own Helm chart, built from your local checkout (the chart bootstraps its own self-signed ClusterIssuer by default -- no separate issuer setup needed). Safe to re-run after code changes. Requires docker, kind, kubectl, and helm on PATH.
+	@command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
+	@command -v kind >/dev/null 2>&1 || { echo "kind is required (https://kind.sigs.k8s.io)" >&2; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required" >&2; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "helm is required" >&2; exit 1; }
+	@if kind get clusters 2>/dev/null | grep -qx "$(DEV_CLUSTER_NAME)"; then \
+		echo "==> Reusing existing kind cluster '$(DEV_CLUSTER_NAME)'"; \
+	else \
+		echo "==> Creating kind cluster '$(DEV_CLUSTER_NAME)'"; \
+		kind create cluster --name $(DEV_CLUSTER_NAME); \
+	fi
+	kubectl config use-context kind-$(DEV_CLUSTER_NAME)
+	@echo "==> Building manager and webhook-server images ($(DEV_IMG_TAG))"
+	docker build --build-arg COMPONENT=manager -t $(DEV_MANAGER_IMG) .
+	docker build --build-arg COMPONENT=webhook-server -t $(DEV_WEBHOOK_IMG) .
+	@echo "==> Loading images into the kind cluster"
+	kind load docker-image $(DEV_MANAGER_IMG) --name $(DEV_CLUSTER_NAME)
+	kind load docker-image $(DEV_WEBHOOK_IMG) --name $(DEV_CLUSTER_NAME)
+	@if kubectl get ns cert-manager >/dev/null 2>&1; then \
+		echo "==> cert-manager namespace already exists, skipping install"; \
+	else \
+		echo "==> Installing cert-manager $(DEV_CERT_MANAGER_VERSION)"; \
+		kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/$(DEV_CERT_MANAGER_VERSION)/cert-manager.yaml; \
+	fi
+	kubectl -n cert-manager wait --for=condition=Available --timeout=180s deployment --all
+	@echo "==> Installing Crossplane"
+	helm repo add crossplane-stable https://charts.crossplane.io/stable --force-update
+	helm repo update crossplane-stable
+	helm upgrade --install crossplane crossplane-stable/crossplane \
+		--namespace crossplane-system --create-namespace \
+		--wait --timeout 180s
+	@echo "==> Installing/upgrading $(DEV_RELEASE_NAME) with the locally-built dev images"
+	helm upgrade --install $(DEV_RELEASE_NAME) charts/declarative-conversion-operator \
+		--namespace $(DEV_NAMESPACE) --create-namespace \
+		--set image.manager.tag=$(DEV_IMG_TAG) \
+		--set image.webhookServer.tag=$(DEV_IMG_TAG) \
+		--set image.pullPolicy=Never \
+		--wait --timeout 180s
+	@echo "==> Restarting pods so the freshly-loaded image content takes effect (tag is fixed across re-runs)"
+	kubectl -n $(DEV_NAMESPACE) rollout restart deployment/$(DEV_RELEASE_NAME)-manager
+	kubectl -n $(DEV_NAMESPACE) rollout status deployment/$(DEV_RELEASE_NAME)-manager --timeout=120s
+	kubectl -n $(DEV_NAMESPACE) rollout restart deployment/default-webhook-server
+	kubectl -n $(DEV_NAMESPACE) rollout status deployment/default-webhook-server --timeout=120s
+	@echo "==> Waiting for the default ConversionWebhookServer to become Available"
+	kubectl wait --for=condition=Available --timeout=180s conversionwebhookserver/default
+	@echo ""
+	@echo "==> Local dev environment ready."
+	@echo "    kubectl context: kind-$(DEV_CLUSTER_NAME)"
+	@echo "    Namespace:       $(DEV_NAMESPACE)"
+	@echo "    Made a code change? Just run 'make dev-up' again to rebuild, reload, and restart."
+	@echo "    Tear it down with: make dev-down"
+
+.PHONY: dev-down
+dev-down: ## Delete the local dev kind cluster created by dev-up.
+	kind delete cluster --name $(DEV_CLUSTER_NAME)
+
 ##@ Tooling
 
 .PHONY: controller-gen

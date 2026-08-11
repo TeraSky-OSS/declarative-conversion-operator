@@ -619,7 +619,11 @@ func (o numericScaleOp) apply(ctx *execContext) error {
 	if !ok {
 		return nil
 	}
-	f, ok := v.(float64)
+	// AsFloat64 also accepts int/int32/int64: client-go's dynamic client
+	// (used by `convctl test --live`) decodes whole JSON numbers as int64,
+	// unlike the real admission-webhook path (plain encoding/json), which
+	// always produces float64 -- see coerce.go's doc comment.
+	f, ok := AsFloat64(v)
 	if !ok {
 		return fmt.Errorf("numericScale: value at %q is not numeric", o.fromPath)
 	}
