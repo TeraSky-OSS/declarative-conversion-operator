@@ -132,7 +132,13 @@ make helm-lint helm-template
 
 ### End-to-end tests
 
-`make test-e2e` (`hack/e2e-test.sh`) proves the conversion webhook works against a real `kube-apiserver`, not just `pkg/engine` offline: it creates a [kind](https://kind.sigs.k8s.io/) cluster, installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), builds this repo's `manager`/`webhook-server` images and loads them straight into the cluster (no registry push), installs the operator via its own Helm chart, then applies a real `CompositeResourceDefinition` + `XRDConversionConfig` and confirms a composite resource created at one served version reads back correctly converted at another — including that a hub-only field is dropped, not silently mis-rendered. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; runs identically in CI (`.github/workflows/e2e.yml`) and locally. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
+Three scripts, all built on shared setup in `hack/e2e-common.sh`, prove the conversion webhook works against a real `kube-apiserver`, not just `pkg/engine` offline — each creates a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's `manager`/`webhook-server` images and loads them straight into the cluster (no registry push), and installs the operator via its own Helm chart:
+
+- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 23 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
+- `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
+- `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
+
+Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; all three run identically in CI (`.github/workflows/e2e.yml`, as a matrix) and locally. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
 
 ## License
 

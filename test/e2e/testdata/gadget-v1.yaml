@@ -1,0 +1,10 @@
+apiVersion: nativecrd.example.org/v1
+kind: Gadget
+metadata:
+  name: e2e-gadget-v1
+  namespace: default
+  annotations:
+    nativecrd.example.org/description: '"restored from v1"'
+spec:
+  storageSize: "50"
+  debugMode: true

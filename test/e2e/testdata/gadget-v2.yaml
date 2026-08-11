@@ -1,0 +1,9 @@
+apiVersion: nativecrd.example.org/v2
+kind: Gadget
+metadata:
+  name: e2e-gadget-v2
+  namespace: default
+spec:
+  storageGB: "100"
+  description: "created via v2"
+  replicas: 3
