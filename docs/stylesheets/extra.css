@@ -1,0 +1,50 @@
+.md-typeset table:not([class]) {
+  font-size: 0.78rem;
+}
+
+/* Custom admonition qualifiers used on strategy reference pages:
+   `!!! lossless` / `!!! lossy` / `!!! conditional-lossy` */
+.md-typeset .admonition.lossless,
+.md-typeset details.lossless {
+  border-color: #2e7d32;
+}
+.md-typeset .lossless > .admonition-title,
+.md-typeset .lossless > summary {
+  background-color: rgba(46, 125, 50, 0.1);
+}
+.md-typeset .lossless > .admonition-title::before,
+.md-typeset .lossless > summary::before {
+  background-color: #2e7d32;
+  -webkit-mask-image: var(--md-admonition-icon--success);
+  mask-image: var(--md-admonition-icon--success);
+}
+
+.md-typeset .admonition.lossy,
+.md-typeset details.lossy {
+  border-color: #c62828;
+}
+.md-typeset .lossy > .admonition-title,
+.md-typeset .lossy > summary {
+  background-color: rgba(198, 40, 40, 0.1);
+}
+.md-typeset .lossy > .admonition-title::before,
+.md-typeset .lossy > summary::before {
+  background-color: #c62828;
+  -webkit-mask-image: var(--md-admonition-icon--failure);
+  mask-image: var(--md-admonition-icon--failure);
+}
+
+.md-typeset .admonition.conditional-lossy,
+.md-typeset details.conditional-lossy {
+  border-color: #ef6c00;
+}
+.md-typeset .conditional-lossy > .admonition-title,
+.md-typeset .conditional-lossy > summary {
+  background-color: rgba(239, 108, 0, 0.1);
+}
+.md-typeset .conditional-lossy > .admonition-title::before,
+.md-typeset .conditional-lossy > summary::before {
+  background-color: #ef6c00;
+  -webkit-mask-image: var(--md-admonition-icon--warning);
+  mask-image: var(--md-admonition-icon--warning);
+}

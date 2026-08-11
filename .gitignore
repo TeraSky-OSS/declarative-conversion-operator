@@ -6,3 +6,4 @@ dist/
 .vscode/
 *.swp
 cover.out
+site/
