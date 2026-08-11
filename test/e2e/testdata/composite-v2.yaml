@@ -1,0 +1,44 @@
+# Exercises every one of the 12 v2-spoke strategies' spoke->hub direction
+# when read back at the hub version (v3) — see hack/e2e-test.sh.
+apiVersion: e2e.example.org/v2
+kind: XWidget
+metadata:
+  name: e2e-widget-v2
+  namespace: default
+  annotations:
+    xrd.example.org/description: '"restored from v2"'
+spec:
+  storageSize: "256"
+  replicas:
+    count: 2
+  networkCIDR: "10.1.0.0/16"
+  limits:
+    cpu: "2"
+    memory: "8Gi"
+  size: "M"
+  legacyFlagV2: false
+  schemaVersion: "legacy-v2-object"
+  primaryRegion:
+    name: "us-west-1"
+  zones:
+    - name: "us-west-1b"
+  tags:
+    env: "staging"
+    team: "growth"
+  tier: "silver"
+  volumes:
+    - sizeGB: "50"
+      label: "cache"
+  priority: "9"
+  diskSizeValue: 25
+  diskSizeUnit: "Gi"
+  memoryGB: 2
+  dnsServersCSV: "9.9.9.9,4.2.2.2"
+  contactName: "Alex Rivera"
+  contactEmail: "alex@example.com"
+  endpoints:
+    - name: "admin"
+      url: "https://admin.example.com"
+  limitsByTier:
+    bronze:
+      limit: "100"
