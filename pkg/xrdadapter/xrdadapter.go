@@ -41,16 +41,24 @@ import (
 )
 
 // GroupVersionKind identifies a Crossplane CompositeResourceDefinition.
+//
+// This targets Crossplane v2's XRD API (apiextensions.crossplane.io/v2),
+// not the older v1 API — Crossplane 2.0 introduced a breaking XRD schema
+// change (notably an explicit spec.scope field, defaulting composites to
+// Namespaced instead of always-cluster-scoped) but kept spec.conversion
+// and spec.versions[].{name,served,referenceable,schema} unchanged, which
+// is all this package reads. Source.Versions never reads spec.scope, so
+// it behaves identically for Namespaced, Cluster, and LegacyCluster XRDs.
 var GroupVersionKind = schema.GroupVersionKind{
 	Group:   "apiextensions.crossplane.io",
-	Version: "v1",
+	Version: "v2",
 	Kind:    "CompositeResourceDefinition",
 }
 
 // GroupVersionResource is the XRD's list/watch resource identity.
 var GroupVersionResource = schema.GroupVersionResource{
 	Group:    "apiextensions.crossplane.io",
-	Version:  "v1",
+	Version:  "v2",
 	Resource: "compositeresourcedefinitions",
 }
 

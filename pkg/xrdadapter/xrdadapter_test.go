@@ -24,10 +24,11 @@ import (
 
 func TestVersions(t *testing.T) {
 	xrd := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "apiextensions.crossplane.io/v1",
+		"apiVersion": "apiextensions.crossplane.io/v2",
 		"kind":       "CompositeResourceDefinition",
 		"metadata":   map[string]any{"name": "xdatabases.example.org", "generation": int64(5)},
 		"spec": map[string]any{
+			"scope": "Namespaced",
 			"versions": []any{
 				map[string]any{
 					"name": "v2", "served": true, "referenceable": true,
@@ -93,5 +94,56 @@ func TestVersions(t *testing.T) {
 
 	if !Established(xrd) {
 		t.Fatalf("expected Established() to be true")
+	}
+}
+
+// TestVersions_IgnoresScope confirms Source.Versions and Established
+// behave identically regardless of a Crossplane v2 XRD's spec.scope
+// (Namespaced, Cluster, or LegacyCluster) — this package only ever reads
+// spec.versions/status.conditions and never inspects spec.scope, so
+// whether the composite resources an XRD generates are namespaced or
+// cluster-scoped must have no effect on schema-conversion analysis.
+func TestVersions_IgnoresScope(t *testing.T) {
+	base := func(scope string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "apiextensions.crossplane.io/v2",
+			"kind":       "CompositeResourceDefinition",
+			"metadata":   map[string]any{"name": "xwidgets.example.org", "generation": int64(1)},
+			"spec": map[string]any{
+				"scope": scope,
+				"versions": []any{
+					map[string]any{
+						"name": "v1", "served": true, "referenceable": true,
+						"schema": map[string]any{
+							"openAPIV3Schema": map[string]any{
+								"type":       "object",
+								"properties": map[string]any{"spec": map[string]any{"type": "object"}},
+							},
+						},
+					},
+				},
+			},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "Established", "status": "True"},
+				},
+			},
+		}}
+	}
+
+	for _, scope := range []string{"Namespaced", "Cluster", "LegacyCluster"} {
+		t.Run(scope, func(t *testing.T) {
+			xrd := base(scope)
+			versions, err := New(xrd).Versions()
+			if err != nil {
+				t.Fatalf("unexpected error for scope %q: %v", scope, err)
+			}
+			if len(versions) != 1 || versions[0].Name != "v1" || !versions[0].Storage {
+				t.Fatalf("unexpected versions for scope %q: %+v", scope, versions)
+			}
+			if !Established(xrd) {
+				t.Fatalf("expected Established() to be true for scope %q", scope)
+			}
+		})
 	}
 }
