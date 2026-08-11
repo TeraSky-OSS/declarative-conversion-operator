@@ -54,7 +54,27 @@ jobs:
         run: go build ./...
 
       - name: go test (race, coverage)
-        run: go test ./... -race -count=1 -coverprofile=coverage.out
+        # -coverpkg=./... attributes coverage to the package a statement
+        # actually lives in, even when it's only ever exercised by a test in
+        # a *different* package (e.g. api/v1alpha1's rule-conversion logic,
+        # called from internal/webhook and internal/cli's tests). Without
+        # it, go test's default same-package-only accounting understates
+        # real coverage for exactly that kind of library code.
+        run: go test ./... -race -count=1 -coverpkg=./... -coverprofile=coverage.out
+
+      - name: Enforce minimum coverage
+        run: |
+          total="$(go tool cover -func=coverage.out | tail -1 | awk '{print $NF}' | tr -d '%')"
+          echo "Total coverage: ${total}%"
+          # 60% leaves headroom below the ~65% this suite currently
+          # achieves, so incidental drift doesn't fail CI, while still
+          # catching a real regression (e.g. a large chunk of untested code
+          # landing, or tests being deleted rather than fixed).
+          threshold=60
+          if awk -v t="$total" -v m="$threshold" 'BEGIN { exit !(t < m) }'; then
+            echo "Coverage ${total}% is below the ${threshold}% minimum."
+            exit 1
+          fi
 
       - name: Upload coverage
         uses: actions/upload-artifact@v7

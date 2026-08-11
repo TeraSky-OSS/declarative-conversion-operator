@@ -14,10 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package webhookserver
+package controller
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	corev1 "k8s.io/api/core/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,13 +29,8 @@ import (
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
-// newTestRegisterer returns a fresh, isolated Prometheus registry so
-// multiple tests can each construct their own Metrics without colliding
-// on the global default registry's metric names.
-func newTestRegisterer() prometheus.Registerer {
-	return prometheus.NewRegistry()
-}
-
+// newScheme returns a scheme carrying every type these controllers read or
+// write, mirroring cmd/manager's init().
 func newScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	must(clientgoscheme.AddToScheme(s))
@@ -50,14 +45,22 @@ func must(err error) {
 	}
 }
 
-func newFakeClient(objs ...runtime.Object) *fake.ClientBuilder {
-	return fake.NewClientBuilder().WithScheme(newScheme()).WithRuntimeObjects(objs...)
+// newFakeClient builds a fake client with status subresource tracking
+// enabled for every custom type these reconcilers Status().Patch — without
+// this, the fake client's Update would silently clobber (rather than
+// preserve) status on a spec-only Update, unlike a real API server.
+func newFakeClient(initObjs ...runtime.Object) *fake.ClientBuilder {
+	return fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		WithStatusSubresource(&teraskyv1alpha1.XRDConversionConfig{}, &teraskyv1alpha1.CRDConversionConfig{}, &teraskyv1alpha1.ConversionWebhookServer{}).
+		WithRuntimeObjects(initObjs...)
 }
 
-// establishedXRD mirrors the fixture of the same name in
-// internal/controller and internal/webhook: a hub version (v2) and a spoke
-// version (v1) differing by one renamed field, with a live schema
-// engine.Analyze can validate rules against.
+// establishedXRD returns a minimal, structurally valid unstructured
+// CompositeResourceDefinition with a hub version ("v2") and a spoke version
+// ("v1") differing by exactly one renamed field, and status.conditions
+// marking it Established — enough for xrdadapter.New/Established and
+// engine.Analyze to succeed end to end.
 func establishedXRD(name string) *unstructured.Unstructured {
 	xrd := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": name, "generation": int64(1)},
@@ -96,6 +99,27 @@ func establishedXRD(name string) *unstructured.Unstructured {
 	return xrd
 }
 
+// renameRuleXRDConfig returns an XRDConversionConfig that maps
+// establishedXRD's hub spec.size to spoke v1's spec.storageSize.
+func renameRuleXRDConfig(name, targetXRD string) *teraskyv1alpha1.XRDConversionConfig {
+	return &teraskyv1alpha1.XRDConversionConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+			TargetXRD:  teraskyv1alpha1.TargetXRDRef{Name: targetXRD},
+			HubVersion: "v2",
+			Spokes: []teraskyv1alpha1.SpokeVersionRules{{
+				Version: "v1",
+				Rules: []teraskyv1alpha1.ConversionRule{{
+					Strategy:    teraskyv1alpha1.StrategyFieldRename,
+					FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "spec.size", SpokePath: "spec.storageSize"},
+				}},
+			}},
+		},
+	}
+}
+
+// establishedCRD is establishedXRD's typed counterpart for
+// CRDConversionConfigReconciler.
 func establishedCRD(name string) *extv1.CustomResourceDefinition {
 	return &extv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
@@ -136,23 +160,6 @@ func establishedCRD(name string) *extv1.CustomResourceDefinition {
 	}
 }
 
-func renameRuleXRDConfig(name, targetXRD string) *teraskyv1alpha1.XRDConversionConfig {
-	return &teraskyv1alpha1.XRDConversionConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: teraskyv1alpha1.XRDConversionConfigSpec{
-			TargetXRD:  teraskyv1alpha1.TargetXRDRef{Name: targetXRD},
-			HubVersion: "v2",
-			Spokes: []teraskyv1alpha1.SpokeVersionRules{{
-				Version: "v1",
-				Rules: []teraskyv1alpha1.ConversionRule{{
-					Strategy:    teraskyv1alpha1.StrategyFieldRename,
-					FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "spec.size", SpokePath: "spec.storageSize"},
-				}},
-			}},
-		},
-	}
-}
-
 func renameRuleCRDConfig(name, targetCRD string) *teraskyv1alpha1.CRDConversionConfig {
 	return &teraskyv1alpha1.CRDConversionConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -168,4 +175,28 @@ func renameRuleCRDConfig(name, targetCRD string) *teraskyv1alpha1.CRDConversionC
 			}},
 		},
 	}
+}
+
+// readyServer returns a ConversionWebhookServer whose status already
+// reports every isServerReady gate as satisfied, plus a certificate Secret
+// containing a CA bundle — everything XRDConversionConfigReconciler and
+// CRDConversionConfigReconciler need past their health gates.
+func readyServer(name string) (*teraskyv1alpha1.ConversionWebhookServer, *corev1.Secret) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       teraskyv1alpha1.ConversionWebhookServerSpec{Default: true, Namespace: "operator-ns"},
+		Status: teraskyv1alpha1.ConversionWebhookServerStatus{
+			ReadyReplicas: 2,
+			Conditions: []metav1.Condition{
+				{Type: teraskyv1alpha1.CWSConditionAvailable, Status: metav1.ConditionTrue},
+				{Type: teraskyv1alpha1.CWSConditionCertificateReady, Status: metav1.ConditionTrue},
+				{Type: teraskyv1alpha1.CWSConditionServiceReady, Status: metav1.ConditionTrue},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: cwsCertificateSecretName(name), Namespace: server.Spec.Namespace},
+		Data:       map[string][]byte{"ca.crt": []byte("fake-ca-bundle")},
+	}
+	return server, secret
 }
