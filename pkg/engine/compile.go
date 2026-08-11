@@ -272,11 +272,14 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 	// diagnostic ever flags it -- it's invisible to everything else in
 	// this function. Append a catch-all passthrough, last in each
 	// direction's op list, so such a field is copied through unchanged
-	// instead of silently dropped by Convert's empty starting output. See
-	// passthroughUnknownOp's doc comment for why this is safe: it only
-	// ever fills in siblings no other Op touched.
-	h2sOps = append(h2sOps, passthroughUnknownOp{tree: buildKnownTree(hub)})
-	s2hOps = append(s2hOps, passthroughUnknownOp{tree: buildKnownTree(spoke)})
+	// instead of silently dropped by Convert's empty starting output. Built
+	// from the union of both schemas, not just the direction's source --
+	// see mergeKnownTrees' doc comment for why using the source schema
+	// alone would let this Op clobber a rule's freshly-written destination
+	// field with stale same-named data from the source side.
+	passthroughTree := mergeKnownTrees(buildKnownTree(hub), buildKnownTree(spoke))
+	h2sOps = append(h2sOps, passthroughUnknownOp{tree: passthroughTree})
+	s2hOps = append(s2hOps, passthroughUnknownOp{tree: passthroughTree})
 
 	return h2sOps, s2hOps, results, diags, verdict
 }

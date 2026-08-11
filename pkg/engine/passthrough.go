@@ -64,6 +64,39 @@ func buildKnownTree(schema *extv1.JSONSchemaProps) *knownTree {
 	return t
 }
 
+// mergeKnownTrees unions two knownTrees, recursing into a key declared on
+// both sides so a genuinely-undeclared grandchild is still found under it.
+// passthroughUnknownOp must be built from the union of hub and spoke, not
+// just the direction's source schema: a key can be entirely absent from
+// the source schema yet still be a rule's destination on the target side
+// (e.g. FieldRename hub.old -> spoke.new declares "new" only in spoke's
+// schema). Using the source schema alone would leave "new" looking
+// undeclared from the hub side, and if the hub input happens to also
+// contain a same-named "new" key of its own — never mind that nothing on
+// the hub side gives it any meaning — this Op, running last, would
+// silently overwrite the rule's freshly-converted value with that stale
+// hub-side data. Any key declared on either side is already something
+// Compile reasons about (a rule, an auto-covered identityOp, or a flagged
+// uncovered-field error), so it must never be treated as "undeclared"
+// passthrough territory regardless of which side declares it.
+func mergeKnownTrees(a, b *knownTree) *knownTree {
+	if len(a.children) == 0 && len(b.children) == 0 {
+		return &knownTree{}
+	}
+	merged := &knownTree{children: make(map[string]*knownTree, len(a.children)+len(b.children))}
+	for k, c := range a.children {
+		merged.children[k] = c
+	}
+	for k, cb := range b.children {
+		if ca, ok := merged.children[k]; ok {
+			merged.children[k] = mergeKnownTrees(ca, cb)
+		} else {
+			merged.children[k] = cb
+		}
+	}
+	return merged
+}
+
 // passthroughUnknownOp copies every subtree of the source object that tree
 // never declares, verbatim, to the same path in the output. It never
 // touches a path tree does recognize (whether or not a rule claims it —
@@ -72,7 +105,8 @@ func buildKnownTree(schema *extv1.JSONSchemaProps) *knownTree {
 // responsibility, and a wholly foreign top-level container is a different
 // problem than the nested-nowhere-in-the-schema fields this exists for).
 //
-// Compile appends one of these, built from the direction's source schema,
+// Compile appends one of these, built from mergeKnownTrees(hub, spoke) (see
+// its doc comment for why both schemas, not just the direction's source),
 // to the end of every ops list — after every rule-derived Op and every
 // identityOp from the leftover-field scan — so it only ever fills in
 // siblings those Ops left untouched; it can't clobber anything they wrote.
@@ -81,10 +115,13 @@ type passthroughUnknownOp struct {
 }
 
 func (o passthroughUnknownOp) apply(ctx *execContext) error {
+	var setErr error
 	collectUnknown(o.tree, ctx.input, nil, func(path FieldPath, v any) {
-		_ = setValue(ctx.output, path, deepCopyValue(v))
+		if setErr == nil {
+			setErr = setValue(ctx.output, path, deepCopyValue(v))
+		}
 	})
-	return nil
+	return setErr
 }
 
 // collectUnknown recurses through src in lock-step with t, invoking emit

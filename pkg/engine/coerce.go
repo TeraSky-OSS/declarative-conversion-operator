@@ -54,6 +54,16 @@ func coerceScalarValue(v any, to FieldKind) (any, error) {
 			return t, nil
 		case bool:
 			return strconv.FormatBool(t), nil
+		case int64:
+			// Format directly rather than routing through AsFloat64:
+			// float64 can't exactly represent every int64 (anything beyond
+			// +/-2^53), which would silently corrupt a value client-go's
+			// dynamic client decoded exactly.
+			return strconv.FormatInt(t, 10), nil
+		case int:
+			return strconv.FormatInt(int64(t), 10), nil
+		case int32:
+			return strconv.FormatInt(int64(t), 10), nil
 		default:
 			if f, ok := AsFloat64(v); ok {
 				return formatNumber(f), nil

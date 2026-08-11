@@ -46,6 +46,39 @@ func TestCoerceScalarValue_IntegerTypes(t *testing.T) {
 	}
 }
 
+// TestCoerceScalarValue_LargeIntegerToStringIsExact is a regression test
+// for a CodeRabbit finding: float64 can't exactly represent every int64
+// (anything beyond +/-2^53), so routing an int64/int/int32 input through
+// AsFloat64 before formatting it as a string could silently corrupt a
+// value client-go's dynamic client decoded exactly. coerceScalarValue must
+// format these integer types directly instead.
+func TestCoerceScalarValue_LargeIntegerToStringIsExact(t *testing.T) {
+	const large int64 = 1<<53 + 1 // not exactly representable as float64
+	if int64(float64(large)) == large {
+		t.Fatalf("test setup: expected %d to lose precision when round-tripped through float64", large)
+	}
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"int64", large, "9007199254740993"},
+		{"int", int(1 << 40), "1099511627776"},
+		{"int32", int32(1 << 30), "1073741824"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := coerceScalarValue(c.in, FieldKindString)
+			if err != nil {
+				t.Fatalf("unexpected error coercing %T to string: %v", c.in, err)
+			}
+			if got != c.want {
+				t.Fatalf("expected %q, got %v (%T)", c.want, got, got)
+			}
+		})
+	}
+}
+
 func TestCoerceScalarValue_IntegerTypesToNumber(t *testing.T) {
 	cases := []any{float64(42), int64(42), int(42), int32(42)}
 	for _, in := range cases {

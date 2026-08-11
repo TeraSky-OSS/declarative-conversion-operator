@@ -164,6 +164,86 @@ func TestCompile_UndeclaredNestedObjectPreservedWholesale(t *testing.T) {
 	}
 }
 
+// TestCompile_PassthroughDoesNotClobberRenamedField is a regression test
+// for a real bug a CodeRabbit review caught: building passthroughUnknownOp
+// from only the direction's source schema left it blind to a rule's
+// destination field when that field is declared solely on the OTHER
+// side. Here hub declares only "spec.old" and spoke declares only
+// "spec.new"; a FieldRename maps old->new. From the hub schema alone,
+// "spec.new" looks like just another undeclared field, so if the hub
+// input happens to also contain a stale same-named "spec.new" of its own,
+// the old (source-schema-only) implementation would let this Op run last
+// and silently overwrite the rename's freshly-converted value with that
+// stale input data.
+func TestCompile_PassthroughDoesNotClobberRenamedField(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"spec": objSchema(map[string]extv1.JSONSchemaProps{"old": strSchema()}),
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"spec": objSchema(map[string]extv1.JSONSchemaProps{"new": strSchema()}),
+	})
+	rs := RuleSet{HubVersion: "v2", SpokeVersion: "v1", Rules: []Rule{
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("spec.old"), SpokePath: ParsePath("spec.new")}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	in := map[string]any{
+		"spec": map[string]any{
+			"old": "renamed-value",
+			// Not part of the hub schema at all -- e.g. leftover data from
+			// a previous shape, or a field some other layer injected. Its
+			// key happens to collide with the rename's spoke destination.
+			"new": "stale-should-be-overwritten",
+		},
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	spec, _ := out["spec"].(map[string]any)
+	if spec["new"] != "renamed-value" {
+		t.Fatalf("expected the rename's converted value to win over stale undeclared input data, got %v", spec["new"])
+	}
+}
+
+func TestMergeKnownTrees(t *testing.T) {
+	a := &knownTree{children: map[string]*knownTree{
+		"onlyA": {},
+		"both":  {children: map[string]*knownTree{"fromA": {}}},
+	}}
+	b := &knownTree{children: map[string]*knownTree{
+		"onlyB": {},
+		"both":  {children: map[string]*knownTree{"fromB": {}}},
+	}}
+	merged := mergeKnownTrees(a, b)
+
+	for _, k := range []string{"onlyA", "onlyB", "both"} {
+		if _, ok := merged.children[k]; !ok {
+			t.Fatalf("expected %q to be present in the merged tree", k)
+		}
+	}
+	both := merged.children["both"]
+	if _, ok := both.children["fromA"]; !ok {
+		t.Fatalf("expected merged 'both' to still know about 'fromA'")
+	}
+	if _, ok := both.children["fromB"]; !ok {
+		t.Fatalf("expected merged 'both' to also know about 'fromB'")
+	}
+}
+
+func TestMergeKnownTrees_BothEmpty(t *testing.T) {
+	merged := mergeKnownTrees(&knownTree{}, &knownTree{})
+	if len(merged.children) != 0 {
+		t.Fatalf("expected an empty merge of two empty trees, got %#v", merged.children)
+	}
+}
+
 func TestBuildKnownTree(t *testing.T) {
 	schema := objSchema(map[string]extv1.JSONSchemaProps{
 		"phase": strSchema(),

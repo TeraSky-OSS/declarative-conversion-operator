@@ -171,13 +171,13 @@ dev-up: ## Stand up (or refresh) a full local dev environment: kind cluster + ce
 		--set image.webhookServer.tag=$(DEV_IMG_TAG) \
 		--set image.pullPolicy=Never \
 		--wait --timeout 180s
-	@echo "==> Waiting for the default ConversionWebhookServer to become Available"
-	-kubectl wait --for=condition=Available --timeout=180s conversionwebhookserver/default
 	@echo "==> Restarting pods so the freshly-loaded image content takes effect (tag is fixed across re-runs)"
 	kubectl -n $(DEV_NAMESPACE) rollout restart deployment/$(DEV_RELEASE_NAME)-manager
 	kubectl -n $(DEV_NAMESPACE) rollout status deployment/$(DEV_RELEASE_NAME)-manager --timeout=120s
-	-kubectl -n $(DEV_NAMESPACE) rollout restart deployment/default-webhook-server
-	-kubectl -n $(DEV_NAMESPACE) rollout status deployment/default-webhook-server --timeout=120s
+	kubectl -n $(DEV_NAMESPACE) rollout restart deployment/default-webhook-server
+	kubectl -n $(DEV_NAMESPACE) rollout status deployment/default-webhook-server --timeout=120s
+	@echo "==> Waiting for the default ConversionWebhookServer to become Available"
+	kubectl wait --for=condition=Available --timeout=180s conversionwebhookserver/default
 	@echo ""
 	@echo "==> Local dev environment ready."
 	@echo "    kubectl context: kind-$(DEV_CLUSTER_NAME)"
