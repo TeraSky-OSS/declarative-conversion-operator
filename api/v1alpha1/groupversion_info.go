@@ -47,6 +47,7 @@ var (
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion,
 		&XRDConversionConfig{}, &XRDConversionConfigList{},
+		&CRDConversionConfig{}, &CRDConversionConfigList{},
 		&ConversionWebhookServer{}, &ConversionWebhookServerList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
