@@ -64,23 +64,33 @@ func buildKnownTree(schema *extv1.JSONSchemaProps) *knownTree {
 	return t
 }
 
-// mergeKnownTrees unions two knownTrees, recursing into a key declared on
-// both sides so a genuinely-undeclared grandchild is still found under it.
-// passthroughUnknownOp must be built from the union of hub and spoke, not
-// just the direction's source schema: a key can be entirely absent from
-// the source schema yet still be a rule's destination on the target side
-// (e.g. FieldRename hub.old -> spoke.new declares "new" only in spoke's
-// schema). Using the source schema alone would leave "new" looking
-// undeclared from the hub side, and if the hub input happens to also
-// contain a same-named "new" key of its own — never mind that nothing on
-// the hub side gives it any meaning — this Op, running last, would
-// silently overwrite the rule's freshly-converted value with that stale
-// hub-side data. Any key declared on either side is already something
-// Compile reasons about (a rule, an auto-covered identityOp, or a flagged
-// uncovered-field error), so it must never be treated as "undeclared"
-// passthrough territory regardless of which side declares it.
+// mergeKnownTrees unions two knownTrees, recursing into a key declared as
+// a structured object on both sides so a genuinely-undeclared grandchild
+// is still found under it. passthroughUnknownOp must be built from the
+// union of hub and spoke, not just the direction's source schema: a key
+// can be entirely absent from the source schema yet still be a rule's
+// destination on the target side (e.g. FieldRename hub.old -> spoke.new
+// declares "new" only in spoke's schema). Using the source schema alone
+// would leave "new" looking undeclared from the hub side, and if the hub
+// input happens to also contain a same-named "new" key of its own — never
+// mind that nothing on the hub side gives it any meaning — this Op,
+// running last, would silently overwrite the rule's freshly-converted
+// value with that stale hub-side data. Any key declared on either side is
+// already something Compile reasons about (a rule, an auto-covered
+// identityOp, or a flagged uncovered-field error), so it must never be
+// treated as "undeclared" passthrough territory regardless of which side
+// declares it.
+//
+// A node terminal on EITHER side (an opaque map, an array, or a scalar —
+// see knownTree's doc comment) must stay terminal in the merge even if
+// the other side happens to declare it as a structured object with named
+// children: that side's own shape says nothing about what governs the
+// field wholesale (a rule, or an identityOp copying it as one indivisible
+// unit) on the side that treats it atomically. Recursing into it anyway
+// would let collectUnknown walk into a field meant to be handled as a
+// single blob and passthrough pieces of it individually instead.
 func mergeKnownTrees(a, b *knownTree) *knownTree {
-	if len(a.children) == 0 && len(b.children) == 0 {
+	if len(a.children) == 0 || len(b.children) == 0 {
 		return &knownTree{}
 	}
 	merged := &knownTree{children: make(map[string]*knownTree, len(a.children)+len(b.children))}

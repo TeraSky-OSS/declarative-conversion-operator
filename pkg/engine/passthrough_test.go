@@ -244,6 +244,60 @@ func TestMergeKnownTrees_BothEmpty(t *testing.T) {
 	}
 }
 
+// TestMergeKnownTrees_TerminalWinsOverObject is a regression test for a
+// real bug a CodeRabbit review caught: merging a terminal node (an
+// opaque map, array, or scalar -- one buildKnownTree deliberately stops
+// recursing at) against a node the OTHER side declares as a structured
+// object recursed into the object's children instead of staying
+// terminal. That let passthroughUnknownOp descend into a field meant to
+// be handled as a single indivisible unit (whatever rule or identityOp
+// claims it wholesale) and pick off individual "unknown" pieces of it.
+func TestMergeKnownTrees_TerminalWinsOverObject(t *testing.T) {
+	terminal := &knownTree{}
+	object := &knownTree{children: map[string]*knownTree{"x": {}}}
+
+	for _, tc := range []struct {
+		name string
+		a, b *knownTree
+	}{
+		{"terminal then object", terminal, object},
+		{"object then terminal", object, terminal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := mergeKnownTrees(tc.a, tc.b)
+			if len(merged.children) != 0 {
+				t.Fatalf("expected the merge to stay terminal, got children %#v", merged.children)
+			}
+		})
+	}
+}
+
+// TestCollectUnknown_DoesNotDescendIntoTerminalNode documents the
+// invariant TestMergeKnownTrees_TerminalWinsOverObject's fix depends on:
+// even though a terminal knownTree node's runtime value happens to be a
+// nested map with extra keys, collectUnknown must never treat that as
+// license to walk into it. Terminal means "some other Op already owns
+// this path wholesale" (a rule, or an opaque-map leaf claimed as one
+// unit) -- not "empty," and not "walk it because the data looks like an
+// object." Keeping this true is exactly why mergeKnownTrees must never
+// let a structured-object child win over a terminal one during a merge.
+func TestCollectUnknown_DoesNotDescendIntoTerminalNode(t *testing.T) {
+	tree := &knownTree{children: map[string]*knownTree{
+		"blob": {}, // terminal: e.g. an opaque map claimed wholesale by a rule
+	}}
+	src := map[string]any{
+		"blob": map[string]any{"x": "known-to-the-rule", "y": "should-not-be-passed-through-separately"},
+	}
+
+	var emitted []FieldPath
+	collectUnknown(tree, src, nil, func(p FieldPath, v any) {
+		emitted = append(emitted, p)
+	})
+	if len(emitted) != 0 {
+		t.Fatalf("expected no emissions from inside a terminal node, got %v", emitted)
+	}
+}
+
 func TestBuildKnownTree(t *testing.T) {
 	schema := objSchema(map[string]extv1.JSONSchemaProps{
 		"phase": strSchema(),
