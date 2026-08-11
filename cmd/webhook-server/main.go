@@ -37,6 +37,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
@@ -64,10 +65,12 @@ func main() {
 	flag.StringVar(&plainAddr, "metrics-bind-address", ":8443", "Address the plain-HTTP health/metrics/debug endpoints listen on.")
 	flag.DurationVar(&certReloadEvery, "cert-reload-interval", 30*time.Second, "How often to re-read the TLS certificate from disk.")
 	opts := ctrl.Options{Scheme: scheme}
+	zapOpts := zap.Options{Development: false}
+	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	logger := ctrl.Log.WithName("webhook-server")
-	ctrl.SetLogger(logger)
 
 	if serverName == "" {
 		fmt.Fprintln(os.Stderr, "--webhook-server-name is required")

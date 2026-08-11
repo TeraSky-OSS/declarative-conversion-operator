@@ -41,8 +41,12 @@ dump_diagnostics() {
   kubectl get conversionwebhookserver -o yaml || true
   echo "--- xwidgets.e2e.example.org CRD ---"
   kubectl get crd xwidgets.e2e.example.org -o yaml || true
-  echo "--- manager logs ---"
+  echo "--- describe manager pod(s) ---"
+  kubectl -n "${NAMESPACE}" describe pod -l "app.kubernetes.io/instance=${RELEASE_NAME},control-plane=controller-manager" || true
+  echo "--- manager logs (current container) ---"
   kubectl -n "${NAMESPACE}" logs -l "app.kubernetes.io/instance=${RELEASE_NAME},control-plane=controller-manager" --all-containers --tail=300 || true
+  echo "--- manager logs (previous container, if it crashed and restarted) ---"
+  kubectl -n "${NAMESPACE}" logs -l "app.kubernetes.io/instance=${RELEASE_NAME},control-plane=controller-manager" --all-containers --tail=300 --previous || true
   echo "--- webhook-server logs ---"
   kubectl -n "${NAMESPACE}" logs -l "app.kubernetes.io/name=declarative-conversion-webhook-server" --all-containers --tail=300 || true
   echo "--- recent events (all namespaces) ---"

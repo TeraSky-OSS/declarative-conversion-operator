@@ -32,6 +32,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
@@ -59,10 +60,12 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager. "+
 		"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&defaultImage, "default-webhook-server-image", "", "Default image used for ConversionWebhookServer Deployments that don't override spec.image.")
+	zapOpts := zap.Options{Development: false}
+	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	logger := ctrl.Log.WithName("manager")
-	ctrl.SetLogger(logger)
 
 	namespace := currentNamespace()
 
