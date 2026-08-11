@@ -1,7 +1,7 @@
 # Image URL to use for docker-build/docker-push.
-MANAGER_IMG ?= ghcr.io/vrabbi/declarative-conversion-operator:latest
-WEBHOOK_SERVER_IMG ?= ghcr.io/vrabbi/declarative-conversion-webhook-server:latest
-CLI_IMG ?= ghcr.io/vrabbi/declarative-conversion-operator-cli:latest
+MANAGER_IMG ?= ghcr.io/terasky-oss/declarative-conversion-operator:latest
+WEBHOOK_SERVER_IMG ?= ghcr.io/terasky-oss/declarative-conversion-webhook-server:latest
+CLI_IMG ?= ghcr.io/terasky-oss/declarative-conversion-operator-cli:latest
 
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):

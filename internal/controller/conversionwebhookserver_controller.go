@@ -45,8 +45,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/declarative-conversion-operator/internal/assign"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
 )
 
 // CertificateGroupVersionKind identifies a cert-manager Certificate.
@@ -59,7 +59,7 @@ var CertificateGroupVersionKind = schema.GroupVersionKind{Group: "cert-manager.i
 const (
 	webhookServerConversionPort = 9443
 	webhookServerMetricsPort    = 8443
-	defaultWebhookServerImage   = "ghcr.io/vrabbi/declarative-conversion-webhook-server:latest"
+	defaultWebhookServerImage   = "ghcr.io/terasky-oss/declarative-conversion-webhook-server:latest"
 	defaultServiceAccountName   = "declarative-conversion-webhook-server"
 )
 

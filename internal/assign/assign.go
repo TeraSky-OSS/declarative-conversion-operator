@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"sort"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 )
 
 // ResolveAssignment returns the name of the ConversionWebhookServer that

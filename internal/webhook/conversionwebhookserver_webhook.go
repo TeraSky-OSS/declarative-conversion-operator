@@ -24,8 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/declarative-conversion-operator/internal/assign"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
 )
 
 // ConversionWebhookServerValidator validates ConversionWebhookServer

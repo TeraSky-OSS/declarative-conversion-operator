@@ -38,10 +38,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/declarative-conversion-operator/internal/assign"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/xrdadapter"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // TargetXRDNameIndex is the field index used to map an XRD name back to the

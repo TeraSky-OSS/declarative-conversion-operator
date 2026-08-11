@@ -4,13 +4,13 @@ description: Declarative conversion webhooks for Crossplane XRDs — configure h
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/vrabbi/declarative-conversion-operator
+home: https://github.com/terasky-oss/declarative-conversion-operator
 keywords:
   - crossplane
   - kubernetes-operator
   - admission-webhook
   - crd-conversion
 maintainers:
-  - name: vrabbi
+  - name: terasky-oss
 sources:
-  - https://github.com/vrabbi/declarative-conversion-operator
+  - https://github.com/terasky-oss/declarative-conversion-operator

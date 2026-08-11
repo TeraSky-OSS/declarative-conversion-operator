@@ -29,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 // CompiledEntry is one XRD's currently-servable conversion configuration.

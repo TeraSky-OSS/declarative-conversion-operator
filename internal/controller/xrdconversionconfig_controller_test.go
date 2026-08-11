@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 )
 
 func xrdWithServedVersions(served ...bool) *unstructured.Unstructured {

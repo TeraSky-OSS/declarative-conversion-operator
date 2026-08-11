@@ -1,4 +1,4 @@
-module github.com/vrabbi/declarative-conversion-operator
+module github.com/terasky-oss/declarative-conversion-operator
 
 go 1.26.5
 

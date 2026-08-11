@@ -36,9 +36,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/declarative-conversion-operator/internal/controller"
-	internalwebhook "github.com/vrabbi/declarative-conversion-operator/internal/webhook"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/controller"
+	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
 )
 
 var scheme = runtime.NewScheme()

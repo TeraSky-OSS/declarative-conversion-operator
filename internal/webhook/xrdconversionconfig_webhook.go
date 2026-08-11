@@ -36,9 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/xrdadapter"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // XRDConversionConfigValidator validates XRDConversionConfig objects at

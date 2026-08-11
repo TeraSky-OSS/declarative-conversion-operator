@@ -42,7 +42,7 @@ changelog:
 
 release:
   github:
-    owner: vrabbi
+    owner: terasky-oss
     name: declarative-conversion-operator
   # The Docker images and Helm chart are published as separate steps in
   # the release workflow (they don't fit goreleaser's one-binary-per-image
@@ -51,6 +51,6 @@ release:
   header: |
     ## declarative-conversion-operator {{ .Tag }}
 
-    Container images: `ghcr.io/vrabbi/declarative-conversion-operator:{{ .Tag }}` and `ghcr.io/vrabbi/declarative-conversion-webhook-server:{{ .Tag }}`.
-    Helm chart: `oci://ghcr.io/vrabbi/charts/declarative-conversion-operator --version {{ .Version }}`.
+    Container images: `ghcr.io/terasky-oss/declarative-conversion-operator:{{ .Tag }}` and `ghcr.io/terasky-oss/declarative-conversion-webhook-server:{{ .Tag }}`.
+    Helm chart: `oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version {{ .Version }}`.
   prerelease: auto

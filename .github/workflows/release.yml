@@ -34,9 +34,9 @@ jobs:
       matrix:
         include:
           - component: manager
-            image: ghcr.io/vrabbi/declarative-conversion-operator
+            image: ghcr.io/terasky-oss/declarative-conversion-operator
           - component: webhook-server
-            image: ghcr.io/vrabbi/declarative-conversion-webhook-server
+            image: ghcr.io/terasky-oss/declarative-conversion-webhook-server
     steps:
       - name: Checkout
         uses: actions/checkout@v7

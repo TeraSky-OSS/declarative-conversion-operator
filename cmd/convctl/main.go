@@ -22,7 +22,7 @@ package main
 import (
 	"os"
 
-	"github.com/vrabbi/declarative-conversion-operator/internal/cli"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/cli"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".

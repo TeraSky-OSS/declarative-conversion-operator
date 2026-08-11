@@ -21,9 +21,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/xrdadapter"
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // runAnalyze runs the exact same engine.Analyze code path the controller

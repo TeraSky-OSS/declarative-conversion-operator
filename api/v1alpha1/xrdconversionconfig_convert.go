@@ -27,7 +27,7 @@ import (
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 // ToRuleSets translates every spoke's declarative rules into engine

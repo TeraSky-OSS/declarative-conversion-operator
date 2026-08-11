@@ -5,10 +5,10 @@ imagePullSecrets: []
 image:
   registry: ghcr.io
   manager:
-    repository: vrabbi/declarative-conversion-operator
+    repository: terasky-oss/declarative-conversion-operator
     tag: ""
   webhookServer:
-    repository: vrabbi/declarative-conversion-webhook-server
+    repository: terasky-oss/declarative-conversion-webhook-server
     tag: ""
   pullPolicy: IfNotPresent
 

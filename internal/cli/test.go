@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
-	internalwebhook "github.com/vrabbi/declarative-conversion-operator/internal/webhook"
-	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
+	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 // TestOptions configures RunTest.

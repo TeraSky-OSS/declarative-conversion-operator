@@ -19,7 +19,7 @@ package cli
 import (
 	"fmt"
 
-	internalwebhook "github.com/vrabbi/declarative-conversion-operator/internal/webhook"
+	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
 )
 
 // ValidateResult is the outcome of the `validate` subcommand: the same
