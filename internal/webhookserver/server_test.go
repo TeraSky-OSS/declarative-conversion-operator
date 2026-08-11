@@ -19,9 +19,11 @@ package webhookserver
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -115,5 +117,156 @@ func TestRegistry_RecordErrorPreservesRouter(t *testing.T) {
 	}
 	if entry.PlanHash != "good" {
 		t.Fatalf("expected PlanHash to be preserved from the last good compile")
+	}
+}
+
+func TestHandleConvert_WrongMethod_Rejected(t *testing.T) {
+	s := &Server{Registry: NewRegistry()}
+	req := httptest.NewRequest("GET", "/convert/xfoos.example.org", nil)
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestHandleConvert_MalformedBody_BadRequest(t *testing.T) {
+	s := &Server{Registry: NewRegistry()}
+	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader([]byte("{not json")))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed JSON, got %d", rec.Code)
+	}
+}
+
+func TestHandleConvert_MissingRequest_BadRequest(t *testing.T) {
+	s := &Server{Registry: NewRegistry()}
+	body, _ := json.Marshal(extv1.ConversionReview{}) // no .Request
+	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when .Request is nil, got %d", rec.Code)
+	}
+}
+
+func TestHandleConvert_NoCompiledPlanForRequestedVersion_FailsClosed(t *testing.T) {
+	hub, spoke := "v2", "v1"
+	plan := &engine.Plan{HubVersion: hub, SpokeVersion: spoke, HubToSpoke: []engine.Op{}, SpokeToHub: []engine.Op{}}
+	registry := NewRegistry()
+	registry.Set("xfoos.example.org", &CompiledEntry{Router: &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{spoke: plan}}})
+	s := &Server{Registry: registry, Metrics: NewMetrics(newTestRegisterer())}
+
+	obj := map[string]any{"apiVersion": "example.org/v1", "kind": "Foo", "metadata": map[string]any{"name": "x"}}
+	raw, _ := json.Marshal(obj)
+	review := extv1.ConversionReview{Request: &extv1.ConversionRequest{
+		UID: "abc", DesiredAPIVersion: "example.org/v3", // v3 was never compiled
+		Objects: []runtime.RawExtension{{Raw: raw}},
+	}}
+	body, _ := json.Marshal(review)
+	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+
+	var got extv1.ConversionReview
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Response.Result.Status != metav1.StatusFailure {
+		t.Fatalf("expected a Failure result when the router has no plan for the requested version, got %+v", got.Response.Result)
+	}
+}
+
+func TestHandleConvert_LossyConversion_IncrementsMetric(t *testing.T) {
+	hub, spoke := "v2", "v1"
+	plan := &engine.Plan{HubVersion: hub, SpokeVersion: spoke, HubToSpoke: []engine.Op{}, SpokeToHub: []engine.Op{}}
+	registry := NewRegistry()
+	registry.Set("xfoos.example.org", &CompiledEntry{
+		Router:   &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{spoke: plan}},
+		Lossless: map[string]engine.LosslessVerdict{spoke: {HubToSpoke: false, SpokeToHub: true}},
+	})
+	metrics := NewMetrics(newTestRegisterer())
+	s := &Server{Registry: registry, Metrics: metrics}
+
+	obj := map[string]any{"apiVersion": "example.org/v2", "kind": "Foo", "metadata": map[string]any{"name": "x"}}
+	raw, _ := json.Marshal(obj)
+	review := extv1.ConversionReview{Request: &extv1.ConversionRequest{
+		UID: "abc", DesiredAPIVersion: "example.org/v1", // hub -> spoke, the direction marked lossy above
+		Objects: []runtime.RawExtension{{Raw: raw}},
+	}}
+	body, _ := json.Marshal(review)
+	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the HTTP call itself to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(metrics.LossyTotal.WithLabelValues("xfoos.example.org", "hub_to_spoke")); got != 1 {
+		t.Fatalf("expected the lossy-conversion counter to be incremented once, got %v", got)
+	}
+}
+
+func TestHandleReadyz(t *testing.T) {
+	s := &Server{Registry: NewRegistry(), Metrics: NewMetrics(newTestRegisterer())}
+	req := httptest.NewRequest("GET", "/readyz", nil)
+	rec := httptest.NewRecorder()
+	s.handleReadyz(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 before SetReady(true), got %d", rec.Code)
+	}
+
+	s.SetReady(true)
+	rec = httptest.NewRecorder()
+	s.handleReadyz(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after SetReady(true), got %d", rec.Code)
+	}
+	if got := testutil.ToFloat64(s.Metrics.Ready); got != 1 {
+		t.Fatalf("expected the Ready gauge to be 1, got %v", got)
+	}
+
+	s.SetReady(false)
+	if got := testutil.ToFloat64(s.Metrics.Ready); got != 0 {
+		t.Fatalf("expected the Ready gauge to be 0 after SetReady(false), got %v", got)
+	}
+}
+
+func TestHandleDebugRegistry(t *testing.T) {
+	registry := NewRegistry()
+	registry.Set("compiled.example.org", &CompiledEntry{
+		Router:   &engine.Router{Hub: "v2", Plans: map[string]*engine.Plan{"v1": {}}},
+		PlanHash: "sha256:abc",
+	})
+	registry.RecordError("broken.example.org", "schema drift")
+	s := &Server{Registry: registry}
+
+	req := httptest.NewRequest("GET", "/debug/registry", nil)
+	rec := httptest.NewRecorder()
+	s.handleDebugRegistry(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+	byXRD := map[string]map[string]any{}
+	for _, e := range entries {
+		byXRD[e["xrd"].(string)] = e
+	}
+	if !byXRD["compiled.example.org"]["ready"].(bool) {
+		t.Fatalf("expected compiled.example.org to be ready")
+	}
+	if byXRD["broken.example.org"]["ready"].(bool) {
+		t.Fatalf("expected broken.example.org (error-only placeholder) to be not ready")
+	}
+	if byXRD["broken.example.org"]["lastError"] != "schema drift" {
+		t.Fatalf("unexpected lastError: %v", byXRD["broken.example.org"]["lastError"])
 	}
 }

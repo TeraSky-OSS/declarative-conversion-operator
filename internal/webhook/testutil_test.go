@@ -14,10 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package webhookserver
+package webhook
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -28,13 +27,6 @@ import (
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
-
-// newTestRegisterer returns a fresh, isolated Prometheus registry so
-// multiple tests can each construct their own Metrics without colliding
-// on the global default registry's metric names.
-func newTestRegisterer() prometheus.Registerer {
-	return prometheus.NewRegistry()
-}
 
 func newScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
@@ -54,10 +46,10 @@ func newFakeClient(objs ...runtime.Object) *fake.ClientBuilder {
 	return fake.NewClientBuilder().WithScheme(newScheme()).WithRuntimeObjects(objs...)
 }
 
-// establishedXRD mirrors the fixture of the same name in
-// internal/controller and internal/webhook: a hub version (v2) and a spoke
-// version (v1) differing by one renamed field, with a live schema
-// engine.Analyze can validate rules against.
+// establishedXRD mirrors internal/controller's fixture of the same name: a
+// hub version (v2) and a spoke version (v1) that differ by exactly one
+// renamed field, with a live schema an engine.Analyze call can validate
+// rules against.
 func establishedXRD(name string) *unstructured.Unstructured {
 	xrd := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": name, "generation": int64(1)},
