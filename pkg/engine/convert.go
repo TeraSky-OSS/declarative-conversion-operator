@@ -39,8 +39,12 @@ func Convert(in ConvertInput) (map[string]any, error) {
 		return nil, fmt.Errorf("convert: nil plan")
 	}
 	output := map[string]any{}
-	// Baseline passthrough: metadata survives untouched except for fields
-	// that annotation/label-stash-and-restore ops explicitly rewrite below.
+	// Baseline passthrough: kind is invariant across versions of the same
+	// resource, and metadata survives untouched except for fields that
+	// annotation/label-stash-and-restore ops explicitly rewrite below.
+	if kind, ok := in.Object["kind"]; ok {
+		output["kind"] = kind
+	}
 	if md, ok := in.Object["metadata"]; ok {
 		output["metadata"] = deepCopyValue(md)
 	}

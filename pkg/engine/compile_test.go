@@ -55,6 +55,39 @@ func TestFieldRename_LosslessRoundTrip(t *testing.T) {
 	}
 }
 
+// TestConvert_PreservesKindAndMetadata guards against a real bug caught by
+// a live e2e run: kind is invariant across versions of the same resource,
+// but Convert built its output tree purely from compiled ops over schema
+// paths and never copied it across, so a converted object silently lost
+// its kind and the apiserver rejected it outright.
+func TestConvert_PreservesKindAndMetadata(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"storageGB": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"storageSize": strSchema()})
+	rs := RuleSet{HubVersion: "v2", SpokeVersion: "v1", Rules: []Rule{
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("storageGB"), SpokePath: ParsePath("storageSize")}},
+	}}
+	plan, _, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	in := map[string]any{
+		"kind":      "XWidget",
+		"metadata":  map[string]any{"name": "x"},
+		"storageGB": "100",
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["kind"] != "XWidget" {
+		t.Fatalf("expected kind to be preserved, got %v", out["kind"])
+	}
+	if out["metadata"] == nil {
+		t.Fatalf("expected metadata to be preserved, got %v", out)
+	}
+}
+
 func TestUncoveredField_FailsClosedByDefault(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema(), "b": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})

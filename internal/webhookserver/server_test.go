@@ -91,6 +91,9 @@ func TestHandleConvert_Success(t *testing.T) {
 	if converted["apiVersion"] != "example.org/v2" {
 		t.Fatalf("expected converted object's apiVersion to be rewritten to the desired version, got %v", converted["apiVersion"])
 	}
+	if converted["kind"] != "Foo" {
+		t.Fatalf("expected converted object's kind to be preserved, got %v", converted["kind"])
+	}
 }
 
 func TestRegistry_RecordErrorPreservesRouter(t *testing.T) {
