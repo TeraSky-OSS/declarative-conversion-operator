@@ -180,6 +180,38 @@ func TestSingletonArrayToObject_LossyWithoutMaxItems(t *testing.T) {
 	}
 }
 
+// TestObjectToSingletonArray_RoundTrip guards against a regression where the
+// hub->spoke and spoke->hub ops (and their lossless verdicts) were swapped
+// for this strategy, causing both conversion directions to silently read the
+// wrong tree (and thus produce nothing) instead of erroring or converting.
+func TestObjectToSingletonArray_RoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"primary": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"replicas": arrSchema(strSchema(), i64(1))})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyObjectToSingletonArray, Params: ObjectToSingletonArrayParams{HubPath: ParsePath("primary"), SpokePath: ParsePath("replicas")}},
+	}}
+	plan, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors with MaxItems<=1: %v", errs)
+	}
+
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"primary": "r1"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if !reflect.DeepEqual(out["replicas"], []any{"r1"}) {
+		t.Fatalf("expected replicas=[r1], got %v", out)
+	}
+
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["primary"] != "r1" {
+		t.Fatalf("round trip mismatch: %v", back["primary"])
+	}
+}
+
 func TestFieldsToMap_RoundTrip(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{
 		"cpuLimit": strSchema(), "memoryLimit": strSchema(),
@@ -408,6 +440,54 @@ func TestJSONPatch_LossyUnlessOverride(t *testing.T) {
 	_, diags, _ := Compile(rs, &hub, &spoke)
 	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
 		t.Fatalf("expected lossy-without-ack error for JSONPatch without LosslessOverride")
+	}
+}
+
+// TestJSONPatch_MoveIsLosslessRoundTrip exercises a "move" op, which is
+// only meaningful if the patch is applied against the pristine input (so
+// the "from" source genuinely exists to move away from) rather than the
+// partially-built output — and only compiles at all if the moved field is
+// claimed for coverage purposes, since it otherwise has no counterpart on
+// the other side. Both are real bugs this test guards against regressing.
+func TestJSONPatch_MoveIsLosslessRoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"legacyFlag": boolSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"legacyFlagV2": boolSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyJSONPatch, AcknowledgeLossy: false, Params: JSONPatchParams{
+			HubToSpoke:       []JSONPatchOp{{Op: "move", From: "/legacyFlag", Path: "/legacyFlagV2"}},
+			SpokeToHub:       []JSONPatchOp{{Op: "move", From: "/legacyFlagV2", Path: "/legacyFlag"}},
+			LosslessOverride: true,
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	in := map[string]any{"legacyFlag": true}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["legacyFlagV2"] != true {
+		t.Fatalf("expected legacyFlagV2=true, got %#v", out)
+	}
+	if _, ok := out["legacyFlag"]; ok {
+		t.Fatalf("expected legacyFlag to be moved away, got %#v", out)
+	}
+
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["legacyFlag"] != true {
+		t.Fatalf("expected legacyFlag=true after round trip, got %#v", back)
+	}
+	if _, ok := back["legacyFlagV2"]; ok {
+		t.Fatalf("expected legacyFlagV2 to be moved away on the return trip, got %#v", back)
 	}
 }
 

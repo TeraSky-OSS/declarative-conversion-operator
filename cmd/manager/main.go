@@ -97,15 +97,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := ctrl.NewWebhookManagedBy(mgr).
-		For(&teraskyv1alpha1.XRDConversionConfig{}).
+	if err := ctrl.NewWebhookManagedBy(mgr, &teraskyv1alpha1.XRDConversionConfig{}).
 		WithValidator(&internalwebhook.XRDConversionConfigValidator{Client: mgr.GetClient()}).
 		Complete(); err != nil {
 		logger.Error(err, "unable to create webhook", "webhook", "XRDConversionConfig")
 		os.Exit(1)
 	}
-	if err := ctrl.NewWebhookManagedBy(mgr).
-		For(&teraskyv1alpha1.ConversionWebhookServer{}).
+	if err := ctrl.NewWebhookManagedBy(mgr, &teraskyv1alpha1.ConversionWebhookServer{}).
 		WithValidator(&internalwebhook.ConversionWebhookServerValidator{Client: mgr.GetClient()}).
 		Complete(); err != nil {
 		logger.Error(err, "unable to create webhook", "webhook", "ConversionWebhookServer")

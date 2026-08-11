@@ -32,7 +32,6 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -54,25 +53,17 @@ type XRDConversionConfigValidator struct {
 	Client client.Client
 }
 
-var _ admission.CustomValidator = &XRDConversionConfigValidator{}
+var _ admission.Validator[*teraskyv1alpha1.XRDConversionConfig] = &XRDConversionConfigValidator{}
 
-func (v *XRDConversionConfigValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	cfg, ok := obj.(*teraskyv1alpha1.XRDConversionConfig)
-	if !ok {
-		return nil, fmt.Errorf("expected an XRDConversionConfig, got %T", obj)
-	}
+func (v *XRDConversionConfigValidator) ValidateCreate(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig) (admission.Warnings, error) {
 	return v.validate(ctx, cfg)
 }
 
-func (v *XRDConversionConfigValidator) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
-	cfg, ok := newObj.(*teraskyv1alpha1.XRDConversionConfig)
-	if !ok {
-		return nil, fmt.Errorf("expected an XRDConversionConfig, got %T", newObj)
-	}
-	return v.validate(ctx, cfg)
+func (v *XRDConversionConfigValidator) ValidateUpdate(ctx context.Context, _, newCfg *teraskyv1alpha1.XRDConversionConfig) (admission.Warnings, error) {
+	return v.validate(ctx, newCfg)
 }
 
-func (v *XRDConversionConfigValidator) ValidateDelete(context.Context, runtime.Object) (admission.Warnings, error) {
+func (v *XRDConversionConfigValidator) ValidateDelete(context.Context, *teraskyv1alpha1.XRDConversionConfig) (admission.Warnings, error) {
 	return nil, nil
 }
 

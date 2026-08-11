@@ -1,0 +1,27 @@
+apiVersion: example.org/v1
+kind: Widget
+metadata:
+  name: sample-v1
+  labels:
+    tier: "bronze"
+spec:
+  zone:
+    name: "eu-central-1a"
+  regions:
+    - name: "eu-central-1"
+  envTag: "dev"
+  teamTag: "core"
+  computeUnits: 5
+  debugMode: true
+  volumes:
+    - size: "10"
+      name: "scratch"
+  storageGB: "64"
+  replicaCount: 1
+  network:
+    cidr: "192.168.0.0/24"
+  cpuLimit: "1"
+  memoryLimit: "2Gi"
+  description: "Developer sandbox widget"
+  size: "Small"
+  legacyFlag: false

@@ -82,14 +82,17 @@ type Report struct {
 	RuleCoverage []RuleCoverage `json:"ruleCoverage,omitempty"`
 }
 
-// WriteTable renders the report as a human-readable terminal report.
+// WriteTable renders the report as a human-readable terminal report. Write
+// errors to a terminal/CI log capture are not actionable, so they're
+// deliberately ignored here rather than threaded back through a chain of
+// callers that could do nothing useful with them either.
 func (r *Report) WriteTable(w io.Writer) {
-	fmt.Fprintln(w, "XRD Conversion Test Report")
-	fmt.Fprintf(w, "XRD: %s\tConfig: %s (hub: %s)\n", r.Meta.XRD, r.Meta.Config, r.Meta.HubVersion)
-	fmt.Fprintf(w, "Samples: %d\tPaths tested: %d\tTotal time: %.1fms\n\n", r.Summary.Samples, r.Summary.PathsTested, r.Meta.DurationMs)
+	_, _ = fmt.Fprintln(w, "XRD Conversion Test Report")
+	_, _ = fmt.Fprintf(w, "XRD: %s\tConfig: %s (hub: %s)\n", r.Meta.XRD, r.Meta.Config, r.Meta.HubVersion)
+	_, _ = fmt.Fprintf(w, "Samples: %d\tPaths tested: %d\tTotal time: %.1fms\n\n", r.Summary.Samples, r.Summary.PathsTested, r.Meta.DurationMs)
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SAMPLE\tPATH\tRESULT\tFIELDS\tTIME(µs)\tRULES MATCHED")
+	_, _ = fmt.Fprintln(tw, "SAMPLE\tPATH\tRESULT\tFIELDS\tTIME(µs)\tRULES MATCHED")
 	for _, s := range r.Samples {
 		for i, p := range s.Paths {
 			sampleCol := ""
@@ -100,10 +103,10 @@ func (r *Report) WriteTable(w io.Writer) {
 			if rules == "" {
 				rules = "(identity)"
 			}
-			fmt.Fprintf(tw, "%s\t%s→%s\t%s\t%d\t%d\t%s\n", sampleCol, p.From, p.To, strings.ToUpper(p.Result), p.FieldsConverted, p.TimingMicros, rules)
+			_, _ = fmt.Fprintf(tw, "%s\t%s→%s\t%s\t%d\t%d\t%s\n", sampleCol, p.From, p.To, strings.ToUpper(p.Result), p.FieldsConverted, p.TimingMicros, rules)
 		}
 	}
-	tw.Flush()
+	_ = tw.Flush()
 
 	var issues []Issue
 	for _, s := range r.Samples {
@@ -112,29 +115,29 @@ func (r *Report) WriteTable(w io.Writer) {
 		}
 	}
 	if len(issues) > 0 {
-		fmt.Fprintf(w, "\nISSUES (%d)\n", len(issues))
+		_, _ = fmt.Fprintf(w, "\nISSUES (%d)\n", len(issues))
 		tw2 := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw2, "SAMPLE\tFIELD\tFROM → TO\tTYPE\tDETAIL")
+		_, _ = fmt.Fprintln(tw2, "SAMPLE\tFIELD\tFROM → TO\tTYPE\tDETAIL")
 		for _, is := range issues {
-			fmt.Fprintf(tw2, "%s\t%s\t%s → %s\t%s\t%s\n", is.Sample, is.Field, is.From, is.To, is.Type, is.Detail)
+			_, _ = fmt.Fprintf(tw2, "%s\t%s\t%s → %s\t%s\t%s\n", is.Sample, is.Field, is.From, is.To, is.Type, is.Detail)
 		}
-		tw2.Flush()
+		_ = tw2.Flush()
 	}
 
 	if len(r.RuleCoverage) > 0 {
-		fmt.Fprintln(w, "\nRULE COVERAGE")
+		_, _ = fmt.Fprintln(w, "\nRULE COVERAGE")
 		sorted := append([]RuleCoverage{}, r.RuleCoverage...)
 		sort.Slice(sorted, func(i, j int) bool { return sorted[i].RuleID < sorted[j].RuleID })
 		for _, rc := range sorted {
 			if rc.MatchedSamples == 0 {
-				fmt.Fprintf(w, "  %s\tNOT EXERCISED by any sample (warning)\n", rc.RuleID)
+				_, _ = fmt.Fprintf(w, "  %s\tNOT EXERCISED by any sample (warning)\n", rc.RuleID)
 			} else {
-				fmt.Fprintf(w, "  %s\tmatched %d sample(s)\n", rc.RuleID, rc.MatchedSamples)
+				_, _ = fmt.Fprintf(w, "  %s\tmatched %d sample(s)\n", rc.RuleID, rc.MatchedSamples)
 			}
 		}
 	}
 
-	fmt.Fprintf(w, "\nSUMMARY: %d samples, %d paths — %d PASS, %d LOSS(acknowledged), %d FAIL(unacknowledged loss), %d ERROR\n",
+	_, _ = fmt.Fprintf(w, "\nSUMMARY: %d samples, %d paths — %d PASS, %d LOSS(acknowledged), %d FAIL(unacknowledged loss), %d ERROR\n",
 		r.Summary.Samples, r.Summary.PathsTested, r.Summary.Pass, r.Summary.AcknowledgedLoss, r.Summary.UnacknowledgedLoss, r.Summary.Errors)
 }
 

@@ -16,7 +16,10 @@ limitations under the License.
 
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestRunTest_EndToEnd exercises the full offline pipeline (load -> analyze
 // -> compile -> test every sample across every version pair) against fixed
@@ -84,6 +87,89 @@ func TestRunTest_EndToEnd(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected to find sample2's v2->v1 path result")
+	}
+}
+
+// allStrategies is every built-in strategy the engine supports. Kept here
+// (rather than importing pkg/engine's Strategy constants) so this test
+// fails loudly if a strategy is renamed or added without this fixture and
+// this list being updated together.
+var allStrategies = []string{
+	"FieldRename", "ScalarToObject", "ObjectToScalar",
+	"SingletonArrayToObject", "ObjectToSingletonArray",
+	"FieldsToMap", "MapToFields", "ToAnnotation", "ToLabel",
+	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
+}
+
+// TestRunTest_FullCoverage_EndToEnd exercises a much richer fixture
+// (testdata/full) than TestRunTest_EndToEnd: three versions (a hub plus two
+// spokes) so spoke-to-spoke conversions are routed through the hub, and
+// every one of the engine's 15 built-in strategies is exercised at least
+// once across the two spokes' rule sets. Assertions are on general
+// invariants (no errors, no unacknowledged loss, every strategy exercised)
+// rather than brittle exact field/path counts, since the fixture is meant
+// to grow over time without every addition requiring a rewrite here.
+func TestRunTest_FullCoverage_EndToEnd(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/full/xrd.yaml",
+		ConfigPath: "testdata/full/config.yaml",
+		SamplesDir: "testdata/full/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+	if rep.Summary.Samples != 3 {
+		t.Fatalf("expected 3 samples (one per version), got %d", rep.Summary.Samples)
+	}
+	// 3 samples x 3 served versions each = 9 paths (including the identity
+	// from->from path for each sample).
+	if rep.Summary.PathsTested != 9 {
+		t.Fatalf("expected 9 paths tested, got %d", rep.Summary.PathsTested)
+	}
+
+	// At least one spoke->spoke path (v1<->v2, neither of which is the hub
+	// v3) must actually have been tested, confirming hub-routing is
+	// exercised, not just hub<->spoke pairs.
+	var sawSpokeToSpoke bool
+	for _, s := range rep.Samples {
+		for _, p := range s.Paths {
+			if p.From != "v3" && p.To != "v3" && p.From != p.To {
+				sawSpokeToSpoke = true
+			}
+			if p.Result == "fail" {
+				t.Fatalf("path %s->%s (sample %s) unexpectedly failed: %+v", p.From, p.To, s.File, p.Issues)
+			}
+		}
+	}
+	if !sawSpokeToSpoke {
+		t.Fatalf("expected at least one spoke<->spoke (v1<->v2) path to be tested")
+	}
+
+	// Every rule declared in the config must have been matched by at least
+	// one sample, and every one of the engine's built-in strategies must be
+	// represented somewhere in that coverage.
+	seenStrategy := map[string]bool{}
+	for _, rc := range rep.RuleCoverage {
+		if rc.MatchedSamples == 0 {
+			t.Fatalf("expected every declared rule to be exercised by at least one sample, %q was not", rc.RuleID)
+		}
+		for _, strat := range allStrategies {
+			if strings.HasSuffix(rc.RuleID, ":"+strat) {
+				seenStrategy[strat] = true
+			}
+		}
+	}
+	for _, strat := range allStrategies {
+		if !seenStrategy[strat] {
+			t.Fatalf("expected strategy %q to be exercised somewhere in the full fixture, but it wasn't", strat)
+		}
 	}
 }
 

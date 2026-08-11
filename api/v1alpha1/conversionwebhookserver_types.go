@@ -215,7 +215,3 @@ type ConversionWebhookServerList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ConversionWebhookServer `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&ConversionWebhookServer{}, &ConversionWebhookServerList{})
-}

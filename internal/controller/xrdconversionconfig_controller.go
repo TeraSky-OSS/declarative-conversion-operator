@@ -288,11 +288,13 @@ func populateSpokeStatuses(cfg *teraskyv1alpha1.XRDConversionConfig, report engi
 
 func computeSchemaHash(cfg *teraskyv1alpha1.XRDConversionConfig, report engine.AnalyzeReport) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "gen=%d;hub=%s;", report.ResourceGeneration, cfg.Spec.HubVersion)
+	// hash.Hash.Write never returns an error (guaranteed by the interface
+	// contract), so the Fprintf return values are safe to discard.
+	_, _ = fmt.Fprintf(h, "gen=%d;hub=%s;", report.ResourceGeneration, cfg.Spec.HubVersion)
 	// The rule content itself is already part of the reconciled object's
 	// generation on cfg, so folding cfg.Generation in captures rule
 	// changes too, alongside the XRD's own schema generation.
-	fmt.Fprintf(h, "cfgGen=%d", cfg.Generation)
+	_, _ = fmt.Fprintf(h, "cfgGen=%d", cfg.Generation)
 	return "sha256:" + base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 
@@ -363,7 +365,7 @@ func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context
 			},
 		},
 	}}
-	return r.Patch(ctx, patch, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 func toAnySlice(ss []string) []any {
@@ -385,7 +387,7 @@ func (r *XRDConversionConfigReconciler) revertXRD(ctx context.Context, xrdName s
 			"conversion": map[string]any{"strategy": "None"},
 		},
 	}}
-	return r.Patch(ctx, patch, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 // reconcileDelete implements the safe-revert flow: never remove the

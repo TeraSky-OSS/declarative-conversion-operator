@@ -1,0 +1,28 @@
+apiVersion: example.org/v2
+kind: Widget
+metadata:
+  name: sample-v2
+  annotations:
+    xrd.example.org/description: '"Production widget cluster in us-east-1"'
+spec:
+  storageSize: "256"
+  replicas:
+    count: 2
+  networkCIDR: "10.1.0.0/16"
+  limits:
+    cpu: "2"
+    memory: "8Gi"
+  size: "M"
+  legacyFlagV2: false
+  schemaVersion: "legacy-v2-object"
+  primaryRegion:
+    name: "us-west-1"
+  zones:
+    - name: "us-west-1b"
+  tags:
+    env: "staging"
+    team: "growth"
+  tier: "silver"
+  volumes:
+    - sizeGB: "50"
+      label: "cache"

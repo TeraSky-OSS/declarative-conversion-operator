@@ -60,8 +60,8 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the xrdconvctl version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(cmd.OutOrStdout(), Version)
-			return nil
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), Version)
+			return err
 		},
 	}
 }
@@ -83,12 +83,12 @@ func newValidateCmd() *cobra.Command {
 			if output == "json" {
 				return writeJSON(cmd, res)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "config: %s\nstructurally valid: %v\n", res.Config, res.StructurallyValid)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "config: %s\nstructurally valid: %v\n", res.Config, res.StructurallyValid)
 			if xrdPath != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "schema validated: %v\n", res.SchemaValidated)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "schema validated: %v\n", res.SchemaValidated)
 			}
 			for _, e := range res.Errors {
-				fmt.Fprintf(cmd.OutOrStdout(), "ERROR: %s\n", e)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "ERROR: %s\n", e)
 			}
 			if len(res.Errors) > 0 {
 				exitCode = ExitTestFailure
@@ -116,12 +116,10 @@ func newAnalyzeCmd() *cobra.Command {
 			if output == "json" {
 				return writeJSON(cmd, out)
 			}
+			// A lossless=false result here is informational, not a failure:
+			// a non-zero-error config would already have failed above, so
+			// reaching this point means any lossy fields were acknowledged.
 			out.WriteTable(cmd.OutOrStdout())
-			if !out.Lossless {
-				// Not itself a failure — lossy-but-acknowledged configs are
-				// valid — but a non-zero-error config would already have
-				// failed above with an error, so this just informs.
-			}
 			return nil
 		},
 	}

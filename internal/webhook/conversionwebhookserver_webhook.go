@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"sort"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -41,22 +40,14 @@ type ConversionWebhookServerValidator struct {
 	Client client.Client
 }
 
-var _ admission.CustomValidator = &ConversionWebhookServerValidator{}
+var _ admission.Validator[*teraskyv1alpha1.ConversionWebhookServer] = &ConversionWebhookServerValidator{}
 
-func (v *ConversionWebhookServerValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	server, ok := obj.(*teraskyv1alpha1.ConversionWebhookServer)
-	if !ok {
-		return nil, fmt.Errorf("expected a ConversionWebhookServer, got %T", obj)
-	}
+func (v *ConversionWebhookServerValidator) ValidateCreate(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer) (admission.Warnings, error) {
 	return nil, v.checkDefault(ctx, server)
 }
 
-func (v *ConversionWebhookServerValidator) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
-	server, ok := newObj.(*teraskyv1alpha1.ConversionWebhookServer)
-	if !ok {
-		return nil, fmt.Errorf("expected a ConversionWebhookServer, got %T", newObj)
-	}
-	return nil, v.checkDefault(ctx, server)
+func (v *ConversionWebhookServerValidator) ValidateUpdate(ctx context.Context, _, newServer *teraskyv1alpha1.ConversionWebhookServer) (admission.Warnings, error) {
+	return nil, v.checkDefault(ctx, newServer)
 }
 
 func (v *ConversionWebhookServerValidator) checkDefault(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer) error {
@@ -78,11 +69,7 @@ func (v *ConversionWebhookServerValidator) checkDefault(ctx context.Context, ser
 	return nil
 }
 
-func (v *ConversionWebhookServerValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	server, ok := obj.(*teraskyv1alpha1.ConversionWebhookServer)
-	if !ok {
-		return nil, fmt.Errorf("expected a ConversionWebhookServer, got %T", obj)
-	}
+func (v *ConversionWebhookServerValidator) ValidateDelete(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer) (admission.Warnings, error) {
 	if server.Annotations[teraskyv1alpha1.AllowForceDeleteAnnotation] == "true" {
 		return nil, nil
 	}

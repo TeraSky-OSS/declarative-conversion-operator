@@ -470,7 +470,3 @@ type XRDConversionConfigList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []XRDConversionConfig `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&XRDConversionConfig{}, &XRDConversionConfigList{})
-}

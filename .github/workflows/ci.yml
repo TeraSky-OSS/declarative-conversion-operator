@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: Verify go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
+            echo "go.mod/go.sum are not tidy; run 'go mod tidy' and commit the result."
+            git diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test (race, coverage)
+        run: go test ./... -race -count=1 -coverprofile=coverage.out
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 14
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  cli-smoke-test:
+    name: xrdconvctl offline smoke test
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run xrdconvctl against the bundled fixtures
+        run: |
+          go run ./cmd/xrdconvctl test \
+            --xrd internal/cli/testdata/xrd.yaml \
+            --config internal/cli/testdata/config.yaml \
+            --samples internal/cli/testdata/samples
+
+      - name: Run xrdconvctl against the full-coverage fixture (3 versions, all strategies)
+        run: |
+          go run ./cmd/xrdconvctl test \
+            --xrd internal/cli/testdata/full/xrd.yaml \
+            --config internal/cli/testdata/full/config.yaml \
+            --samples internal/cli/testdata/full/samples
+
+  kustomize:
+    name: Validate kustomize manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: kustomize build config/default
+        run: go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build config/default > /dev/null
+
+  helm:
+    name: Helm lint & template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.21.3
+
+      - name: helm lint
+        run: helm lint charts/xrd-conversion-operator
+
+      - name: helm template (default values)
+        run: helm template xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system
+
+      - name: helm template (autoscaling + monitoring enabled)
+        run: |
+          helm template xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system \
+            --set conversionWebhookServer.autoscaling.enabled=true \
+            --set metrics.serviceMonitor.enabled=true \
+            --set metrics.prometheusRule.enabled=true \
+            --set manager.podDisruptionBudget.enabled=true
+
+  docker-build-check:
+    name: Docker build check (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [manager, webhook-server, xrdconvctl]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          build-args: |
+            COMPONENT=${{ matrix.component }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

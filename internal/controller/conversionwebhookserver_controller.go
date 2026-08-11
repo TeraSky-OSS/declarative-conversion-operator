@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -33,6 +34,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	applyappsv1 "k8s.io/client-go/applyconfigurations/apps/v1"
+	applyautoscalingv2 "k8s.io/client-go/applyconfigurations/autoscaling/v2"
+	applycorev1 "k8s.io/client-go/applyconfigurations/core/v1"
+	applymetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	applypolicyv1 "k8s.io/client-go/applyconfigurations/policy/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -206,7 +212,40 @@ func (r *ConversionWebhookServerReconciler) reconcileCertificate(ctx context.Con
 	if err := controllerutil.SetControllerReference(server, cert, r.Scheme); err != nil {
 		return err
 	}
-	return r.Patch(ctx, cert, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(cert), client.ForceOwnership, client.FieldOwner(FieldOwner))
+}
+
+// ownerReferenceApplyConfiguration builds the owner reference this
+// controller sets on every child resource it manages, matching exactly
+// what controllerutil.SetControllerReference would produce for a
+// cluster-scoped ConversionWebhookServer owning a namespaced dependent.
+func ownerReferenceApplyConfiguration(server *teraskyv1alpha1.ConversionWebhookServer) *applymetav1.OwnerReferenceApplyConfiguration {
+	return applymetav1.OwnerReference().
+		WithAPIVersion(teraskyv1alpha1.GroupVersion.String()).
+		WithKind("ConversionWebhookServer").
+		WithName(server.Name).
+		WithUID(server.UID).
+		WithController(true).
+		WithBlockOwnerDeletion(true)
+}
+
+// viaJSON converts a concrete API type (e.g. corev1.Toleration, as stored
+// verbatim in a CRD spec field) into its ApplyConfiguration equivalent by
+// round-tripping through JSON. This is safe here because ApplyConfiguration
+// types are, by design, structurally identical to their API counterparts
+// (the same fields, the same json tags, only made into pointers for
+// optionality) — the encoding that goes over the wire to the API server is
+// the same either way.
+func viaJSON[Dst any](src any) (*Dst, error) {
+	b, err := json.Marshal(src)
+	if err != nil {
+		return nil, err
+	}
+	var dst Dst
+	if err := json.Unmarshal(b, &dst); err != nil {
+		return nil, err
+	}
+	return &dst, nil
 }
 
 func orString(s, def string) string {
@@ -225,22 +264,18 @@ func (r *ConversionWebhookServerReconciler) reconcileService(ctx context.Context
 	if svcType == "" {
 		svcType = corev1.ServiceTypeClusterIP
 	}
-	svc := &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: cwsServiceName(server.Name), Namespace: namespace, Annotations: server.Spec.Service.Annotations, Labels: podLabels(server.Name)},
-		Spec: corev1.ServiceSpec{
-			Type:     svcType,
-			Selector: podLabels(server.Name),
-			Ports: []corev1.ServicePort{
-				{Name: "conversion", Port: port, TargetPort: intstr.FromInt32(webhookServerConversionPort)},
-				{Name: "metrics", Port: webhookServerMetricsPort, TargetPort: intstr.FromInt32(webhookServerMetricsPort)},
-			},
-		},
-	}
-	if err := controllerutil.SetControllerReference(server, svc, r.Scheme); err != nil {
-		return err
-	}
-	return r.Patch(ctx, svc, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	svc := applycorev1.Service(cwsServiceName(server.Name), namespace).
+		WithLabels(podLabels(server.Name)).
+		WithAnnotations(server.Spec.Service.Annotations).
+		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
+		WithSpec(applycorev1.ServiceSpec().
+			WithType(svcType).
+			WithSelector(podLabels(server.Name)).
+			WithPorts(
+				applycorev1.ServicePort().WithName("conversion").WithPort(port).WithTargetPort(intstr.FromInt32(webhookServerConversionPort)),
+				applycorev1.ServicePort().WithName("metrics").WithPort(webhookServerMetricsPort).WithTargetPort(intstr.FromInt32(webhookServerMetricsPort)),
+			))
+	return r.Apply(ctx, svc, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 func podLabels(server string) map[string]string {
@@ -280,61 +315,76 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	// When Autoscaling is set, replicas is left nil so the HPA owns it and
 	// this controller never fights it on every reconcile.
 
-	dep := &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: cwsDeploymentName(server.Name), Namespace: namespace, Labels: podLabels(server.Name)},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: podLabels(server.Name)},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(server.Name)},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: saName,
-					NodeSelector:       server.Spec.NodeSelector,
-					Tolerations:        server.Spec.Tolerations,
-					Affinity:           server.Spec.Affinity,
-					PriorityClassName:  server.Spec.PriorityClassName,
-					Containers: []corev1.Container{{
-						Name:            "webhook-server",
-						Image:           image,
-						ImagePullPolicy: pullPolicy,
-						Args: []string{
-							fmt.Sprintf("--webhook-server-name=%s", server.Name),
-							fmt.Sprintf("--tls-cert-dir=%s", "/tls"),
-							fmt.Sprintf("--conversion-port=%d", webhookServerConversionPort),
-							fmt.Sprintf("--metrics-port=%d", webhookServerMetricsPort),
-						},
-						Ports: []corev1.ContainerPort{
-							{Name: "conversion", ContainerPort: webhookServerConversionPort},
-							{Name: "metrics", ContainerPort: webhookServerMetricsPort},
-						},
-						VolumeMounts: []corev1.VolumeMount{{Name: "tls", MountPath: "/tls", ReadOnly: true}},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(webhookServerMetricsPort), Scheme: corev1.URISchemeHTTP}},
-							PeriodSeconds:    5,
-							FailureThreshold: 3,
-						},
-						LivenessProbe: &corev1.Probe{
-							ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(webhookServerMetricsPort), Scheme: corev1.URISchemeHTTP}},
-							PeriodSeconds:    10,
-							FailureThreshold: 3,
-						},
-						Resources: server.Spec.Resources,
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "tls",
-						VolumeSource: corev1.VolumeSource{
-							Secret: &corev1.SecretVolumeSource{SecretName: cwsCertificateSecretName(server.Name)},
-						},
-					}},
-				},
-			},
-		},
+	container := applycorev1.Container().
+		WithName("webhook-server").
+		WithImage(image).
+		WithArgs(
+			fmt.Sprintf("--webhook-server-name=%s", server.Name),
+			"--tls-cert-dir=/tls",
+			fmt.Sprintf("--conversion-port=%d", webhookServerConversionPort),
+			fmt.Sprintf("--metrics-port=%d", webhookServerMetricsPort),
+		).
+		WithPorts(
+			applycorev1.ContainerPort().WithName("conversion").WithContainerPort(webhookServerConversionPort),
+			applycorev1.ContainerPort().WithName("metrics").WithContainerPort(webhookServerMetricsPort),
+		).
+		WithVolumeMounts(applycorev1.VolumeMount().WithName("tls").WithMountPath("/tls").WithReadOnly(true)).
+		WithReadinessProbe(applycorev1.Probe().
+			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/readyz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
+			WithPeriodSeconds(5).WithFailureThreshold(3)).
+		WithLivenessProbe(applycorev1.Probe().
+			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/healthz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
+			WithPeriodSeconds(10).WithFailureThreshold(3)).
+		WithResources(applycorev1.ResourceRequirements().
+			WithRequests(server.Spec.Resources.Requests).
+			WithLimits(server.Spec.Resources.Limits))
+	if pullPolicy != "" {
+		container = container.WithImagePullPolicy(pullPolicy)
 	}
-	if err := controllerutil.SetControllerReference(server, dep, r.Scheme); err != nil {
-		return err
+
+	podSpec := applycorev1.PodSpec().
+		WithServiceAccountName(saName).
+		WithContainers(container).
+		WithVolumes(applycorev1.Volume().WithName("tls").
+			WithSecret(applycorev1.SecretVolumeSource().WithSecretName(cwsCertificateSecretName(server.Name))))
+	if len(server.Spec.NodeSelector) > 0 {
+		podSpec = podSpec.WithNodeSelector(server.Spec.NodeSelector)
 	}
-	return r.Patch(ctx, dep, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	if server.Spec.PriorityClassName != "" {
+		podSpec = podSpec.WithPriorityClassName(server.Spec.PriorityClassName)
+	}
+	// Tolerations/Affinity are converted from their concrete API types (as
+	// stored verbatim in spec) to ApplyConfigurations via a JSON round trip
+	// — see viaJSON's doc comment for why that's safe here.
+	for _, t := range server.Spec.Tolerations {
+		tc, err := viaJSON[applycorev1.TolerationApplyConfiguration](t)
+		if err != nil {
+			return fmt.Errorf("converting toleration: %w", err)
+		}
+		podSpec = podSpec.WithTolerations(tc)
+	}
+	if server.Spec.Affinity != nil {
+		ac, err := viaJSON[applycorev1.AffinityApplyConfiguration](server.Spec.Affinity)
+		if err != nil {
+			return fmt.Errorf("converting affinity: %w", err)
+		}
+		podSpec = podSpec.WithAffinity(ac)
+	}
+
+	depSpec := applyappsv1.DeploymentSpec().
+		WithSelector(applymetav1.LabelSelector().WithMatchLabels(podLabels(server.Name))).
+		WithTemplate(applycorev1.PodTemplateSpec().
+			WithLabels(podLabels(server.Name)).
+			WithSpec(podSpec))
+	if replicas != nil {
+		depSpec = depSpec.WithReplicas(*replicas)
+	}
+
+	dep := applyappsv1.Deployment(cwsDeploymentName(server.Name), namespace).
+		WithLabels(podLabels(server.Name)).
+		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
+		WithSpec(depSpec)
+	return r.Apply(ctx, dep, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 func (r *ConversionWebhookServerReconciler) reconcileHPA(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer, namespace string) error {
@@ -346,26 +396,21 @@ func (r *ConversionWebhookServerReconciler) reconcileHPA(ctx context.Context, se
 	if target == 0 {
 		target = 75
 	}
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"},
-		ObjectMeta: metav1.ObjectMeta{Name: cwsHPAName(server.Name), Namespace: namespace},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: cwsDeploymentName(server.Name)},
-			MinReplicas:    &server.Spec.Autoscaling.MinReplicas,
-			MaxReplicas:    server.Spec.Autoscaling.MaxReplicas,
-			Metrics: []autoscalingv2.MetricSpec{{
-				Type: autoscalingv2.ResourceMetricSourceType,
-				Resource: &autoscalingv2.ResourceMetricSource{
-					Name:   corev1.ResourceCPU,
-					Target: autoscalingv2.MetricTarget{Type: autoscalingv2.UtilizationMetricType, AverageUtilization: &target},
-				},
-			}},
-		},
-	}
-	if err := controllerutil.SetControllerReference(server, hpa, r.Scheme); err != nil {
-		return err
-	}
-	return r.Patch(ctx, hpa, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	hpa := applyautoscalingv2.HorizontalPodAutoscaler(cwsHPAName(server.Name), namespace).
+		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
+		WithSpec(applyautoscalingv2.HorizontalPodAutoscalerSpec().
+			WithScaleTargetRef(applyautoscalingv2.CrossVersionObjectReference().
+				WithAPIVersion("apps/v1").WithKind("Deployment").WithName(cwsDeploymentName(server.Name))).
+			WithMinReplicas(server.Spec.Autoscaling.MinReplicas).
+			WithMaxReplicas(server.Spec.Autoscaling.MaxReplicas).
+			WithMetrics(applyautoscalingv2.MetricSpec().
+				WithType(autoscalingv2.ResourceMetricSourceType).
+				WithResource(applyautoscalingv2.ResourceMetricSource().
+					WithName(corev1.ResourceCPU).
+					WithTarget(applyautoscalingv2.MetricTarget().
+						WithType(autoscalingv2.UtilizationMetricType).
+						WithAverageUtilization(target)))))
+	return r.Apply(ctx, hpa, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 func (r *ConversionWebhookServerReconciler) reconcilePDB(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer, namespace string) error {
@@ -373,19 +418,18 @@ func (r *ConversionWebhookServerReconciler) reconcilePDB(ctx context.Context, se
 		existing := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: cwsPDBName(server.Name), Namespace: namespace}}
 		return client.IgnoreNotFound(r.Delete(ctx, existing))
 	}
-	pdb := &policyv1.PodDisruptionBudget{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"},
-		ObjectMeta: metav1.ObjectMeta{Name: cwsPDBName(server.Name), Namespace: namespace},
-		Spec: policyv1.PodDisruptionBudgetSpec{
-			MinAvailable:   server.Spec.PodDisruptionBudget.MinAvailable,
-			MaxUnavailable: server.Spec.PodDisruptionBudget.MaxUnavailable,
-			Selector:       &metav1.LabelSelector{MatchLabels: podLabels(server.Name)},
-		},
+	pdbSpec := applypolicyv1.PodDisruptionBudgetSpec().
+		WithSelector(applymetav1.LabelSelector().WithMatchLabels(podLabels(server.Name)))
+	if server.Spec.PodDisruptionBudget.MinAvailable != nil {
+		pdbSpec = pdbSpec.WithMinAvailable(*server.Spec.PodDisruptionBudget.MinAvailable)
 	}
-	if err := controllerutil.SetControllerReference(server, pdb, r.Scheme); err != nil {
-		return err
+	if server.Spec.PodDisruptionBudget.MaxUnavailable != nil {
+		pdbSpec = pdbSpec.WithMaxUnavailable(*server.Spec.PodDisruptionBudget.MaxUnavailable)
 	}
-	return r.Patch(ctx, pdb, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	pdb := applypolicyv1.PodDisruptionBudget(cwsPDBName(server.Name), namespace).
+		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
+		WithSpec(pdbSpec)
+	return r.Apply(ctx, pdb, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 func (r *ConversionWebhookServerReconciler) updateStatus(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer, namespace string) error {

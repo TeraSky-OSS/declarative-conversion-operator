@@ -1,0 +1,56 @@
+version: 2
+
+project_name: xrd-conversion-operator
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: xrdconvctl
+    main: ./cmd/xrdconvctl
+    binary: xrdconvctl
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: xrdconvctl
+    ids: [xrdconvctl]
+    name_template: >-
+      {{ .ProjectName }}-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: vrabbi
+    name: xrd-conversion-operator
+  # The Docker images and Helm chart are published as separate steps in
+  # the release workflow (they don't fit goreleaser's one-binary-per-image
+  # model as cleanly as the CLI does); this section covers the CLI
+  # binaries, checksums, and changelog only.
+  header: |
+    ## xrd-conversion-operator {{ .Tag }}
+
+    Container images: `ghcr.io/vrabbi/xrd-conversion-operator:{{ .Tag }}` and `ghcr.io/vrabbi/xrd-conversion-webhook-server:{{ .Tag }}`.
+    Helm chart: `oci://ghcr.io/vrabbi/charts/xrd-conversion-operator --version {{ .Version }}`.
+  prerelease: auto

@@ -1,0 +1,27 @@
+apiVersion: example.org/v3
+kind: Widget
+metadata:
+  name: sample-hub
+spec:
+  storageGB: "500"
+  replicaCount: 3
+  network:
+    cidr: "10.0.0.0/16"
+  cpuLimit: "4"
+  memoryLimit: "16Gi"
+  description: "Production widget cluster in us-east-1"
+  size: "Large"
+  legacyFlag: true
+  primaryRegion:
+    name: "us-east-1"
+  zones:
+    - name: "us-east-1a"
+  tags:
+    env: "prod"
+    team: "platform"
+  tier: "gold"
+  volumes:
+    - sizeGB: "100"
+      label: "data"
+    - sizeGB: "20"
+      label: "logs"

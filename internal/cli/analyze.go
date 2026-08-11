@@ -73,22 +73,25 @@ func RunAnalyze(xrdPath, configPath string) (*AnalyzeOutput, error) {
 }
 
 // WriteTable renders the analysis as a human-readable terminal report.
+// Write errors to a terminal/CI log capture are not actionable, so they're
+// deliberately ignored here rather than threaded back through a chain of
+// callers that could do nothing useful with them either.
 func (o *AnalyzeOutput) WriteTable(w io.Writer) {
-	fmt.Fprintf(w, "XRD Conversion Analysis\nXRD: %s\tConfig: %s (hub: %s)\tOverall lossless: %v\n\n", o.XRD, o.Config, o.HubVersion, o.Lossless)
+	_, _ = fmt.Fprintf(w, "XRD Conversion Analysis\nXRD: %s\tConfig: %s (hub: %s)\tOverall lossless: %v\n\n", o.XRD, o.Config, o.HubVersion, o.Lossless)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SPOKE\tHUB→SPOKE\tSPOKE→HUB\tRULES\tISSUES")
+	_, _ = fmt.Fprintln(tw, "SPOKE\tHUB→SPOKE\tSPOKE→HUB\tRULES\tISSUES")
 	for _, s := range o.Spokes {
 		issues := len(s.Errors) + len(s.Warnings)
-		fmt.Fprintf(tw, "%s\t%v\t%v\t%d\t%d\n", s.Version, s.LosslessHubToSpoke, s.LosslessSpokeToHub, s.RulesEvaluated, issues)
+		_, _ = fmt.Fprintf(tw, "%s\t%v\t%v\t%d\t%d\n", s.Version, s.LosslessHubToSpoke, s.LosslessSpokeToHub, s.RulesEvaluated, issues)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 
 	for _, s := range o.Spokes {
 		for _, e := range s.Errors {
-			fmt.Fprintf(w, "  [%s] ERROR: %s\n", s.Version, e)
+			_, _ = fmt.Fprintf(w, "  [%s] ERROR: %s\n", s.Version, e)
 		}
 		for _, wmsg := range s.Warnings {
-			fmt.Fprintf(w, "  [%s] WARNING: %s\n", s.Version, wmsg)
+			_, _ = fmt.Fprintf(w, "  [%s] WARNING: %s\n", s.Version, wmsg)
 		}
 	}
 }

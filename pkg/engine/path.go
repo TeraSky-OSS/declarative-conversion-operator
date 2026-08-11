@@ -43,6 +43,23 @@ func ParsePath(s string) FieldPath {
 	return strings.Split(s, ".")
 }
 
+// FieldPathFromJSONPointer converts an RFC 6901 JSON Pointer (as used in
+// RFC 6902 JSON Patch "path"/"from" fields, e.g. "/spec/legacyFlag") into a
+// FieldPath, decoding the "~1" -> "/" and "~0" -> "~" escapes.
+func FieldPathFromJSONPointer(ptr string) FieldPath {
+	ptr = strings.TrimPrefix(ptr, "/")
+	if ptr == "" {
+		return nil
+	}
+	segs := strings.Split(ptr, "/")
+	for i, s := range segs {
+		s = strings.ReplaceAll(s, "~1", "/")
+		s = strings.ReplaceAll(s, "~0", "~")
+		segs[i] = s
+	}
+	return FieldPath(segs)
+}
+
 // String renders the path back into dotted form.
 func (p FieldPath) String() string {
 	return strings.Join(p, ".")
@@ -172,6 +189,28 @@ func deepCopyValue(v any) any {
 		return out
 	default:
 		return v
+	}
+}
+
+// deleteValuePruningEmptyMaps behaves like deleteValue, but additionally
+// removes any ancestor map that becomes empty as a result of the deletion
+// (e.g. an annotations/labels map left with zero keys after its one stashed
+// entry is restored elsewhere), so a stash-then-restore round trip produces
+// an object indistinguishable from one where the stash never happened,
+// rather than leaving behind a stray empty map the original never had.
+func deleteValuePruningEmptyMaps(obj map[string]any, path FieldPath) {
+	deleteValue(obj, path)
+	for i := len(path) - 1; i > 0; i-- {
+		parent := path[:i]
+		v, ok := getValue(obj, parent)
+		if !ok {
+			return
+		}
+		m, ok := v.(map[string]any)
+		if !ok || len(m) != 0 {
+			return
+		}
+		deleteValue(obj, parent)
 	}
 }
 

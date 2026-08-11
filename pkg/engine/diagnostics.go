@@ -42,15 +42,6 @@ func warnf(ruleIndex int, format string, args ...any) Diagnostic {
 	return Diagnostic{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...), RuleIndex: ruleIndex}
 }
 
-func hasErrors(diags []Diagnostic) bool {
-	for _, d := range diags {
-		if d.Severity == SeverityError {
-			return true
-		}
-	}
-	return false
-}
-
 // LosslessVerdict records whether a mapping is lossless in each direction
 // independently — a mapping can be lossless hub->spoke but lossy spoke->hub
 // (e.g. default-value injection on read, drop on write-back).

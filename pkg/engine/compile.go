@@ -93,9 +93,10 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 
 		case ObjectToSingletonArrayParams:
 			// Structural mirror: hub is the object, spoke is the array.
-			var lossless2 LosslessVerdict
-			s2hOp, h2sOp, lossless2, ruleDiags = resolveSingletonArrayToObject(idx, p.SpokePath, p.HubPath, spoke, hub, claimedSpoke, claimedHub, false)
-			lossless = LosslessVerdict{HubToSpoke: lossless2.SpokeToHub, SpokeToHub: lossless2.HubToSpoke}
+			// resolveSingletonArrayToObject already returns ops and a
+			// verdict in true (HubToSpoke, SpokeToHub) order regardless of
+			// which side owns the array, so no remapping is needed here.
+			h2sOp, s2hOp, lossless, ruleDiags = resolveSingletonArrayToObject(idx, p.SpokePath, p.HubPath, spoke, hub, claimedSpoke, claimedHub, false)
 			rr.HubPaths = []string{p.HubPath.String()}
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
@@ -138,7 +139,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			rr.SpokePaths = []string{p.Path.String()}
 
 		case JSONPatchParams:
-			h2sOp, s2hOp, lossless, ruleDiags = resolveJSONPatch(idx, p)
+			h2sOp, s2hOp, lossless, ruleDiags = resolveJSONPatch(idx, p, claimedHub, claimedSpoke)
 
 		case ForEachParams:
 			h2sOp, s2hOp, lossless, ruleDiags = resolveForEach(idx, p, hub, spoke, claimedHub, claimedSpoke, policy, depth)
@@ -365,10 +366,7 @@ func resolveSingletonArrayToObject(idx int, arrayPath, objectPath FieldPath, arr
 	if err != nil {
 		diags = append(diags, errorf(idx, "rule %d: object side: %v", idx, err))
 	}
-	arrayToObjectLossless := false
-	if arrayNode != nil && arrayNode.MaxItems != nil && *arrayNode.MaxItems <= 1 {
-		arrayToObjectLossless = true
-	}
+	arrayToObjectLossless := arrayNode != nil && arrayNode.MaxItems != nil && *arrayNode.MaxItems <= 1
 	if d := claim(claimedArraySide, arrayPath, idx, "array-side"); d != nil {
 		diags = append(diags, *d)
 	}
@@ -614,26 +612,72 @@ func resolveDelete(idx int, p DeleteParams, hub, spoke *extv1.JSONSchemaProps, c
 	return noop, drop, LosslessVerdict{HubToSpoke: true, SpokeToHub: false}, diags
 }
 
-func resolveJSONPatch(idx int, p JSONPatchParams) (Op, Op, LosslessVerdict, []Diagnostic) {
+// resolveJSONPatch handles the escape-hatch strategy. The engine can't
+// statically verify what an arbitrary patch does, so lossiness always
+// comes from the author's own LosslessOverride flag — but coverage is
+// still tracked, best-effort: every "path"/"from" pointer mentioned by
+// either direction's patch is claimed on BOTH the hub and spoke side. This
+// intentionally over-claims (a path only ever mentioned in the
+// spoke-to-hub patch still gets claimed on the hub side too) rather than
+// leaving JSON-Patch-touched fields permanently "uncovered" — appropriate
+// for a strategy whose entire nature is "trust the admin," while a
+// genuine conflict with another rule targeting the same path is still
+// caught, since claiming still goes through the same claim() bookkeeping
+// every other strategy uses.
+func resolveJSONPatch(idx int, p JSONPatchParams, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
 	var diags []Diagnostic
-	h2sPatch, err := parsePatch(p.HubToSpoke)
+	h2sPatch, h2sDest, h2sAll, err := parsePatch(p.HubToSpoke)
 	if err != nil {
 		diags = append(diags, errorf(idx, "rule %d (JSONPatch): hubToSpoke: %v", idx, err))
 	}
-	s2hPatch, err := parsePatch(p.SpokeToHub)
+	s2hPatch, s2hDest, s2hAll, err := parsePatch(p.SpokeToHub)
 	if err != nil {
 		diags = append(diags, errorf(idx, "rule %d (JSONPatch): spokeToHub: %v", idx, err))
 	}
-	diags = append(diags, warnf(idx, "rule %d (JSONPatch): the engine cannot statically verify field coverage for JSON Patch rules; ensure fields it touches aren't independently flagged as uncovered", idx))
+	diags = append(diags, warnf(idx, "rule %d (JSONPatch): the engine cannot verify what this patch actually does; correctness and coverage are the author's responsibility", idx))
+
+	// Claim every path either direction's patch mentions ("path" or
+	// "from") on BOTH sides — see the doc comment above for why this
+	// deliberately over-claims rather than under-claims.
+	seen := map[string]bool{}
+	for _, path := range append(append([]FieldPath{}, h2sAll...), s2hAll...) {
+		key := path.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if d := claim(claimedHub, path, idx, "hub"); d != nil {
+			diags = append(diags, *d)
+		}
+		if d := claim(claimedSpoke, path, idx, "spoke"); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+
 	lossless := LosslessVerdict{HubToSpoke: p.LosslessOverride, SpokeToHub: p.LosslessOverride}
-	return jsonPatchOp{patch: h2sPatch}, jsonPatchOp{patch: s2hPatch}, lossless, diags
+	return jsonPatchOp{patch: h2sPatch, touchedPaths: h2sDest}, jsonPatchOp{patch: s2hPatch, touchedPaths: s2hDest}, lossless, diags
 }
 
-func parsePatch(ops []JSONPatchOp) (jsonpatch.Patch, error) {
+// parsePatch decodes ops into an executable jsonpatch.Patch, plus two path
+// sets: destPaths (just "path" — the add/replace/move/copy/remove
+// destination) is what the execution-time Op copies out of the patched
+// document into the shared output tree; allPaths (both "path" and "from",
+// deduped) is the broader set resolveJSONPatch uses for best-effort
+// coverage claiming, since a "from" (e.g. a move's source) is a real field
+// reference too even though it's never itself a destination.
+func parsePatch(ops []JSONPatchOp) (patch jsonpatch.Patch, destPaths, allPaths []FieldPath, err error) {
 	if len(ops) == 0 {
-		return jsonpatch.Patch{}, nil
+		return jsonpatch.Patch{}, nil, nil, nil
 	}
 	raw := make([]map[string]any, 0, len(ops))
+	seenDest, seenAll := map[string]bool{}, map[string]bool{}
+	addAll := func(ptr string) {
+		if ptr == "" || seenAll[ptr] {
+			return
+		}
+		seenAll[ptr] = true
+		allPaths = append(allPaths, FieldPathFromJSONPointer(ptr))
+	}
 	for _, o := range ops {
 		m := map[string]any{"op": o.Op, "path": o.Path}
 		if o.From != "" {
@@ -643,12 +687,19 @@ func parsePatch(ops []JSONPatchOp) (jsonpatch.Patch, error) {
 			m["value"] = o.Value
 		}
 		raw = append(raw, m)
+		if !seenDest[o.Path] {
+			seenDest[o.Path] = true
+			destPaths = append(destPaths, FieldPathFromJSONPointer(o.Path))
+		}
+		addAll(o.Path)
+		addAll(o.From)
 	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return nil, err
+	b, marshalErr := json.Marshal(raw)
+	if marshalErr != nil {
+		return nil, nil, nil, marshalErr
 	}
-	return jsonpatch.DecodePatch(b)
+	patch, err = jsonpatch.DecodePatch(b)
+	return patch, destPaths, allPaths, err
 }
 
 func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, policy UnmappedFieldPolicy, depth int) (Op, Op, LosslessVerdict, []Diagnostic) {

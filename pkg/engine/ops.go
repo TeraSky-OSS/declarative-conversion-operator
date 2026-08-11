@@ -259,7 +259,7 @@ func (o restoreAnnotationOp) apply(ctx *execContext) error {
 	if err := setValue(ctx.output, o.hubPath, val); err != nil {
 		return err
 	}
-	deleteValue(ctx.output, FieldPath{"metadata", o.metadataField, o.key})
+	deleteValuePruningEmptyMaps(ctx.output, FieldPath{"metadata", o.metadataField, o.key})
 	return nil
 }
 
@@ -320,7 +320,7 @@ type stripMetadataKeyOp struct {
 }
 
 func (o stripMetadataKeyOp) apply(ctx *execContext) error {
-	deleteValue(ctx.output, FieldPath{"metadata", o.metadataField, o.key})
+	deleteValuePruningEmptyMaps(ctx.output, FieldPath{"metadata", o.metadataField, o.key})
 	return nil
 }
 
@@ -335,28 +335,51 @@ func (o injectConstantOp) apply(ctx *execContext) error {
 	return setValue(ctx.output, o.path, deepCopyValue(o.value))
 }
 
-// jsonPatchOp applies a precompiled RFC 6902 JSON Patch to the whole
-// object. The patch is parsed once at compile time.
-type jsonPatchOp struct{ patch jsonpatch.Patch }
+// jsonPatchOp applies a precompiled RFC 6902 JSON Patch to a copy of the
+// pristine input object, then copies just the paths the patch touched
+// (both "path" and, for move/copy, "from") into output. The patch is
+// parsed once at compile time; touchedPaths is derived from it at the same
+// time.
+//
+// Applying against input rather than output is deliberate: RFC 6902
+// "move"/"copy" operations reference a source path that must exist in the
+// document being patched. If this op instead patched the
+// progressively-built output (as every other Op does implicitly by only
+// ever reading input), a "move" whose source hasn't been separately copied
+// into output yet would fail even though the source genuinely exists in
+// the object being converted. Patching input and then merging only the
+// touched paths (rather than the whole patched document) avoids the
+// opposite problem — clobbering sibling fields other ops already wrote
+// into output for paths this patch never mentioned.
+type jsonPatchOp struct {
+	patch        jsonpatch.Patch
+	touchedPaths []FieldPath
+}
 
 func (o jsonPatchOp) apply(ctx *execContext) error {
-	// Patches apply against the object accumulated so far in output; JSON
-	// Patch ops are the one strategy allowed to see partial output, since
-	// arbitrary patches can't be expressed as pure input->output mappings.
-	b, err := json.Marshal(ctx.output)
+	b, err := json.Marshal(ctx.input)
 	if err != nil {
-		return fmt.Errorf("jsonPatch: marshal current output: %w", err)
+		return fmt.Errorf("jsonPatch: marshal input: %w", err)
 	}
 	patched, err := o.patch.Apply(b)
 	if err != nil {
 		return fmt.Errorf("jsonPatch: apply: %w", err)
 	}
-	var m map[string]any
-	if err := json.Unmarshal(patched, &m); err != nil {
-		return fmt.Errorf("jsonPatch: unmarshal patched output: %w", err)
+	var full map[string]any
+	if err := json.Unmarshal(patched, &full); err != nil {
+		return fmt.Errorf("jsonPatch: unmarshal patched input: %w", err)
 	}
-	for k, v := range m {
-		ctx.output[k] = v
+	for _, p := range o.touchedPaths {
+		if v, ok := getValue(full, p); ok {
+			if err := setValue(ctx.output, p, deepCopyValue(v)); err != nil {
+				return fmt.Errorf("jsonPatch: writing %q: %w", p, err)
+			}
+		} else {
+			// Not present after patching (e.g. the source of a move, or an
+			// explicit remove) — make sure it's absent from output too,
+			// rather than leaving behind whatever a stray earlier op wrote.
+			deleteValue(ctx.output, p)
+		}
 	}
 	return nil
 }
