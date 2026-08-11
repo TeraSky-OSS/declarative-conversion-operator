@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re-)release, e.g. v0.1.0. Leave empty to use the pushed tag."
+        required: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  MANAGER_IMAGE: ghcr.io/${{ github.repository_owner }}/declarative-conversion-operator
+  WEBHOOK_SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/declarative-conversion-webhook-server
+  CHART_REPO: ghcr.io/${{ github.repository_owner }}/charts
+
+jobs:
+  test:
+    name: Test before releasing
+    uses: ./.github/workflows/ci.yml
+
+  images:
+    name: Build & push ${{ matrix.component }} image
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: manager
+            image: ghcr.io/terasky-oss/declarative-conversion-operator
+          - component: webhook-server
+            image: ghcr.io/terasky-oss/declarative-conversion-webhook-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            COMPONENT=${{ matrix.component }}
+            VERSION=${{ github.ref_name }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  helm-chart:
+    name: Package & push Helm chart
+    runs-on: ubuntu-latest
+    needs: images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.21.3
+
+      - name: Set chart version to the release tag
+        # appVersion drives the default image tag for both the manager and
+        # webhook-server images (values.yaml's image.*.tag defaults to
+        # empty, which the chart templates fall back to .Chart.AppVersion
+        # for), so bumping it here is sufficient — no need to also touch
+        # values.yaml.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version: .*/version: ${version}/" charts/declarative-conversion-operator/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${version}\"/" charts/declarative-conversion-operator/Chart.yaml
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package chart
+        run: helm package charts/declarative-conversion-operator --destination /tmp/chart-out
+
+      - name: Push chart to GHCR (OCI)
+        run: helm push /tmp/chart-out/*.tgz oci://${{ env.CHART_REPO }}
+
+  cli:
+    name: Release CLI binaries (GoReleaser)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

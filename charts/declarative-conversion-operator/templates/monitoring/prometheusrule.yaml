@@ -1,0 +1,40 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: declarative-conversion-operator
+      rules:
+        - alert: XRDConversionWebhookRegistryCompileErrors
+          expr: increase(xrdconv_webhook_registry_compile_errors_total[15m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A ConversionWebhookServer replica has been failing to (re)compile a conversion plan for {{`{{ $labels.xrd }}`}}"
+            description: "Check the corresponding XRDConversionConfig's status and the replica's /debug/registry endpoint."
+        - alert: XRDConversionWebhookNotReady
+          expr: xrdconv_webhook_ready == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "A conversion webhook server replica has not become ready"
+            description: "This replica's registry never completed its initial sync; it is not serving conversion traffic."
+        - alert: XRDConversionWebhookHighLatency
+          expr: histogram_quantile(0.99, sum(rate(xrdconv_webhook_conversion_review_duration_seconds_bucket[5m])) by (le)) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p99 ConversionReview latency exceeds 1s"
+            description: "The conversion webhook is in the API admission critical path; sustained high latency will slow down apiserver requests for affected XRDs."
+{{- end }}

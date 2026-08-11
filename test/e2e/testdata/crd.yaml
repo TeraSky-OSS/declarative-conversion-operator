@@ -1,0 +1,42 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gadgets.nativecrd.example.org
+spec:
+  group: nativecrd.example.org
+  scope: Namespaced
+  names:
+    plural: gadgets
+    singular: gadget
+    kind: Gadget
+  versions:
+    - name: v2
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                description:
+                  type: string
+                replicas:
+                  type: integer
+    - name: v1
+      served: true
+      storage: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string
+                debugMode:
+                  type: boolean

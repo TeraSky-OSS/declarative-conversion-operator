@@ -1,0 +1,898 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: xrdconversionconfigs.terasky.com
+spec:
+  group: terasky.com
+  names:
+    kind: XRDConversionConfig
+    listKind: XRDConversionConfigList
+    plural: xrdconversionconfigs
+    singular: xrdconversionconfig
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.targetXRD.name
+      name: XRD
+      type: string
+    - jsonPath: .spec.hubVersion
+      name: Hub
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.overallLossless
+      name: Lossless
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          XRDConversionConfig declares how to convert a Crossplane
+          CompositeResourceDefinition's spoke versions to and from its hub version
+          using built-in declarative strategies.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              XRDConversionConfigSpec defines the desired conversion configuration for
+              one target Crossplane XRD.
+            properties:
+              conversionReviewVersions:
+                default:
+                - v1
+                items:
+                  type: string
+                type: array
+              driftPolicy:
+                default: KeepServingStale
+                description: |-
+                  DriftPolicy controls what happens when the live XRD's schema no longer
+                  matches what an already-Applied XRDConversionConfig last validated
+                  against.
+                enum:
+                - KeepServingStale
+                - FailClosed
+                type: string
+              hubVersion:
+                type: string
+              spokes:
+                items:
+                  description: SpokeVersionRules is every rule declared for one spoke
+                    version.
+                  properties:
+                    rules:
+                      items:
+                        description: |-
+                          ConversionRule is one declarative conversion rule between the hub version
+                          and a spoke version. Exactly one of the strategy-specific fields below
+                          should be set, matching Strategy.
+                        properties:
+                          acknowledgeLossy:
+                            description: |-
+                              AcknowledgeLossy must be true if this rule is lossy in any
+                              direction, or validation fails (fail-closed default posture).
+                            type: boolean
+                          arrayToMapByKey:
+                            description: |-
+                              ArrayToMapByKeyParams: the hub field is an array of objects; the spoke
+                              field is a map from each object's KeyField value to the rest of that
+                              object (KeyField itself becomes the map key and is not duplicated into
+                              the value) — the common "list-map" versus "map" API-evolution pattern.
+                            properties:
+                              hubPath:
+                                type: string
+                              keyField:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - keyField
+                            - spokePath
+                            type: object
+                          constant:
+                            description: ConstantParams forces a field to a fixed
+                              value on the side it exists on.
+                            properties:
+                              existsOn:
+                                description: |-
+                                  Side identifies which of the two schemas in a hub<->spoke pair a field
+                                  belongs to.
+                                enum:
+                                - Hub
+                                - Spoke
+                                type: string
+                              path:
+                                type: string
+                              value:
+                                x-kubernetes-preserve-unknown-fields: true
+                            required:
+                            - existsOn
+                            - path
+                            - value
+                            type: object
+                          defaultValue:
+                            description: |-
+                              DefaultValueParams injects a default for a field that exists only on one
+                              side (typically new in a later version) when converting into that side.
+                            properties:
+                              default:
+                                x-kubernetes-preserve-unknown-fields: true
+                              existsOn:
+                                description: |-
+                                  Side identifies which of the two schemas in a hub<->spoke pair a field
+                                  belongs to.
+                                enum:
+                                - Hub
+                                - Spoke
+                                type: string
+                              path:
+                                type: string
+                            required:
+                            - default
+                            - existsOn
+                            - path
+                            type: object
+                          delete:
+                            description: |-
+                              DeleteParams intentionally drops a field that exists on only one side.
+                              Always lossy on the direction the field exists; always requires
+                              AcknowledgeLossy.
+                            properties:
+                              existsOn:
+                                description: |-
+                                  Side identifies which of the two schemas in a hub<->spoke pair a field
+                                  belongs to.
+                                enum:
+                                - Hub
+                                - Spoke
+                                type: string
+                              path:
+                                type: string
+                            required:
+                            - existsOn
+                            - path
+                            type: object
+                          enumRemap:
+                            description: EnumRemapParams bidirectionally maps a scalar
+                              field's enumerated values.
+                            properties:
+                              mapping:
+                                items:
+                                  description: EnumValueMapping pairs one hub enum
+                                    value with its spoke equivalent.
+                                  properties:
+                                    hub:
+                                      type: string
+                                    spoke:
+                                      type: string
+                                  required:
+                                  - hub
+                                  - spoke
+                                  type: object
+                                type: array
+                              onUnmappedHubValue:
+                                default: Error
+                                description: |-
+                                  UnknownKeyPolicy controls behavior when a map-like field (FieldsToMap /
+                                  MapToFields) contains a key a rule didn't declare.
+                                enum:
+                                - Error
+                                - Drop
+                                type: string
+                              onUnmappedSpokeValue:
+                                default: Error
+                                description: |-
+                                  UnknownKeyPolicy controls behavior when a map-like field (FieldsToMap /
+                                  MapToFields) contains a key a rule didn't declare.
+                                enum:
+                                - Error
+                                - Drop
+                                type: string
+                              path:
+                                type: string
+                            required:
+                            - mapping
+                            - path
+                            type: object
+                          fieldRename:
+                            description: FieldRenameParams renames a field, preserving
+                              its value and shape.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
+                          fieldsToMap:
+                            description: |-
+                              FieldsToMapParams: the hub has several sibling fields; the spoke
+                              aggregates them into a single map.
+                            properties:
+                              hubPaths:
+                                items:
+                                  type: string
+                                type: array
+                              keyNames:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              onUnknownSpokeKey:
+                                default: Error
+                                description: |-
+                                  UnknownKeyPolicy controls behavior when a map-like field (FieldsToMap /
+                                  MapToFields) contains a key a rule didn't declare.
+                                enum:
+                                - Error
+                                - Drop
+                                type: string
+                              spokeMapPath:
+                                type: string
+                            required:
+                            - hubPaths
+                            - spokeMapPath
+                            type: object
+                          fieldsToScalar:
+                            description: |-
+                              FieldsToScalarParams is the structural mirror of ScalarToFieldsParams:
+                              several hub sibling fields are joined into a single spoke scalar via
+                              JoinTemplate, and split back into the hub fields via Pattern.
+                            properties:
+                              hubFields:
+                                additionalProperties:
+                                  type: string
+                                description: HubFields maps each named capture group
+                                  to the hub path it reads from.
+                                type: object
+                              joinTemplate:
+                                type: string
+                              losslessOverride:
+                                type: boolean
+                              pattern:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubFields
+                            - joinTemplate
+                            - pattern
+                            - spokePath
+                            type: object
+                          forEach:
+                            description: |-
+                              ForEachParams applies a nested rule list to each element of a hub array
+                              and the corresponding spoke array. Nested rule paths are relative to a
+                              single array element. Nesting is capped at depth 1.
+                            properties:
+                              hubItemsPath:
+                                type: string
+                              rules:
+                                x-kubernetes-preserve-unknown-fields: true
+                              spokeItemsPath:
+                                type: string
+                            required:
+                            - hubItemsPath
+                            - rules
+                            - spokeItemsPath
+                            type: object
+                          jsonPatch:
+                            description: |-
+                              JSONPatchParams is the escape hatch: raw JSON Patch documents applied per
+                              direction. The engine cannot statically verify field coverage for these,
+                              so they are always treated as lossy unless LosslessOverride is set.
+                            properties:
+                              hubToSpoke:
+                                items:
+                                  description: JSONPatchOp is one RFC 6902 JSON Patch
+                                    operation.
+                                  properties:
+                                    from:
+                                      type: string
+                                    op:
+                                      enum:
+                                      - add
+                                      - remove
+                                      - replace
+                                      - move
+                                      - copy
+                                      - test
+                                      type: string
+                                    path:
+                                      type: string
+                                    value:
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  required:
+                                  - op
+                                  - path
+                                  type: object
+                                type: array
+                              losslessOverride:
+                                type: boolean
+                              spokeToHub:
+                                items:
+                                  description: JSONPatchOp is one RFC 6902 JSON Patch
+                                    operation.
+                                  properties:
+                                    from:
+                                      type: string
+                                    op:
+                                      enum:
+                                      - add
+                                      - remove
+                                      - replace
+                                      - move
+                                      - copy
+                                      - test
+                                      type: string
+                                    path:
+                                      type: string
+                                    value:
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  required:
+                                  - op
+                                  - path
+                                  type: object
+                                type: array
+                            type: object
+                          listJoin:
+                            description: |-
+                              ListJoinParams: the hub field is an array of scalars; the spoke field is
+                              a single string produced by joining the array's (string-coerced)
+                              elements with Separator, and split back into an array on the reverse
+                              direction.
+                            properties:
+                              hubPath:
+                                type: string
+                              separator:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - separator
+                            - spokePath
+                            type: object
+                          listSplit:
+                            description: |-
+                              ListSplitParams is the structural mirror of ListJoinParams: the hub
+                              field is the delimited string, the spoke field is the array.
+                            properties:
+                              hubPath:
+                                type: string
+                              separator:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - separator
+                            - spokePath
+                            type: object
+                          mapToArrayByKey:
+                            description: |-
+                              MapToArrayByKeyParams is the structural mirror of ArrayToMapByKeyParams:
+                              the hub field is the map, the spoke field is the array.
+                            properties:
+                              hubPath:
+                                type: string
+                              keyField:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - keyField
+                            - spokePath
+                            type: object
+                          mapToFields:
+                            description: MapToFieldsParams is the structural mirror
+                              of FieldsToMapParams.
+                            properties:
+                              hubMapPath:
+                                type: string
+                              keyNames:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              onUnknownHubKey:
+                                default: Error
+                                description: |-
+                                  UnknownKeyPolicy controls behavior when a map-like field (FieldsToMap /
+                                  MapToFields) contains a key a rule didn't declare.
+                                enum:
+                                - Error
+                                - Drop
+                                type: string
+                              spokePaths:
+                                items:
+                                  type: string
+                                type: array
+                            required:
+                            - hubMapPath
+                            - spokePaths
+                            type: object
+                          numericScale:
+                            description: |-
+                              NumericScaleParams rescales a numeric field by a fixed factor between
+                              hub and spoke (hubValue == spokeValue * Factor) — e.g. converting
+                              stored megabytes to a displayed gigabyte field.
+                            properties:
+                              factor:
+                                type: number
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - factor
+                            - hubPath
+                            - spokePath
+                            type: object
+                          objectToScalar:
+                            description: |-
+                              ObjectToScalarParams: the hub field is an object; the spoke field is a
+                              scalar extracted from the hub object's Key.
+                            properties:
+                              defaultsForOtherKeys:
+                                x-kubernetes-preserve-unknown-fields: true
+                              hubPath:
+                                type: string
+                              key:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - key
+                            - spokePath
+                            type: object
+                          objectToSingletonArray:
+                            description: |-
+                              ObjectToSingletonArrayParams: the hub field is an object; the spoke field
+                              is a single-element array wrapping it.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
+                          reason:
+                            type: string
+                          scalarToFields:
+                            description: |-
+                              ScalarToFieldsParams: the hub field is a single scalar string; Pattern
+                              (a regexp with named capture groups) decomposes it into SpokeFields
+                              (capture group name -> spoke path), each coerced to that field's
+                              declared schema type. JoinTemplate (a Go text/template referencing the
+                              same group names, e.g. "{{.value}}{{.unit}}") reassembles the spoke
+                              fields back into the hub scalar for the reverse direction. The engine
+                              cannot verify that Pattern and JoinTemplate are true inverses of each
+                              other, so this is always treated as lossy unless LosslessOverride is
+                              set.
+                            properties:
+                              hubPath:
+                                type: string
+                              joinTemplate:
+                                description: |-
+                                  JoinTemplate is a Go text/template referencing the same group names
+                                  as Pattern, e.g. "{{.value}}{{.unit}}".
+                                type: string
+                              losslessOverride:
+                                type: boolean
+                              pattern:
+                                description: |-
+                                  Pattern is a regexp with named capture groups, e.g.
+                                  "^(?P<value>\\d+)(?P<unit>[A-Za-z]+)$".
+                                type: string
+                              spokeFields:
+                                additionalProperties:
+                                  type: string
+                                description: SpokeFields maps each named capture group
+                                  to the spoke path it fills.
+                                type: object
+                            required:
+                            - hubPath
+                            - joinTemplate
+                            - pattern
+                            - spokeFields
+                            type: object
+                          scalarToObject:
+                            description: |-
+                              ScalarToObjectParams: the hub field is a scalar; the spoke field is an
+                              object wrapping that scalar under Key.
+                            properties:
+                              defaultsForOtherKeys:
+                                x-kubernetes-preserve-unknown-fields: true
+                              hubPath:
+                                type: string
+                              key:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - key
+                            - spokePath
+                            type: object
+                          singletonArrayToObject:
+                            description: |-
+                              SingletonArrayToObjectParams: the hub field is an array; the spoke field
+                              is an object taken from the array's first element.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
+                          strategy:
+                            description: Strategy names one of the engine's built-in
+                              conversion strategies.
+                            enum:
+                            - FieldRename
+                            - ScalarToObject
+                            - ObjectToScalar
+                            - SingletonArrayToObject
+                            - ObjectToSingletonArray
+                            - FieldsToMap
+                            - MapToFields
+                            - ToAnnotation
+                            - ToLabel
+                            - EnumRemap
+                            - DefaultValue
+                            - Constant
+                            - Delete
+                            - JSONPatch
+                            - ForEach
+                            - TypeCoerce
+                            - ScalarToFields
+                            - FieldsToScalar
+                            - ArrayToMapByKey
+                            - MapToArrayByKey
+                            - NumericScale
+                            - ListJoin
+                            - ListSplit
+                            type: string
+                          toAnnotation:
+                            description: ToMetadataParams backs both ToAnnotation
+                              and ToLabel.
+                            properties:
+                              hubPath:
+                                type: string
+                              key:
+                                type: string
+                              restoreOnReverse:
+                                type: boolean
+                              serialization:
+                                default: JSON
+                                enum:
+                                - JSON
+                                - String
+                                type: string
+                            required:
+                            - hubPath
+                            - key
+                            type: object
+                          toLabel:
+                            description: ToMetadataParams backs both ToAnnotation
+                              and ToLabel.
+                            properties:
+                              hubPath:
+                                type: string
+                              key:
+                                type: string
+                              restoreOnReverse:
+                                type: boolean
+                              serialization:
+                                default: JSON
+                                enum:
+                                - JSON
+                                - String
+                                type: string
+                            required:
+                            - hubPath
+                            - key
+                            type: object
+                          typeCoerce:
+                            description: |-
+                              TypeCoerceParams converts a scalar field's JSON type (string, integer,
+                              number, or boolean) between whatever the hub and spoke schemas each
+                              declare at Path — e.g. a field that was a string in one version and
+                              becomes an integer in another.
+                            properties:
+                              path:
+                                type: string
+                            required:
+                            - path
+                            type: object
+                        required:
+                        - strategy
+                        type: object
+                      type: array
+                    version:
+                      type: string
+                  required:
+                  - version
+                  type: object
+                minItems: 1
+                type: array
+              targetXRD:
+                description: |-
+                  TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
+                  config applies to, by its metadata.name (which for XRDs is always
+                  "<plural>.<group>" — the same uniqueness guarantee native CRDs offer).
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              unmappedFieldPolicy:
+                default: Error
+                description: |-
+                  UnmappedFieldPolicy controls what happens when a hub or spoke field is
+                  left unclaimed by any rule and has no identical counterpart on the other
+                  side. The conservative default (Error) means "unknown means assume
+                  lossy, never silently pass."
+                enum:
+                - Error
+                - Warn
+                type: string
+              unmappedFieldReason:
+                type: string
+              webhookServerRef:
+                description: |-
+                  WebhookServerRef names a ConversionWebhookServer instance to serve this
+                  config's conversions. Omit to use whichever instance is marked default.
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - hubVersion
+            - spokes
+            - targetXRD
+            type: object
+          status:
+            description: XRDConversionConfigStatus is the observed state of an XRDConversionConfig.
+            properties:
+              assignedWebhookServer:
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastAppliedPlanHash:
+                type: string
+              message:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              observedXRDGeneration:
+                format: int64
+                type: integer
+              overallLossless:
+                type: boolean
+              phase:
+                enum:
+                - Pending
+                - Validating
+                - Validated
+                - Invalid
+                - Applied
+                - Stale
+                - Reverting
+                - Failed
+                type: string
+              schemaHash:
+                type: string
+              spokeStatuses:
+                items:
+                  description: SpokeConversionStatus is the analysis outcome for one
+                    spoke version.
+                  properties:
+                    errors:
+                      items:
+                        type: string
+                      type: array
+                    fieldsUncoveredHub:
+                      items:
+                        type: string
+                      type: array
+                    fieldsUncoveredSpoke:
+                      items:
+                        type: string
+                      type: array
+                    lossless:
+                      description: |-
+                        LosslessVerdict records whether a mapping is lossless in each direction
+                        independently.
+                      properties:
+                        hubToSpoke:
+                          type: boolean
+                        spokeToHub:
+                          type: boolean
+                      required:
+                      - hubToSpoke
+                      - spokeToHub
+                      type: object
+                    ruleResults:
+                      items:
+                        description: RuleResult reports the outcome of resolving and
+                          analyzing a single rule.
+                        properties:
+                          errors:
+                            items:
+                              type: string
+                            type: array
+                          hubPaths:
+                            items:
+                              type: string
+                            type: array
+                          index:
+                            type: integer
+                          lossless:
+                            description: |-
+                              LosslessVerdict records whether a mapping is lossless in each direction
+                              independently.
+                            properties:
+                              hubToSpoke:
+                                type: boolean
+                              spokeToHub:
+                                type: boolean
+                            required:
+                            - hubToSpoke
+                            - spokeToHub
+                            type: object
+                          spokePaths:
+                            items:
+                              type: string
+                            type: array
+                          strategy:
+                            description: Strategy names one of the engine's built-in
+                              conversion strategies.
+                            enum:
+                            - FieldRename
+                            - ScalarToObject
+                            - ObjectToScalar
+                            - SingletonArrayToObject
+                            - ObjectToSingletonArray
+                            - FieldsToMap
+                            - MapToFields
+                            - ToAnnotation
+                            - ToLabel
+                            - EnumRemap
+                            - DefaultValue
+                            - Constant
+                            - Delete
+                            - JSONPatch
+                            - ForEach
+                            - TypeCoerce
+                            - ScalarToFields
+                            - FieldsToScalar
+                            - ArrayToMapByKey
+                            - MapToArrayByKey
+                            - NumericScale
+                            - ListJoin
+                            - ListSplit
+                            type: string
+                          warnings:
+                            items:
+                              type: string
+                            type: array
+                        required:
+                        - index
+                        - lossless
+                        - strategy
+                        type: object
+                      type: array
+                    version:
+                      type: string
+                    warnings:
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - lossless
+                  - version
+                  type: object
+                type: array
+              webhookPath:
+                type: string
+              webhookURL:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

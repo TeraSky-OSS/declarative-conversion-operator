@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: controller-manager-metrics-monitor
+  namespace: system
+  labels:
+    control-plane: controller-manager
+spec:
+  endpoints:
+    - path: /metrics
+      port: metrics
+      interval: 30s
+  selector:
+    matchLabels:
+      control-plane: controller-manager

@@ -1,0 +1,313 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xwidgets.example.org
+spec:
+  scope: Namespaced
+  versions:
+    - name: v3
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                replicaCount:
+                  type: integer
+                network:
+                  type: object
+                  properties:
+                    cidr:
+                      type: string
+                cpuLimit:
+                  type: string
+                memoryLimit:
+                  type: string
+                description:
+                  type: string
+                size:
+                  type: string
+                  enum: ["Small", "Medium", "Large"]
+                legacyFlag:
+                  type: boolean
+                primaryRegion:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                zones:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                tier:
+                  type: string
+                volumes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      sizeGB:
+                        type: string
+                      label:
+                        type: string
+                priority:
+                  type: integer
+                diskSize:
+                  type: string
+                memoryMB:
+                  type: integer
+                dnsServers:
+                  type: array
+                  items:
+                    type: string
+                contactName:
+                  type: string
+                contactEmail:
+                  type: string
+                endpoints:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      url:
+                        type: string
+                limitsByTier:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      limit:
+                        type: string
+                allowedCIDRsCSV:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                observedGeneration:
+                  type: integer
+    - name: v2
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # -- fields with a v2-specific strategy --
+                storageSize:
+                  type: string
+                replicas:
+                  type: object
+                  properties:
+                    count:
+                      type: integer
+                networkCIDR:
+                  type: string
+                limits:
+                  type: object
+                  additionalProperties:
+                    type: string
+                size:
+                  type: string
+                  enum: ["S", "M", "L"]
+                legacyFlagV2:
+                  type: boolean
+                schemaVersion:
+                  type: string
+                priority:
+                  type: string
+                diskSizeValue:
+                  type: integer
+                diskSizeUnit:
+                  type: string
+                memoryGB:
+                  type: integer
+                dnsServersCSV:
+                  type: string
+                # -- mirrors of fields owned by the v1 spoke's rules, kept
+                # identical in shape so they're auto-covered here without a
+                # rule --
+                primaryRegion:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                zones:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                tier:
+                  type: string
+                volumes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      sizeGB:
+                        type: string
+                      label:
+                        type: string
+                contactName:
+                  type: string
+                contactEmail:
+                  type: string
+                endpoints:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      url:
+                        type: string
+                limitsByTier:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      limit:
+                        type: string
+                allowedCIDRsCSV:
+                  type: string
+            status:
+              type: object
+              properties:
+                # renamed from the hub's status.phase via a FieldRename rule
+                # scoped to status.*, proving rules apply to status the same
+                # way they apply to spec
+                state:
+                  type: string
+                observedGeneration:
+                  type: integer
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # -- fields with a v1-specific strategy --
+                zone:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                regions:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                envTag:
+                  type: string
+                teamTag:
+                  type: string
+                computeUnits:
+                  type: integer
+                debugMode:
+                  type: boolean
+                volumes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      size:
+                        type: string
+                      name:
+                        type: string
+                contact:
+                  type: string
+                endpoints:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                tierLimits:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      tier:
+                        type: string
+                      limit:
+                        type: string
+                allowedCIDRs:
+                  type: array
+                  items:
+                    type: string
+                # -- mirrors of fields owned by the v2 spoke's rules, kept
+                # identical in shape so they're auto-covered here without a
+                # rule --
+                storageGB:
+                  type: string
+                replicaCount:
+                  type: integer
+                network:
+                  type: object
+                  properties:
+                    cidr:
+                      type: string
+                cpuLimit:
+                  type: string
+                memoryLimit:
+                  type: string
+                description:
+                  type: string
+                size:
+                  type: string
+                  enum: ["Small", "Medium", "Large"]
+                legacyFlag:
+                  type: boolean
+                priority:
+                  type: integer
+                diskSize:
+                  type: string
+                memoryMB:
+                  type: integer
+                dnsServers:
+                  type: array
+                  items:
+                    type: string
+            status:
+              type: object
+              properties:
+                # identical to the hub's status shape, so it's auto-covered
+                # here with no rule needed at all
+                phase:
+                  type: string
+                observedGeneration:
+                  type: integer

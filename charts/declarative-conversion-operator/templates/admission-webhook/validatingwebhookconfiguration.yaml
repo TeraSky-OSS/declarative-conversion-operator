@@ -1,0 +1,62 @@
+{{- if .Values.admissionWebhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-validating-webhook-configuration
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
+webhooks:
+  - name: vxrdconversionconfig.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.admissionWebhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: {{ include "declarative-conversion-operator.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate-terasky-com-v1alpha1-xrdconversionconfig
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["xrdconversionconfigs"]
+        scope: Cluster
+  - name: vcrdconversionconfig.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.admissionWebhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: {{ include "declarative-conversion-operator.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate-terasky-com-v1alpha1-crdconversionconfig
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["crdconversionconfigs"]
+        scope: Cluster
+  - name: vconversionwebhookserver.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.admissionWebhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: {{ include "declarative-conversion-operator.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate-terasky-com-v1alpha1-conversionwebhookserver
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["conversionwebhookservers"]
+        scope: Cluster
+{{- end }}

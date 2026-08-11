@@ -1,0 +1,37 @@
+# RBAC for cmd/webhook-server pods. Deliberately minimal and read-only:
+# each replica runs its own controller-runtime informers directly against
+# the API server (see internal/webhookserver.Reconciler) so it can compile
+# its own in-memory registry without depending on the operator manager at
+# request time. Nothing here grants write access — the webhook-server
+# binary never mutates any Kubernetes object.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: webhook-server-role
+rules:
+  - apiGroups:
+      - terasky.com
+    resources:
+      - xrdconversionconfigs
+      - crdconversionconfigs
+      - conversionwebhookservers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apiextensions.crossplane.io
+    resources:
+      - compositeresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch

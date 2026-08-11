@@ -1,0 +1,21 @@
+apiVersion: terasky.com/v1alpha1
+kind: CRDConversionConfig
+metadata:
+  name: widgets-conversion
+spec:
+  targetCRD:
+    name: widgets.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+        - strategy: Delete
+          delete:
+            path: spec.legacyDebugFlag
+            existsOn: Hub
+          acknowledgeLossy: true
+          reason: "not needed on v1"

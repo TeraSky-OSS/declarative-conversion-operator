@@ -1,0 +1,47 @@
+apiVersion: example.org/v1
+kind: Widget
+metadata:
+  name: sample-v1
+  labels:
+    tier: "bronze"
+spec:
+  zone:
+    name: "eu-central-1a"
+  regions:
+    - name: "eu-central-1"
+  envTag: "dev"
+  teamTag: "core"
+  computeUnits: 5
+  debugMode: true
+  volumes:
+    - size: "10"
+      name: "scratch"
+  storageGB: "64"
+  replicaCount: 1
+  network:
+    cidr: "192.168.0.0/24"
+  cpuLimit: "1"
+  memoryLimit: "2Gi"
+  description: "Developer sandbox widget"
+  size: "Small"
+  legacyFlag: false
+  contact: "Sam Lee <sam@example.com>"
+  endpoints:
+    dev:
+      url: "https://dev.example.com"
+  tierLimits:
+    - tier: "silver"
+      limit: "20"
+    - tier: "bronze"
+      limit: "10"
+  allowedCIDRs:
+    - "10.1.0.0/16"
+    - "10.2.0.0/16"
+  priority: 1
+  diskSize: "10Gi"
+  memoryMB: 2048
+  dnsServers:
+    - "10.0.0.53"
+status:
+  phase: "Pending"
+  observedGeneration: 1

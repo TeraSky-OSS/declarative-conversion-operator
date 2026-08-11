@@ -1,0 +1,13 @@
+apiVersion: terasky.com/v1alpha1
+kind: ConversionWebhookServer
+metadata:
+  name: default
+spec:
+  default: true
+  replicas: 2
+  certificate:
+    issuerRef:
+      name: declarative-conversion-selfsigned-issuer
+      kind: ClusterIssuer
+  podDisruptionBudget:
+    minAvailable: 1

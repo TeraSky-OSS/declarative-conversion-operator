@@ -1,0 +1,33 @@
+apiVersion: terasky.com/v1alpha1
+kind: CRDConversionConfig
+metadata:
+  name: gadgets-e2e-conversion
+spec:
+  targetCRD:
+    name: gadgets.nativecrd.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+        - strategy: ToAnnotation
+          toAnnotation:
+            hubPath: spec.description
+            key: nativecrd.example.org/description
+            restoreOnReverse: true
+        - strategy: DefaultValue
+          defaultValue:
+            path: spec.replicas
+            existsOn: Hub
+            default: 1
+          acknowledgeLossy: true
+          reason: "replicas only exists on the hub; converting a hub-native object down to v1 and back up loses the original value in favor of the default"
+        - strategy: Delete
+          delete:
+            path: spec.debugMode
+            existsOn: Spoke
+          acknowledgeLossy: true
+          reason: "debug-only field, not carried to the hub or other spokes"

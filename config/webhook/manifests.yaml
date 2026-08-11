@@ -1,0 +1,58 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+  annotations:
+    cert-manager.io/inject-ca-from: declarative-conversion-operator-system/webhook-server-cert
+webhooks:
+  - name: vxrdconversionconfig.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: webhook-service
+        namespace: system
+        path: /validate-terasky-com-v1alpha1-xrdconversionconfig
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["xrdconversionconfigs"]
+        scope: Cluster
+  - name: vcrdconversionconfig.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: webhook-service
+        namespace: system
+        path: /validate-terasky-com-v1alpha1-crdconversionconfig
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["crdconversionconfigs"]
+        scope: Cluster
+  - name: vconversionwebhookserver.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: webhook-service
+        namespace: system
+        path: /validate-terasky-com-v1alpha1-conversionwebhookserver
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["conversionwebhookservers"]
+        scope: Cluster

@@ -1,0 +1,45 @@
+declarative-conversion-operator has been installed.
+
+{{- if not (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
+
+⚠️  cert-manager.io/v1 was not detected in this cluster's API. Both this
+    operator's own admission webhook and every ConversionWebhookServer
+    instance's conversion webhook depend on cert-manager for their TLS
+    certificates — install cert-manager (https://cert-manager.io/docs/installation/)
+    before continuing, or the manager and webhook-server pods will not
+    become Ready.
+{{- end }}
+
+1. Wait for the default ConversionWebhookServer instance to become Ready:
+
+     kubectl wait --for=condition=Available conversionwebhookserver/{{ .Values.conversionWebhookServer.name }} --timeout=120s
+     kubectl get conversionwebhookserver {{ .Values.conversionWebhookServer.name }} -o wide
+
+2. Create your first XRDConversionConfig, pointing spec.targetXRD.name at an
+   existing Crossplane CompositeResourceDefinition with more than one
+   version. See config/samples/terasky_v1alpha1_xrdconversionconfig.yaml in
+   the repository for a starting example, and check its status once applied:
+
+     kubectl apply -f my-xrdconversionconfig.yaml
+     kubectl get xrdconversionconfig my-config -o yaml
+
+   The `status.conditions` and `status.spokeStatuses` fields explain exactly
+   what's blocking it if it isn't reaching phase=Applied — most commonly
+   Validated=False (a lossy field needs `acknowledgeLossy: true`), or
+   WebhookServerReady=False (the ConversionWebhookServer instance isn't
+   Available yet).
+
+3. Test conversions offline before applying, using the convctl CLI:
+
+     convctl test --xrd my-xrd.yaml --config my-xrdconversionconfig.yaml --samples ./samples/
+
+{{- if .Values.crds.install }}
+
+NOTE: This chart's CRDs are installed from the crds/ directory, which Helm
+      applies once at install time and never touches again on `helm upgrade`
+      or `helm uninstall` (Helm's standard, safest CRD-handling convention).
+      If a future chart upgrade changes the CRD schema, apply the new CRDs
+      manually first:
+
+        helm show crds {{ .Chart.Name }} | kubectl apply -f -
+{{- end }}

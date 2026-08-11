@@ -1,0 +1,46 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+---
+# Matches the Service every ConversionWebhookServer instance's own
+# controller creates (see internal/controller/conversionwebhookserver_controller.go),
+# across every instance and every namespace they may live in — the label
+# selector is what ties this to them, not a per-instance template.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: declarative-conversion-webhook-server
+      app.kubernetes.io/managed-by: declarative-conversion-operator
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}

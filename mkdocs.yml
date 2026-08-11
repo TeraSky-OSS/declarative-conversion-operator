@@ -1,0 +1,105 @@
+site_name: declarative-conversion-operator
+site_description: Declarative conversion webhooks for Crossplane XRDs — configure hub/spoke version conversions without hand-writing a webhook.
+site_url: https://terasky-oss.github.io/declarative-conversion-operator/
+repo_url: https://github.com/terasky-oss/declarative-conversion-operator
+repo_name: terasky-oss/declarative-conversion-operator
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Installation: installation.md
+  - Configuration:
+      - configuration/index.md
+      - XRDConversionConfig: configuration/xrdconversionconfig.md
+      - CRDConversionConfig: configuration/crdconversionconfig.md
+      - ConversionWebhookServer: configuration/conversionwebhookserver.md
+  - Architecture: architecture.md
+  - CLI Reference: cli.md
+  - Strategy Reference:
+      - strategies/index.md
+      - Field Rename: strategies/field-rename.md
+      - Scalar ⇄ Object: strategies/scalar-object.md
+      - Singleton Array ⇄ Object: strategies/singleton-array-object.md
+      - Fields ⇄ Map: strategies/fields-map.md
+      - To Annotation / Label: strategies/metadata-stash.md
+      - Enum Remap: strategies/enum-remap.md
+      - Default Value: strategies/default-value.md
+      - Constant: strategies/constant.md
+      - Delete: strategies/delete.md
+      - JSON Patch: strategies/json-patch.md
+      - For Each: strategies/for-each.md
+      - Type Coerce: strategies/type-coerce.md
+      - Scalar ⇄ Fields: strategies/scalar-fields.md
+      - Array ⇄ Map by Key: strategies/array-map-key.md
+      - Numeric Scale: strategies/numeric-scale.md
+      - List Join / Split: strategies/list-join-split.md
+  - FAQ: faq.md
+  - Limitations: limitations.md
+  - Roadmap: roadmap.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/terasky-oss/declarative-conversion-operator

@@ -1,0 +1,200 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v3
+  spokes:
+    - version: v2
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+
+        # Rules apply identically to status.* paths as they do to spec.* —
+        # this one renames the hub's status.phase to the spoke's
+        # status.state, proving the engine doesn't special-case status.
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: status.phase
+            spokePath: status.state
+
+        - strategy: ScalarToObject
+          scalarToObject:
+            hubPath: spec.replicaCount
+            spokePath: spec.replicas
+            key: count
+
+        - strategy: ObjectToScalar
+          objectToScalar:
+            hubPath: spec.network
+            spokePath: spec.networkCIDR
+            key: cidr
+
+        - strategy: FieldsToMap
+          fieldsToMap:
+            hubPaths:
+              - spec.cpuLimit
+              - spec.memoryLimit
+            spokeMapPath: spec.limits
+            keyNames:
+              spec.cpuLimit: cpu
+              spec.memoryLimit: memory
+
+        - strategy: ToAnnotation
+          toAnnotation:
+            hubPath: spec.description
+            key: xrd.example.org/description
+            restoreOnReverse: true
+
+        - strategy: EnumRemap
+          enumRemap:
+            path: spec.size
+            mapping:
+              - hub: Small
+                spoke: S
+              - hub: Medium
+                spoke: M
+              - hub: Large
+                spoke: L
+
+        - strategy: Constant
+          constant:
+            path: spec.schemaVersion
+            existsOn: Spoke
+            value: "v2"
+          acknowledgeLossy: true
+          reason: "schemaVersion is a v2-only bookkeeping field; its value is always forced to \"v2\" and carries no information worth round-tripping through the hub"
+
+        - strategy: JSONPatch
+          jsonPatch:
+            hubToSpoke:
+              - op: move
+                from: /spec/legacyFlag
+                path: /spec/legacyFlagV2
+            spokeToHub:
+              - op: move
+                from: /spec/legacyFlagV2
+                path: /spec/legacyFlag
+            losslessOverride: true
+
+        - strategy: TypeCoerce
+          typeCoerce:
+            path: spec.priority
+
+        - strategy: ScalarToFields
+          scalarToFields:
+            hubPath: spec.diskSize
+            pattern: '^(?P<value>\d+)(?P<unit>[A-Za-z]+)$'
+            spokeFields:
+              value: spec.diskSizeValue
+              unit: spec.diskSizeUnit
+            joinTemplate: "{{.value}}{{.unit}}"
+            losslessOverride: true
+
+        - strategy: NumericScale
+          numericScale:
+            hubPath: spec.memoryMB
+            spokePath: spec.memoryGB
+            factor: 1024
+          acknowledgeLossy: true
+          reason: "both memoryMB and memoryGB are integers, so a memoryMB value that isn't an exact multiple of 1024 rounds when displayed as GB"
+
+        - strategy: ListJoin
+          listJoin:
+            hubPath: spec.dnsServers
+            spokePath: spec.dnsServersCSV
+            separator: ","
+
+    - version: v1
+      rules:
+        - strategy: SingletonArrayToObject
+          singletonArrayToObject:
+            hubPath: spec.zones
+            spokePath: spec.zone
+
+        - strategy: ObjectToSingletonArray
+          objectToSingletonArray:
+            hubPath: spec.primaryRegion
+            spokePath: spec.regions
+
+        - strategy: MapToFields
+          mapToFields:
+            hubMapPath: spec.tags
+            spokePaths:
+              - spec.envTag
+              - spec.teamTag
+            keyNames:
+              spec.envTag: env
+              spec.teamTag: team
+
+        - strategy: ToLabel
+          toLabel:
+            hubPath: spec.tier
+            key: tier
+            serialization: String
+            restoreOnReverse: true
+
+        - strategy: DefaultValue
+          defaultValue:
+            path: spec.computeUnits
+            existsOn: Spoke
+            default: 1
+          acknowledgeLossy: true
+          reason: "computeUnits only exists on v1; converting a v1 object up to the hub and back down is fine, but hub-native objects converted down to v1 get a sane default and lose nothing on the way back since the hub never had a real value to begin with"
+
+        - strategy: Delete
+          delete:
+            path: spec.debugMode
+            existsOn: Spoke
+          acknowledgeLossy: true
+          reason: "debugMode is a v1-only legacy escape hatch with no hub equivalent; intentionally dropped when converting up to the hub"
+
+        - strategy: ForEach
+          forEach:
+            hubItemsPath: spec.volumes
+            spokeItemsPath: spec.volumes
+            rules:
+              - strategy: FieldRename
+                fieldRename:
+                  hubPath: sizeGB
+                  spokePath: size
+              - strategy: FieldRename
+                fieldRename:
+                  hubPath: label
+                  spokePath: name
+
+        - strategy: FieldsToScalar
+          fieldsToScalar:
+            hubFields:
+              name: spec.contactName
+              email: spec.contactEmail
+            pattern: '^(?P<name>[^<]+) <(?P<email>[^>]+)>$'
+            spokePath: spec.contact
+            joinTemplate: "{{.name}} <{{.email}}>"
+            losslessOverride: true
+
+        - strategy: ArrayToMapByKey
+          arrayToMapByKey:
+            hubPath: spec.endpoints
+            spokePath: spec.endpoints
+            keyField: name
+          acknowledgeLossy: true
+          reason: "the array->map hub->spoke direction is lossless, but the reverse (spoke->hub) reconstructs the array sorted by key rather than preserving whatever order the original array had"
+
+        - strategy: MapToArrayByKey
+          mapToArrayByKey:
+            hubPath: spec.limitsByTier
+            spokePath: spec.tierLimits
+            keyField: tier
+          acknowledgeLossy: true
+          reason: "the map->array hub->spoke direction reconstructs the array sorted by key rather than preserving any particular order"
+
+        - strategy: ListSplit
+          listSplit:
+            hubPath: spec.allowedCIDRsCSV
+            spokePath: spec.allowedCIDRs
+            separator: ","
