@@ -30,6 +30,27 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+sboms:
+  # One CycloneDX SBOM per archive (${artifact}.sbom); requires syft on PATH
+  # (installed via anchore/sbom-action/download-syft in the release workflow).
+  - artifacts: archive
+
+signs:
+  # Keyless-sign checksums.txt with cosign, using the workflow's GitHub OIDC
+  # identity (needs id-token: write and cosign on PATH). Verifying the
+  # checksum file's signature and matching an archive's hash against it
+  # verifies that archive, so we don't need to sign every archive individually.
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+
 changelog:
   sort: asc
   use: git
@@ -53,4 +74,6 @@ release:
 
     Container images: `ghcr.io/terasky-oss/declarative-conversion-operator:{{ .Tag }}` and `ghcr.io/terasky-oss/declarative-conversion-webhook-server:{{ .Tag }}`.
     Helm chart: `oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version {{ .Version }}`.
+
+    `checksums.txt` below is signed keylessly with [cosign](https://github.com/sigstore/cosign) (`checksums.txt.sig` / `checksums.txt.pem`) using this workflow's GitHub OIDC identity, and each archive has an accompanying CycloneDX SBOM (`*.sbom`). See the "Signed artifacts" section further down for verification commands and container image/Helm chart digests.
   prerelease: auto
