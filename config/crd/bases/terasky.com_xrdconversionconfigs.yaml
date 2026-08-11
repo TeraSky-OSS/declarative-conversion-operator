@@ -293,8 +293,7 @@ spec:
                               hubItemsPath:
                                 type: string
                               rules:
-                                items: {}
-                                type: array
+                                x-kubernetes-preserve-unknown-fields: true
                               spokeItemsPath:
                                 type: string
                             required:

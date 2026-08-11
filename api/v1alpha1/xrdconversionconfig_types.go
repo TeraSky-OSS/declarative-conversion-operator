@@ -267,9 +267,11 @@ type JSONPatchParams struct {
 // and the corresponding spoke array. Nested rule paths are relative to a
 // single array element. Nesting is capped at depth 1.
 type ForEachParams struct {
-	HubItemsPath   string           `json:"hubItemsPath"`
-	SpokeItemsPath string           `json:"spokeItemsPath"`
-	Rules          []ConversionRule `json:"rules"`
+	HubItemsPath   string `json:"hubItemsPath"`
+	SpokeItemsPath string `json:"spokeItemsPath"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Rules []ConversionRule `json:"rules"`
 }
 
 // TypeCoerceParams converts a scalar field's JSON type (string, integer,
