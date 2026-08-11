@@ -57,7 +57,9 @@ func TestXRDReconcile_AddsFinalizerThenApplies(t *testing.T) {
 	// second call on isn't required by the code, but keeping both present
 	// throughout matches how a real cluster would behave and exercises the
 	// same code path.
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +145,9 @@ func TestXRDReconcile_XRDNotEstablished_Pending(t *testing.T) {
 	server, secret := readyServer("srv")
 
 	c := newFakeClient(cfg, server, secret).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	res, err := reconcileXRD(t, r, "cfg")
@@ -167,7 +171,9 @@ func TestXRDReconcile_ServerNotReady_Pending(t *testing.T) {
 	server.Status.ReadyReplicas = 0 // not ready
 
 	c := newFakeClient(cfg, server, secret).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	res, err := reconcileXRD(t, r, "cfg")
@@ -189,7 +195,9 @@ func TestXRDReconcile_NoAssignableServer_Invalid(t *testing.T) {
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 	// No ConversionWebhookServer exists at all.
 	c := newFakeClient(cfg).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
@@ -210,7 +218,9 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	server, secret := readyServer("srv")
 
 	c := newFakeClient(cfg, server, secret).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	// Break the rule so analysis now errors (a rename targeting a
@@ -248,7 +258,9 @@ func TestXRDReconcile_Drift_KeepServingStale(t *testing.T) {
 	server, secret := readyServer("srv")
 
 	c := newFakeClient(cfg, server, secret).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	live := getXRDConfig(t, r, "cfg")
@@ -275,7 +287,9 @@ func TestXRDReconcile_Delete_BlockedByMultipleServedVersions(t *testing.T) {
 	cfg.DeletionTimestamp = &now
 
 	c := newFakeClient(cfg).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	res, err := reconcileXRD(t, r, "cfg")
@@ -304,7 +318,9 @@ func TestXRDReconcile_Delete_UnsafeOverrideRemovesFinalizer(t *testing.T) {
 	cfg.DeletionTimestamp = &now
 
 	c := newFakeClient(cfg).build().Build()
-	c.Create(context.Background(), xrd)
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
