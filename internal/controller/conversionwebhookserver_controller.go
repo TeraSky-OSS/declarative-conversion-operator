@@ -321,8 +321,8 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		WithArgs(
 			fmt.Sprintf("--webhook-server-name=%s", server.Name),
 			"--tls-cert-dir=/tls",
-			fmt.Sprintf("--conversion-port=%d", webhookServerConversionPort),
-			fmt.Sprintf("--metrics-port=%d", webhookServerMetricsPort),
+			fmt.Sprintf("--conversion-bind-address=:%d", webhookServerConversionPort),
+			fmt.Sprintf("--metrics-bind-address=:%d", webhookServerMetricsPort),
 		).
 		WithPorts(
 			applycorev1.ContainerPort().WithName("conversion").WithContainerPort(webhookServerConversionPort),
