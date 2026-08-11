@@ -2,15 +2,15 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "xrd-conversion-operator.fullname" . }}-webhook-cert
+  name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
 spec:
-  secretName: {{ include "xrd-conversion-operator.fullname" . }}-webhook-cert
+  secretName: {{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
   dnsNames:
-    - {{ include "xrd-conversion-operator.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
-    - {{ include "xrd-conversion-operator.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+    - {{ include "declarative-conversion-operator.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "declarative-conversion-operator.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
   duration: {{ .Values.admissionWebhook.certificate.duration | quote }}
   renewBefore: {{ .Values.admissionWebhook.certificate.renewBefore | quote }}
   issuerRef:
@@ -18,7 +18,7 @@ spec:
     name: {{ .Values.admissionWebhook.certificate.issuerRef.name }}
     kind: {{ .Values.admissionWebhook.certificate.issuerRef.kind | default "ClusterIssuer" }}
     {{- else }}
-    name: {{ include "xrd-conversion-operator.fullname" . }}-selfsigned-issuer
+    name: {{ include "declarative-conversion-operator.fullname" . }}-selfsigned-issuer
     kind: ClusterIssuer
     {{- end }}
 {{- end }}

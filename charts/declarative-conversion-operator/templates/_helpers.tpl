@@ -1,26 +1,26 @@
 {{/*
 Base chart name.
 */}}
-{{- define "xrd-conversion-operator.name" -}}
+{{- define "declarative-conversion-operator.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Fully qualified app name.
 */}}
-{{- define "xrd-conversion-operator.fullname" -}}
+{{- define "declarative-conversion-operator.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s" (include "xrd-conversion-operator.name" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s" (include "declarative-conversion-operator.name" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
 {{/*
 Common labels.
 */}}
-{{- define "xrd-conversion-operator.labels" -}}
-app.kubernetes.io/name: {{ include "xrd-conversion-operator.name" . }}
+{{- define "declarative-conversion-operator.labels" -}}
+app.kubernetes.io/name: {{ include "declarative-conversion-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
@@ -30,8 +30,8 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{/*
 Manager selector labels.
 */}}
-{{- define "xrd-conversion-operator.managerSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "xrd-conversion-operator.name" . }}
+{{- define "declarative-conversion-operator.managerSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "declarative-conversion-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 control-plane: controller-manager
 {{- end }}
@@ -39,9 +39,9 @@ control-plane: controller-manager
 {{/*
 Manager ServiceAccount name.
 */}}
-{{- define "xrd-conversion-operator.serviceAccountName" -}}
+{{- define "declarative-conversion-operator.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (printf "%s-manager" (include "xrd-conversion-operator.fullname" .)) .Values.serviceAccount.name }}
+{{- default (printf "%s-manager" (include "declarative-conversion-operator.fullname" .)) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
@@ -51,9 +51,9 @@ Manager ServiceAccount name.
 Webhook-server ServiceAccount name — shared across every ConversionWebhookServer
 instance, since its RBAC (read-only, cluster-scoped) doesn't vary per instance.
 */}}
-{{- define "xrd-conversion-operator.webhookServerServiceAccountName" -}}
+{{- define "declarative-conversion-operator.webhookServerServiceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (printf "%s-webhook-server" (include "xrd-conversion-operator.fullname" .)) .Values.serviceAccount.webhookServerName }}
+{{- default (printf "%s-webhook-server" (include "declarative-conversion-operator.fullname" .)) .Values.serviceAccount.webhookServerName }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.webhookServerName }}
 {{- end }}
@@ -63,7 +63,7 @@ instance, since its RBAC (read-only, cluster-scoped) doesn't vary per instance.
 Namespace ConversionWebhookServer child resources land in when
 spec.namespace is left unset — defaults to the release namespace.
 */}}
-{{- define "xrd-conversion-operator.defaultServerNamespace" -}}
+{{- define "declarative-conversion-operator.defaultServerNamespace" -}}
 {{ .Release.Namespace }}
 {{- end }}
 
@@ -71,6 +71,6 @@ spec.namespace is left unset — defaults to the release namespace.
 The manager's own admission-webhook Service name (referenced by both the
 Certificate and the ValidatingWebhookConfiguration).
 */}}
-{{- define "xrd-conversion-operator.webhookServiceName" -}}
-{{ include "xrd-conversion-operator.fullname" . }}-webhook-service
+{{- define "declarative-conversion-operator.webhookServiceName" -}}
+{{ include "declarative-conversion-operator.fullname" . }}-webhook-service
 {{- end }}

@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "xrd-conversion-operator.fullname" . }}-manager
+  name: {{ include "declarative-conversion-operator.fullname" . }}-manager
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
     control-plane: controller-manager
 spec:
   replicas: {{ .Values.manager.replicaCount }}
   selector:
     matchLabels:
-      {{- include "xrd-conversion-operator.managerSelectorLabels" . | nindent 6 }}
+      {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "xrd-conversion-operator.managerSelectorLabels" . | nindent 8 }}
+        {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "xrd-conversion-operator.serviceAccountName" . }}
+      serviceAccountName: {{ include "declarative-conversion-operator.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -76,7 +76,7 @@ spec:
       volumes:
         - name: webhook-certs
           secret:
-            secretName: {{ include "xrd-conversion-operator.fullname" . }}-webhook-cert
+            secretName: {{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
       {{- end }}
       {{- with .Values.manager.nodeSelector }}
       nodeSelector:

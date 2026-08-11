@@ -3,9 +3,9 @@
 # exact same source tree) without duplicating build-stage maintenance
 # across separate Dockerfiles.
 #
-#   docker build --build-arg COMPONENT=manager        -t xrd-conversion-operator:manager .
-#   docker build --build-arg COMPONENT=webhook-server  -t xrd-conversion-operator:webhook-server .
-#   docker build --build-arg COMPONENT=xrdconvctl       -t xrd-conversion-operator:xrdconvctl .
+#   docker build --build-arg COMPONENT=manager        -t declarative-conversion-operator:manager .
+#   docker build --build-arg COMPONENT=webhook-server  -t declarative-conversion-operator:webhook-server .
+#   docker build --build-arg COMPONENT=convctl       -t declarative-conversion-operator:convctl .
 
 ARG GO_VERSION=1.26.5
 

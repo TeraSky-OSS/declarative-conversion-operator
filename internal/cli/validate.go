@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package cli
 import (
 	"fmt"
 
-	internalwebhook "github.com/vrabbi/xrd-conversion-operator/internal/webhook"
+	internalwebhook "github.com/vrabbi/declarative-conversion-operator/internal/webhook"
 )
 
 // ValidateResult is the outcome of the `validate` subcommand: the same

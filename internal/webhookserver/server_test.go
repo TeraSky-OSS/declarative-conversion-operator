@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/vrabbi/xrd-conversion-operator/pkg/engine"
+	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
 )
 
 func TestHandleConvert_NotRegistered_FailsClosed(t *testing.T) {

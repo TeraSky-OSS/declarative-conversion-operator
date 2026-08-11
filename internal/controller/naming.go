@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,4 +32,4 @@ func cwsHPAName(server string) string               { return server + "-webhook-
 // operator applies to resources it doesn't fully own (XRDs, most notably),
 // so its ownership is scoped to exactly the fields it sets and never fights
 // other owners of the same object.
-const FieldOwner = "xrdconversion-operator"
+const FieldOwner = "declarative-conversion-operator"

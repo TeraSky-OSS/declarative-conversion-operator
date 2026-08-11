@@ -1,4 +1,4 @@
-# xrd-conversion-operator
+# declarative-conversion-operator
 
 A Kubernetes operator that lets admins declare field-level conversions between [Crossplane](https://crossplane.io) XRD (`CompositeResourceDefinition`) versions using built-in strategies — no hand-written conversion webhook required.
 
@@ -10,7 +10,7 @@ Crossplane XRDs support multiple version schemas the same way native CRDs do, bu
 - **Conservative by default.** Any conversion the engine can't prove is lossless is rejected unless explicitly acknowledged (`acknowledgeLossy: true`).
 - **Safe by construction.** The operator never patches a live XRD until the config is validated, the XRD is healthy, and the assigned webhook server is confirmed ready — and never reverts a working conversion setup on deletion if doing so would strand clients on a non-storage version.
 - **Fast where it matters.** The webhook server precompiles every rule into a resolved-path execution plan and serves ConversionReview requests from an in-memory, per-replica registry — no network calls, no re-parsing, in the API admission critical path.
-- **Testable offline.** The `xrdconvctl` CLI runs the exact same conversion engine against local YAML files and a directory of samples, before anything touches a cluster.
+- **Testable offline.** The `convctl` CLI runs the exact same conversion engine against local YAML files and a directory of samples, before anything touches a cluster.
 
 ## Architecture
 
@@ -49,20 +49,20 @@ internal/assign/       shared "which ConversionWebhookServer serves this config"
 internal/controller/   the two reconcilers
 internal/webhook/      this operator's own admission webhooks (validate XRDConversionConfig/ConversionWebhookServer)
 internal/webhookserver/ the conversion webhook runtime (registry, HTTP handlers, metrics)
-internal/cli/          xrdconvctl command implementations
+internal/cli/          convctl command implementations
 cmd/manager/           operator binary
 cmd/webhook-server/    conversion webhook runtime binary
-cmd/xrdconvctl/        CLI binary
+cmd/convctl/        CLI binary
 config/                kustomize manifests (kubebuilder dev-loop / CI)
-charts/xrd-conversion-operator/  Helm chart (the supported install path)
+charts/declarative-conversion-operator/  Helm chart (the supported install path)
 ```
 
 ## Quick start
 
 ```console
 # Install (requires cert-manager and Crossplane already installed)
-helm install xrd-conversion-operator charts/xrd-conversion-operator \
-  --namespace xrd-conversion-system --create-namespace
+helm install declarative-conversion-operator charts/declarative-conversion-operator \
+  --namespace declarative-conversion-system --create-namespace
 
 # Wait for the default ConversionWebhookServer instance
 kubectl wait --for=condition=Available conversionwebhookserver/default --timeout=120s
@@ -79,10 +79,10 @@ kubectl get xrdconversionconfig xpostgresqlinstances-conversion -o yaml
 A few of the newer strategies are worth calling out specifically:
 
 - **`typeCoerce`** converts a scalar's JSON type (string/integer/number/boolean) at the same path on both sides — e.g. a field that was a string in one version and an integer in another. Always treated as lossless (canonically-formatted values round-trip exactly); a value that genuinely can't be parsed (a non-numeric string coerced to a number) is a runtime conversion error, not a lossiness concern.
-- **`scalarToFields`** / **`fieldsToScalar`** decompose a single scalar into several fields (or the reverse) using a regexp with named capture groups (`pattern`) plus a Go `text/template` (`joinTemplate`) for the reverse direction — e.g. hub `spec.size: "3Gi"` split into spoke `spec.sizeValue: 3` / `spec.sizeUnit: "Gi"`. Like `jsonPatch`, the engine can't verify `pattern` and `joinTemplate` are true inverses of each other, so this is always lossy unless you set `losslessOverride: true` — real protection comes from running representative samples through `xrdconvctl test`, not from compile-time analysis.
+- **`scalarToFields`** / **`fieldsToScalar`** decompose a single scalar into several fields (or the reverse) using a regexp with named capture groups (`pattern`) plus a Go `text/template` (`joinTemplate`) for the reverse direction — e.g. hub `spec.size: "3Gi"` split into spoke `spec.sizeValue: 3` / `spec.sizeUnit: "Gi"`. Like `jsonPatch`, the engine can't verify `pattern` and `joinTemplate` are true inverses of each other, so this is always lossy unless you set `losslessOverride: true` — real protection comes from running representative samples through `convctl test`, not from compile-time analysis.
 - **`arrayToMapByKey`** / **`mapToArrayByKey`** convert a list of objects into a map keyed by one of their fields, and back — the standard "list-map versus map" API-evolution pattern. Array→map is lossless (a duplicate or missing key is a hard runtime error, never a silent drop); map→array is always treated as lossy, since the reconstructed array is emitted sorted by key rather than reproducing whatever order the original array had.
 - **`numericScale`** rescales a numeric field by a fixed factor (`hubValue == spokeValue * factor`) — e.g. stored megabytes displayed as gigabytes. Whichever direction lands on an integer-typed field is treated as lossy, since the division/multiplication may not land on a whole number for every possible input.
-- **`listJoin`** / **`listSplit`** convert an array of scalars into a single delimited string, and back. Always lossless; an element that happens to contain the separator as a substring will fail to round-trip cleanly, which is correctly surfaced by `xrdconvctl test` as a genuine data problem rather than an expected characteristic of the strategy.
+- **`listJoin`** / **`listSplit`** convert an array of scalars into a single delimited string, and back. Always lossless; an element that happens to contain the separator as a substring will fail to round-trip cleanly, which is correctly surfaced by `convctl test` as a genuine data problem rather than an expected characteristic of the strategy.
 
 `internal/cli/testdata/full` exercises all of these (and every other built-in strategy) end to end across a 3-version fixture — it's the best starting point for seeing exact YAML shapes in context.
 
@@ -95,9 +95,9 @@ The same fail-closed coverage rule applies too: a `status` field that differs in
 ## CLI
 
 ```console
-xrdconvctl validate --config config.yaml [--xrd xrd.yaml]
-xrdconvctl analyze   --xrd xrd.yaml --config config.yaml
-xrdconvctl test       --xrd xrd.yaml --config config.yaml --samples ./samples/
+convctl validate --config config.yaml [--xrd xrd.yaml]
+convctl analyze   --xrd xrd.yaml --config config.yaml
+convctl test       --xrd xrd.yaml --config config.yaml --samples ./samples/
 ```
 
 `test` runs every sample object through every served-version conversion path (round-tripping through the hub), reporting timing, fields converted, rules exercised, and — for any detected loss — exactly which field diverged between which versions and whether it was acknowledged. Exit code `0` means every path passed or only had acknowledged loss; `1` means an unacknowledged loss or failure was found; `2` means a usage/tooling error.
@@ -107,15 +107,15 @@ xrdconvctl test       --xrd xrd.yaml --config config.yaml --samples ./samples/
 `--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of the target XRD's generated composite resource type, fetched at its hub/storage version (so it works even before any conversion webhook is wired up):
 
 ```console
-xrdconvctl test --xrd xrd.yaml --config new-config.yaml --live
-xrdconvctl test --xrd xrd.yaml --config new-config.yaml --live --kubeconfig ~/.kube/other-config --context prod
+convctl test --xrd xrd.yaml --config new-config.yaml --live
+convctl test --xrd xrd.yaml --config new-config.yaml --live --kubeconfig ~/.kube/other-config --context prod
 ```
 
 This is the tool to run before applying a new or changed `XRDConversionConfig`: does it hold up against every object that already exists, not just fixtures? `--kubeconfig`/`--context` resolve exactly like `kubectl` does — an explicit `--kubeconfig` path falls back to `$KUBECONFIG`, then `~/.kube/config`; an explicit `--context` falls back to the kubeconfig's `current-context`. The invoking identity only needs `get`/`list` on the XRD's generated resource type — no write access, and nothing related to this operator's own CRDs or webhook server.
 
 ### Shell completion
 
-`xrdconvctl completion [bash|zsh|fish|powershell]` (built into Cobra) prints a completion script for your shell — e.g. `source <(xrdconvctl completion bash)`, or see `xrdconvctl completion --help` for how to install it permanently.
+`convctl completion [bash|zsh|fish|powershell]` (built into Cobra) prints a completion script for your shell — e.g. `source <(convctl completion bash)`, or see `convctl completion --help` for how to install it permanently.
 
 ## Development
 

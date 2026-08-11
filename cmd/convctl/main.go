@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command xrdconvctl is a thin bootstrap around internal/cli — kept
+// Command convctl is a thin bootstrap around internal/cli — kept
 // minimal so all real logic stays testable as a library, per Go CLI
 // convention.
 package main
@@ -22,7 +22,7 @@ package main
 import (
 	"os"
 
-	"github.com/vrabbi/xrd-conversion-operator/internal/cli"
+	"github.com/vrabbi/declarative-conversion-operator/internal/cli"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".

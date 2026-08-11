@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
-	internalwebhook "github.com/vrabbi/xrd-conversion-operator/internal/webhook"
-	"github.com/vrabbi/xrd-conversion-operator/pkg/engine"
+	internalwebhook "github.com/vrabbi/declarative-conversion-operator/internal/webhook"
+	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
 )
 
 // TestOptions configures RunTest.

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,9 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	teraskyv1alpha1 "github.com/vrabbi/xrd-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/xrd-conversion-operator/pkg/engine"
-	"github.com/vrabbi/xrd-conversion-operator/pkg/xrdadapter"
+	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
+	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
+	"github.com/vrabbi/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // XRDConversionConfigValidator validates XRDConversionConfig objects at

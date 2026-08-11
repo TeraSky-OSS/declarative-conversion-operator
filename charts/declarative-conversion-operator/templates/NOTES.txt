@@ -1,4 +1,4 @@
-xrd-conversion-operator has been installed.
+declarative-conversion-operator has been installed.
 
 {{- if not (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 
@@ -29,9 +29,9 @@ xrd-conversion-operator has been installed.
    WebhookServerReady=False (the ConversionWebhookServer instance isn't
    Available yet).
 
-3. Test conversions offline before applying, using the xrdconvctl CLI:
+3. Test conversions offline before applying, using the convctl CLI:
 
-     xrdconvctl test --xrd my-xrd.yaml --config my-xrdconversionconfig.yaml --samples ./samples/
+     convctl test --xrd my-xrd.yaml --config my-xrdconversionconfig.yaml --samples ./samples/
 
 {{- if .Values.crds.install }}
 

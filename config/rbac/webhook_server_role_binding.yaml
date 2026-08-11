@@ -8,5 +8,5 @@ roleRef:
   name: webhook-server-role
 subjects:
   - kind: ServiceAccount
-    name: xrd-conversion-webhook-server
+    name: declarative-conversion-webhook-server
     namespace: system

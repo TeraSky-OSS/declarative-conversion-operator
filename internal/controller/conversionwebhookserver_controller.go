@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -45,8 +45,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	teraskyv1alpha1 "github.com/vrabbi/xrd-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/xrd-conversion-operator/internal/assign"
+	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
+	"github.com/vrabbi/declarative-conversion-operator/internal/assign"
 )
 
 // CertificateGroupVersionKind identifies a cert-manager Certificate.
@@ -59,8 +59,8 @@ var CertificateGroupVersionKind = schema.GroupVersionKind{Group: "cert-manager.i
 const (
 	webhookServerConversionPort = 9443
 	webhookServerMetricsPort    = 8443
-	defaultWebhookServerImage   = "ghcr.io/vrabbi/xrd-conversion-webhook-server:latest"
-	defaultServiceAccountName   = "xrd-conversion-webhook-server"
+	defaultWebhookServerImage   = "ghcr.io/vrabbi/declarative-conversion-webhook-server:latest"
+	defaultServiceAccountName   = "declarative-conversion-webhook-server"
 )
 
 // ConversionWebhookServerReconciler reconciles a ConversionWebhookServer.
@@ -280,9 +280,9 @@ func (r *ConversionWebhookServerReconciler) reconcileService(ctx context.Context
 
 func podLabels(server string) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":       "xrd-conversion-webhook-server",
+		"app.kubernetes.io/name":       "declarative-conversion-webhook-server",
 		"app.kubernetes.io/instance":   server,
-		"app.kubernetes.io/managed-by": "xrd-conversion-operator",
+		"app.kubernetes.io/managed-by": "declarative-conversion-operator",
 	}
 }
 

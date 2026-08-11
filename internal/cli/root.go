@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,11 +32,11 @@ const (
 	ExitUsageError  = 2
 )
 
-// Execute builds and runs the xrdconvctl command tree, returning the
+// Execute builds and runs the convctl command tree, returning the
 // process exit code the caller should use.
 func Execute() int {
 	root := &cobra.Command{
-		Use:           "xrdconvctl",
+		Use:           "convctl",
 		Short:         "Offline test harness for XRDConversionConfig declarative conversions",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -58,7 +58,7 @@ var exitCode = ExitOK
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the xrdconvctl version",
+		Short: "Print the convctl version",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), Version)
 			return err

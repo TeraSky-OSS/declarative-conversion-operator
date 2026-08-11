@@ -2,16 +2,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: {{ include "xrd-conversion-operator.fullname" . }}
+  name: {{ include "declarative-conversion-operator.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
     {{- with .Values.metrics.prometheusRule.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   groups:
-    - name: xrd-conversion-operator
+    - name: declarative-conversion-operator
       rules:
         - alert: XRDConversionWebhookRegistryCompileErrors
           expr: increase(xrdconv_webhook_registry_compile_errors_total[15m]) > 0

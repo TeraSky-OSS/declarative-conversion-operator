@@ -4,7 +4,7 @@ metadata:
   name: controller-manager
   namespace: system
   labels:
-    app.kubernetes.io/name: xrd-conversion-operator
+    app.kubernetes.io/name: declarative-conversion-operator
     control-plane: controller-manager
 spec:
   replicas: 1

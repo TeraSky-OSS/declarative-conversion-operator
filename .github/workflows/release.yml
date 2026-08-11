@@ -16,8 +16,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  MANAGER_IMAGE: ghcr.io/${{ github.repository_owner }}/xrd-conversion-operator
-  WEBHOOK_SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/xrd-conversion-webhook-server
+  MANAGER_IMAGE: ghcr.io/${{ github.repository_owner }}/declarative-conversion-operator
+  WEBHOOK_SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/declarative-conversion-webhook-server
   CHART_REPO: ghcr.io/${{ github.repository_owner }}/charts
 
 jobs:
@@ -34,9 +34,9 @@ jobs:
       matrix:
         include:
           - component: manager
-            image: ghcr.io/vrabbi/xrd-conversion-operator
+            image: ghcr.io/vrabbi/declarative-conversion-operator
           - component: webhook-server
-            image: ghcr.io/vrabbi/xrd-conversion-webhook-server
+            image: ghcr.io/vrabbi/declarative-conversion-webhook-server
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -99,14 +99,14 @@ jobs:
         # values.yaml.
         run: |
           version="${GITHUB_REF_NAME#v}"
-          sed -i "s/^version: .*/version: ${version}/" charts/xrd-conversion-operator/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: \"${version}\"/" charts/xrd-conversion-operator/Chart.yaml
+          sed -i "s/^version: .*/version: ${version}/" charts/declarative-conversion-operator/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${version}\"/" charts/declarative-conversion-operator/Chart.yaml
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Package chart
-        run: helm package charts/xrd-conversion-operator --destination /tmp/chart-out
+        run: helm package charts/declarative-conversion-operator --destination /tmp/chart-out
 
       - name: Push chart to GHCR (OCI)
         run: helm push /tmp/chart-out/*.tgz oci://${{ env.CHART_REPO }}

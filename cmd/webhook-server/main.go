@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -39,8 +39,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	teraskyv1alpha1 "github.com/vrabbi/xrd-conversion-operator/api/v1alpha1"
-	"github.com/vrabbi/xrd-conversion-operator/internal/webhookserver"
+	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
+	"github.com/vrabbi/declarative-conversion-operator/internal/webhookserver"
 )
 
 var scheme = runtime.NewScheme()

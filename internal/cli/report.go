@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ type RuleCoverage struct {
 	MatchedSamples int    `json:"matchedSamples"`
 }
 
-// Report is the full xrdconvctl test result, also used (in reduced form)
+// Report is the full convctl test result, also used (in reduced form)
 // by analyze/validate for JSON output.
 type Report struct {
 	Meta struct {

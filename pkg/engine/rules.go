@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -345,7 +345,7 @@ func (NumericScaleParams) isRuleParams() {}
 // type on the reverse direction. Always treated as lossless — an element
 // that happens to contain Separator as a substring will fail to
 // round-trip and is correctly surfaced as an unacknowledged loss by
-// xrdconvctl test, since that is a genuine data problem, not an expected
+// convctl test, since that is a genuine data problem, not an expected
 // characteristic of this strategy.
 type ListJoinParams struct {
 	HubPath, SpokePath FieldPath

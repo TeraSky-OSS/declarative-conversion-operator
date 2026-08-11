@@ -3,7 +3,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: validating-webhook-configuration
   annotations:
-    cert-manager.io/inject-ca-from: xrd-conversion-operator-system/webhook-server-cert
+    cert-manager.io/inject-ca-from: declarative-conversion-operator-system/webhook-server-cert
 webhooks:
   - name: vxrdconversionconfig.terasky.com
     admissionReviewVersions: ["v1"]

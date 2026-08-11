@@ -2,7 +2,7 @@
 # prove, against a live cluster, that the conversion webhook this operator
 # wires up actually gets invoked by the kube-apiserver and actually
 # converts objects — everything else about this operator is already
-# covered offline by internal/cli/testdata (see xrdconvctl test). This XRD
+# covered offline by internal/cli/testdata (see convctl test). This XRD
 # deliberately has no Composition and is never expected to become Synced;
 # we only care about the composite resource's own stored/served schema
 # and its conversion behavior, not Crossplane's provisioning pipeline.

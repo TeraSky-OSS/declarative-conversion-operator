@@ -13,13 +13,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLUSTER_NAME="${CLUSTER_NAME:-xrd-conversion-e2e}"
-NAMESPACE="${NAMESPACE:-xrd-conversion-system}"
+CLUSTER_NAME="${CLUSTER_NAME:-declarative-conversion-e2e}"
+NAMESPACE="${NAMESPACE:-declarative-conversion-system}"
 IMG_TAG="e2e-$(date +%s 2>/dev/null || echo local)"
-MANAGER_IMG="ghcr.io/vrabbi/xrd-conversion-operator:${IMG_TAG}"
-WEBHOOK_IMG="ghcr.io/vrabbi/xrd-conversion-webhook-server:${IMG_TAG}"
+MANAGER_IMG="ghcr.io/vrabbi/declarative-conversion-operator:${IMG_TAG}"
+WEBHOOK_IMG="ghcr.io/vrabbi/declarative-conversion-webhook-server:${IMG_TAG}"
 CERT_MANAGER_VERSION="v1.21.1"
-RELEASE_NAME="xrd-conversion-operator"
+RELEASE_NAME="declarative-conversion-operator"
 COMPOSITE_NAME="e2e-widget"
 COMPOSITE_NS="default"
 
@@ -44,7 +44,7 @@ dump_diagnostics() {
   echo "--- manager logs ---"
   kubectl -n "${NAMESPACE}" logs -l "app.kubernetes.io/instance=${RELEASE_NAME},control-plane=controller-manager" --all-containers --tail=300 || true
   echo "--- webhook-server logs ---"
-  kubectl -n "${NAMESPACE}" logs -l "app.kubernetes.io/name=xrd-conversion-webhook-server" --all-containers --tail=300 || true
+  kubectl -n "${NAMESPACE}" logs -l "app.kubernetes.io/name=declarative-conversion-webhook-server" --all-containers --tail=300 || true
   echo "--- recent events (all namespaces) ---"
   kubectl get events -A --sort-by=.lastTimestamp 2>/dev/null | tail -50 || true
 }
@@ -106,13 +106,31 @@ helm upgrade --install crossplane crossplane-stable/crossplane \
   --namespace crossplane-system --create-namespace \
   --wait --timeout 180s
 
-log "Installing xrd-conversion-operator (this repo's Helm chart) with the locally-built images"
-helm upgrade --install "${RELEASE_NAME}" "${REPO_ROOT}/charts/xrd-conversion-operator" \
+log "Installing declarative-conversion-operator (this repo's Helm chart) with the locally-built images"
+# The chart bundles a ConversionWebhookServer sample CR in the same release
+# as the manager Deployment whose admission webhook validates that very
+# CR (failurePolicy: Fail, intentionally fail-closed). On a fresh install
+# the apiserver can try to validate the CR before the manager pod's webhook
+# is actually serving yet, rejecting it with a connection-refused error —
+# a real first-install race, not a CI-only quirk (the same fix — retry —
+# is what a human hitting this would naturally do). Helm's own retries of
+# `upgrade --install` are idempotent (already-created resources are left
+# alone), so retrying here just re-attempts whatever failed.
+attempt=1
+until helm upgrade --install "${RELEASE_NAME}" "${REPO_ROOT}/charts/declarative-conversion-operator" \
   --namespace "${NAMESPACE}" --create-namespace \
   --set image.manager.tag="${IMG_TAG}" \
   --set image.webhookServer.tag="${IMG_TAG}" \
   --set image.pullPolicy=Never \
-  --wait --timeout 180s
+  --wait --timeout 180s; do
+  if [ "${attempt}" -ge 5 ]; then
+    echo "FAIL: helm install of ${RELEASE_NAME} did not succeed after ${attempt} attempts"
+    exit 1
+  fi
+  echo "helm install attempt ${attempt} failed (likely the admission webhook's backing pod wasn't ready yet) -- retrying in 15s"
+  attempt=$((attempt + 1))
+  sleep 15
+done
 
 log "Waiting for the default ConversionWebhookServer to become Available"
 kubectl wait --for=condition=Available --timeout=180s conversionwebhookserver/default

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/vrabbi/xrd-conversion-operator/pkg/engine"
+	"github.com/vrabbi/declarative-conversion-operator/pkg/engine"
 )
 
 // GroupVersionKind identifies a Crossplane CompositeResourceDefinition.

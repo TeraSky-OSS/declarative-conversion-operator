@@ -82,7 +82,7 @@ jobs:
           version: v2.12.2
 
   cli-smoke-test:
-    name: xrdconvctl offline smoke test
+    name: convctl offline smoke test
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -95,16 +95,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run xrdconvctl against the bundled fixtures
+      - name: Run convctl against the bundled fixtures
         run: |
-          go run ./cmd/xrdconvctl test \
+          go run ./cmd/convctl test \
             --xrd internal/cli/testdata/xrd.yaml \
             --config internal/cli/testdata/config.yaml \
             --samples internal/cli/testdata/samples
 
-      - name: Run xrdconvctl against the full-coverage fixture (3 versions, all strategies)
+      - name: Run convctl against the full-coverage fixture (3 versions, all strategies)
         run: |
-          go run ./cmd/xrdconvctl test \
+          go run ./cmd/convctl test \
             --xrd internal/cli/testdata/full/xrd.yaml \
             --config internal/cli/testdata/full/config.yaml \
             --samples internal/cli/testdata/full/samples
@@ -138,14 +138,14 @@ jobs:
           version: v3.21.3
 
       - name: helm lint
-        run: helm lint charts/xrd-conversion-operator
+        run: helm lint charts/declarative-conversion-operator
 
       - name: helm template (default values)
-        run: helm template xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system
+        run: helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 
       - name: helm template (autoscaling + monitoring enabled)
         run: |
-          helm template xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system \
+          helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system \
             --set conversionWebhookServer.autoscaling.enabled=true \
             --set metrics.serviceMonitor.enabled=true \
             --set metrics.prometheusRule.enabled=true \
@@ -157,7 +157,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [manager, webhook-server, xrdconvctl]
+        component: [manager, webhook-server, convctl]
     steps:
       - name: Checkout
         uses: actions/checkout@v7

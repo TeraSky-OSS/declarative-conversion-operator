@@ -5,10 +5,10 @@ imagePullSecrets: []
 image:
   registry: ghcr.io
   manager:
-    repository: vrabbi/xrd-conversion-operator
+    repository: vrabbi/declarative-conversion-operator
     tag: ""
   webhookServer:
-    repository: vrabbi/xrd-conversion-webhook-server
+    repository: vrabbi/declarative-conversion-webhook-server
     tag: ""
   pullPolicy: IfNotPresent
 
@@ -16,7 +16,7 @@ image:
 # applied once at `helm install`, never touched by `helm upgrade` or
 # `helm uninstall`. This is the safest default for a CRD-heavy chart — no
 # accidental data loss from a schema change — at the cost of requiring a
-# manual `kubectl apply -f charts/xrd-conversion-operator/crds/` step
+# manual `kubectl apply -f charts/declarative-conversion-operator/crds/` step
 # whenever the CRD schema changes across an upgrade. See NOTES.txt.
 crds:
   install: true

@@ -1,7 +1,7 @@
 # Image URL to use for docker-build/docker-push.
-MANAGER_IMG ?= ghcr.io/vrabbi/xrd-conversion-operator:latest
-WEBHOOK_SERVER_IMG ?= ghcr.io/vrabbi/xrd-conversion-webhook-server:latest
-CLI_IMG ?= ghcr.io/vrabbi/xrd-conversion-operator-cli:latest
+MANAGER_IMG ?= ghcr.io/vrabbi/declarative-conversion-operator:latest
+WEBHOOK_SERVER_IMG ?= ghcr.io/vrabbi/declarative-conversion-webhook-server:latest
+CLI_IMG ?= ghcr.io/vrabbi/declarative-conversion-operator-cli:latest
 
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
@@ -32,7 +32,7 @@ manifests: controller-gen ## Generate CRD and RBAC manifests into config/.
 
 .PHONY: helm-sync
 helm-sync: manifests ## Copy generated CRDs into the Helm chart's crds/ directory.
-	cp config/crd/bases/*.yaml charts/xrd-conversion-operator/crds/
+	cp config/crd/bases/*.yaml charts/declarative-conversion-operator/crds/
 
 .PHONY: fmt
 fmt: ## Run gofmt against code.
@@ -53,10 +53,10 @@ test-e2e: ## Run the real end-to-end test: kind + cert-manager + Crossplane + th
 ##@ Build
 
 .PHONY: build
-build: generate ## Build the manager, webhook-server, and xrdconvctl binaries.
+build: generate ## Build the manager, webhook-server, and convctl binaries.
 	go build -o bin/manager ./cmd/manager
 	go build -o bin/webhook-server ./cmd/webhook-server
-	go build -o bin/xrdconvctl ./cmd/xrdconvctl
+	go build -o bin/convctl ./cmd/convctl
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the manager locally against the current kubeconfig context.
@@ -73,8 +73,8 @@ docker-build-webhook-server: ## Build the webhook-server image.
 	docker build --build-arg COMPONENT=webhook-server -t $(WEBHOOK_SERVER_IMG) .
 
 .PHONY: docker-build-cli
-docker-build-cli: ## Build the xrdconvctl CLI image.
-	docker build --build-arg COMPONENT=xrdconvctl -t $(CLI_IMG) .
+docker-build-cli: ## Build the convctl CLI image.
+	docker build --build-arg COMPONENT=convctl -t $(CLI_IMG) .
 
 .PHONY: docker-build
 docker-build: docker-build-manager docker-build-webhook-server docker-build-cli ## Build all three images.
@@ -102,11 +102,11 @@ undeploy: kustomize ## Undeploy the operator from the current cluster.
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart.
-	helm lint charts/xrd-conversion-operator
+	helm lint charts/declarative-conversion-operator
 
 .PHONY: helm-template
 helm-template: ## Render the Helm chart with default values.
-	helm template xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system
+	helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 
 ##@ Tooling
 

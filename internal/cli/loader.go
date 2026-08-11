@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package cli implements the xrdconvctl command tree. It works entirely
+// Package cli implements the convctl command tree. It works entirely
 // offline against local YAML files — an XRD, an XRDConversionConfig, and a
 // directory of sample objects — by importing pkg/engine directly, so it
 // exercises exactly the same conversion code path used in-cluster by the
@@ -32,7 +32,7 @@ import (
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	sigsyaml "sigs.k8s.io/yaml"
 
-	teraskyv1alpha1 "github.com/vrabbi/xrd-conversion-operator/api/v1alpha1"
+	teraskyv1alpha1 "github.com/vrabbi/declarative-conversion-operator/api/v1alpha1"
 )
 
 // LoadXRD reads a single YAML document from path and returns it as an

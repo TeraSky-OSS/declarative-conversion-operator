@@ -1,4 +1,4 @@
-# xrd-conversion-operator
+# declarative-conversion-operator
 
 Declarative conversion webhooks for Crossplane XRDs.
 
@@ -11,7 +11,7 @@ Declarative conversion webhooks for Crossplane XRDs.
 ## Install
 
 ```console
-helm install xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system --create-namespace
+helm install declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system --create-namespace
 ```
 
 By default this creates one `ConversionWebhookServer` instance named `default`, marked as the fallback target for any `XRDConversionConfig` that doesn't set `spec.webhookServerRef`.
@@ -21,8 +21,8 @@ By default this creates one `ConversionWebhookServer` instance named `default`, 
 CRDs live in `crds/` and are only applied at install time (Helm's standard convention — safest against accidental schema-change data loss, at the cost of not auto-upgrading). When upgrading to a chart version with CRD schema changes, apply them manually first:
 
 ```console
-helm show crds charts/xrd-conversion-operator | kubectl apply -f -
-helm upgrade xrd-conversion-operator charts/xrd-conversion-operator --namespace xrd-conversion-system
+helm show crds charts/declarative-conversion-operator | kubectl apply -f -
+helm upgrade declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 ```
 
 ## Key values

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The xrd-conversion-operator Authors.
+Copyright 2026 The declarative-conversion-operator Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -994,7 +994,7 @@ func resolveNumericScale(idx int, p NumericScaleParams, hub, spoke *extv1.JSONSc
 }
 
 // resolveListJoin: always lossless. An element that happens to contain
-// Separator as a substring will fail to round-trip, which xrdconvctl test
+// Separator as a substring will fail to round-trip, which convctl test
 // correctly surfaces as an unacknowledged loss — that's a genuine data
 // problem, not a documented risk of this strategy the way pattern-based
 // escape hatches are.

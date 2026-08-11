@@ -4,7 +4,7 @@ kind: ConversionWebhookServer
 metadata:
   name: {{ .Values.conversionWebhookServer.name }}
   labels:
-    {{- include "xrd-conversion-operator.labels" . | nindent 4 }}
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
 spec:
   default: {{ .Values.conversionWebhookServer.default }}
   {{- if .Values.conversionWebhookServer.namespace }}
@@ -12,7 +12,7 @@ spec:
   {{- else }}
   namespace: {{ .Release.Namespace }}
   {{- end }}
-  serviceAccountName: {{ include "xrd-conversion-operator.webhookServerServiceAccountName" . }}
+  serviceAccountName: {{ include "declarative-conversion-operator.webhookServerServiceAccountName" . }}
   {{- if .Values.conversionWebhookServer.autoscaling.enabled }}
   autoscaling:
     minReplicas: {{ .Values.conversionWebhookServer.autoscaling.minReplicas }}
@@ -45,7 +45,7 @@ spec:
       name: {{ .Values.certManager.issuerRef.name }}
       kind: {{ .Values.certManager.issuerRef.kind | default "ClusterIssuer" }}
       {{- else }}
-      name: {{ include "xrd-conversion-operator.fullname" . }}-selfsigned-issuer
+      name: {{ include "declarative-conversion-operator.fullname" . }}-selfsigned-issuer
       kind: ClusterIssuer
       {{- end }}
   {{- if .Values.conversionWebhookServer.podDisruptionBudget.enabled }}

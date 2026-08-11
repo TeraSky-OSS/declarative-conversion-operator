@@ -3,7 +3,7 @@
 # supported end-user installation path; this overlay exists for local
 # development and CI, and is the source of truth the chart's crds/ and
 # templates/rbac/ are kept in sync with.
-namespace: xrd-conversion-operator-system
+namespace: declarative-conversion-operator-system
 
 resources:
   - ../crd

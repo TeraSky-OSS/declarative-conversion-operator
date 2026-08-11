@@ -7,7 +7,7 @@ spec:
   replicas: 2
   certificate:
     issuerRef:
-      name: xrd-conversion-selfsigned-issuer
+      name: declarative-conversion-selfsigned-issuer
       kind: ClusterIssuer
   podDisruptionBudget:
     minAvailable: 1
