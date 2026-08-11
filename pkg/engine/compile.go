@@ -267,6 +267,17 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		}
 	}
 
+	// A field the schema never declares at all (on either side) never
+	// appears in hubLeaves/spokeLeaves above, so nothing claims it and no
+	// diagnostic ever flags it -- it's invisible to everything else in
+	// this function. Append a catch-all passthrough, last in each
+	// direction's op list, so such a field is copied through unchanged
+	// instead of silently dropped by Convert's empty starting output. See
+	// passthroughUnknownOp's doc comment for why this is safe: it only
+	// ever fills in siblings no other Op touched.
+	h2sOps = append(h2sOps, passthroughUnknownOp{tree: buildKnownTree(hub)})
+	s2hOps = append(s2hOps, passthroughUnknownOp{tree: buildKnownTree(spoke)})
+
 	return h2sOps, s2hOps, results, diags, verdict
 }
 
