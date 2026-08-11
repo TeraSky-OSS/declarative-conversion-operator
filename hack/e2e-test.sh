@@ -141,6 +141,12 @@ kubectl wait --for=condition=Available --timeout=180s conversionwebhookserver/de
 
 log "Applying the e2e XWidget XRD"
 kubectl apply -f "${REPO_ROOT}/test/e2e/testdata/xrd.yaml"
+# Crossplane creates the composite resource's own CRD asynchronously after
+# the XRD is accepted, so it may not exist yet at all. `kubectl wait` only
+# waits for a condition on an already-existing object -- it errors
+# immediately with NotFound otherwise -- so wait for the CRD to be created
+# before waiting for it to become Established.
+kubectl wait --for=create --timeout=60s crd/xwidgets.e2e.example.org
 kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.e2e.example.org
 
 log "Applying the XRDConversionConfig and waiting for it to reach Applied"
