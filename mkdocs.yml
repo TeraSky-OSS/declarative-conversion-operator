@@ -95,6 +95,7 @@ nav:
       - Array ⇄ Map by Key: strategies/array-map-key.md
       - Numeric Scale: strategies/numeric-scale.md
       - List Join / Split: strategies/list-join-split.md
+  - FAQ: faq.md
   - Limitations: limitations.md
   - Roadmap: roadmap.md
 
