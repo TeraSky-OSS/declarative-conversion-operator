@@ -143,6 +143,21 @@ Every reconcile recomputes a hash of the live XRD's schema plus this config's ru
 - **`KeepServingStale`** (default): the config is marked `Stale` loudly (condition, event, metric), but **keeps serving the last known-good compiled plan**. Unpatching or dropping a working conversion webhook on drift-detection would itself be the outage this operator exists to prevent.
 - **`FailClosed`**: stops serving conversions for the XRD as soon as drift is detected, for organizations that would rather fail loud immediately than risk serving a plan validated against a schema that no longer exists.
 
+## Changing the hub version
+
+`hubVersion` must equal the XRD's live referenceable (storage) version — this is a **reconcile-time check**, not a one-time gate, so it stays enforced for the config's entire life. That's what makes promoting a new version to be the hub safe, via `DriftPolicy: KeepServingStale` (the default):
+
+1. Add the new version (say `v3`) to the XRD as an ordinary **served, non-`referenceable`** spoke, with rules in this config relative to the *current* hub. Clients can start using `v3` immediately, round-tripping through the existing hub like any other spoke.
+2. When ready to promote `v3` to hub, do both of the following — the order between them doesn't matter:
+   - Update this `XRDConversionConfig` to declare `hubVersion: v3`, with the old hub (say `v2`) rewritten as a spoke *relative to `v3`*. This isn't a mechanical copy: rule direction and paths are expressed from the hub's perspective, so the old hub's rules need to be re-authored as a spoke's rules, not just swapped.
+   - Flip `referenceable: true` from `v2` to `v3` on the XRD itself (and `referenceable: false` on `v2`).
+3. Whichever of those two changes lands first, `hubVersion` and the live referenceable version will briefly disagree. The next reconcile re-validates as `Invalid`/`Stale` — but per `KeepServingStale`, the controller never un-patches the XRD; it keeps serving the last-known-good plan (still hub=`v2`) the whole time. Since `v3` was already a working spoke from step 1, conversions keep functioning correctly through the old plan throughout — Kubernetes' conversion webhook protocol converts between whatever version is stored and whatever version was requested per-request, so a router internally pivoting through `v2` handles a `v3`-desired request exactly as it always did.
+4. Once both changes have landed, the next reconcile finds `hubVersion` matching the live referenceable version again, validates cleanly, and re-patches the XRD with the new `v3`-anchored plan — no outage, no manual intervention to "resume."
+
+`DriftPolicy: FailClosed` does **not** offer this safety net — a mismatch under `FailClosed` stops serving conversions immediately, so plan the two updates as a single fast operation (or temporarily switch to `KeepServingStale` for the migration) if you use that policy.
+
+One K8s-level detail this doesn't handle: objects already in etcd remain physically encoded at whichever version was `referenceable` when they were last written. The apiserver's conversion machinery serves them correctly regardless, but if you want them actually *rewritten* at the new storage version, that's standard Kubernetes housekeeping unrelated to this operator — e.g. `kubectl get <resource> --all-namespaces -o json | kubectl replace -f -`, or a [`StorageVersionMigration`](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#upgrade-existing-objects-to-a-new-stored-version) if your cluster runs the storage-version-migrator.
+
 ## Deletion safety
 
 Deleting an `XRDConversionConfig` runs a finalizer-gated "safe revert," not an immediate removal:

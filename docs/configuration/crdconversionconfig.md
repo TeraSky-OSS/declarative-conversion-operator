@@ -46,6 +46,8 @@ Every other condition (`Validated`, `WebhookServerReady`, `Applied`, `Stale`, `D
 
 The gate sequence, drift handling, and deletion safety are byte-for-byte the same algorithm as `XRDConversionConfig`'s (see [there](xrdconversionconfig.md#ordering-nothing-touches-the-xrd-until-every-gate-passes) for the full walkthrough) — validate, resolve the assigned `ConversionWebhookServer`, confirm the CRD is `Established`, confirm the server is ready, and only then server-side-apply `spec.conversion` onto the CRD. The same `conversion.terasky.com/allow-unsafe-delete` break-glass annotation applies for deleting a config while the CRD still serves more than one version.
 
+Promoting a different version to be the hub works the same way too — including why it's safe under the default drift policy — see [XRDConversionConfig: Changing the hub version](xrdconversionconfig.md#changing-the-hub-version), reading `storage: true`/`storage: false` wherever it says `referenceable`.
+
 ## Enabling and disabling native CRD support
 
 Native CRD support is on by default (`--enable-crd-support=true` on the manager, `features.nativeCRD.enabled: true` in the Helm chart). Unlike XRD support, it carries no startup-crash risk if disabled — `CustomResourceDefinition` is a core Kubernetes type that always exists — but you can still turn it off if you simply don't want the feature active. See [Installation: Feature toggles](../installation.md#feature-toggles).
