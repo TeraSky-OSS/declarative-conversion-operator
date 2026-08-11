@@ -74,12 +74,24 @@ type ConversionWebhookServerReconciler struct {
 	// DefaultImage is the webhook-server image used when an instance
 	// doesn't override spec.image.
 	DefaultImage string
+	// EnableXRDSupport/EnableCRDSupport mirror the manager's own
+	// --enable-xrd-support/--enable-crd-support flags and are baked into
+	// every webhook-server Deployment this reconciler creates, so each
+	// replica's own manager (a separate process/binary — see
+	// internal/webhookserver.Reconciler) watches exactly the same set of
+	// resource kinds the operator itself does. Keeping the two in lock-step
+	// matters because watching a GVK whose CRD doesn't exist (Crossplane's
+	// CompositeResourceDefinition, when XRD support is disabled) is fatal
+	// for a webhook-server pod exactly the same way it is for the manager.
+	EnableXRDSupport bool
+	EnableCRDSupport bool
 }
 
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=terasky.com,resources=xrdconversionconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=terasky.com,resources=crdconversionconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
@@ -323,6 +335,8 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 			"--tls-cert-dir=/tls",
 			fmt.Sprintf("--conversion-bind-address=:%d", webhookServerConversionPort),
 			fmt.Sprintf("--metrics-bind-address=:%d", webhookServerMetricsPort),
+			fmt.Sprintf("--enable-xrd-support=%t", r.EnableXRDSupport),
+			fmt.Sprintf("--enable-crd-support=%t", r.EnableCRDSupport),
 		).
 		WithPorts(
 			applycorev1.ContainerPort().WithName("conversion").WithContainerPort(webhookServerConversionPort),
@@ -466,18 +480,26 @@ func (r *ConversionWebhookServerReconciler) updateStatus(ctx context.Context, se
 		Message: certMessage(secErr, certReady),
 	})
 
-	var configs teraskyv1alpha1.XRDConversionConfigList
-	if err := r.List(ctx, &configs); err != nil {
+	var xrdConfigs teraskyv1alpha1.XRDConversionConfigList
+	if err := r.List(ctx, &xrdConfigs); err != nil {
+		return err
+	}
+	var crdConfigs teraskyv1alpha1.CRDConversionConfigList
+	if err := r.List(ctx, &crdConfigs); err != nil {
 		return err
 	}
 	var allServers teraskyv1alpha1.ConversionWebhookServerList
 	if err := r.List(ctx, &allServers); err != nil {
 		return err
 	}
-	assigned := assign.ConfigsAssignedTo(configs.Items, allServers.Items, server.Name)
-	refs := make([]teraskyv1alpha1.AssignedConfigRef, 0, len(assigned))
-	for _, c := range assigned {
+	assignedXRD := assign.ConfigsAssignedTo(xrdConfigs.Items, allServers.Items, server.Name)
+	assignedCRD := assign.ConfigsAssignedTo(crdConfigs.Items, allServers.Items, server.Name)
+	refs := make([]teraskyv1alpha1.AssignedConfigRef, 0, len(assignedXRD)+len(assignedCRD))
+	for _, c := range assignedXRD {
 		refs = append(refs, teraskyv1alpha1.AssignedConfigRef{Name: c.Name, XRDName: c.Spec.TargetXRD.Name, Phase: c.Status.Phase})
+	}
+	for _, c := range assignedCRD {
+		refs = append(refs, teraskyv1alpha1.AssignedConfigRef{Name: c.Name, XRDName: c.Spec.TargetCRD.Name, Phase: c.Status.Phase})
 	}
 	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
 	server.Status.AssignedConfigs = refs
@@ -539,18 +561,26 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 
 	forceDelete := server.Annotations[teraskyv1alpha1.AllowForceDeleteAnnotation] == "true"
 	if !forceDelete {
-		var configs teraskyv1alpha1.XRDConversionConfigList
-		if err := r.List(ctx, &configs); err != nil {
+		var xrdConfigs teraskyv1alpha1.XRDConversionConfigList
+		if err := r.List(ctx, &xrdConfigs); err != nil {
+			return ctrl.Result{}, err
+		}
+		var crdConfigs teraskyv1alpha1.CRDConversionConfigList
+		if err := r.List(ctx, &crdConfigs); err != nil {
 			return ctrl.Result{}, err
 		}
 		var allServers teraskyv1alpha1.ConversionWebhookServerList
 		if err := r.List(ctx, &allServers); err != nil {
 			return ctrl.Result{}, err
 		}
-		dependents := assign.ConfigsAssignedTo(configs.Items, allServers.Items, server.Name)
-		if len(dependents) > 0 {
-			names := make([]string, 0, len(dependents))
-			for _, c := range dependents {
+		dependentXRD := assign.ConfigsAssignedTo(xrdConfigs.Items, allServers.Items, server.Name)
+		dependentCRD := assign.ConfigsAssignedTo(crdConfigs.Items, allServers.Items, server.Name)
+		if len(dependentXRD)+len(dependentCRD) > 0 {
+			names := make([]string, 0, len(dependentXRD)+len(dependentCRD))
+			for _, c := range dependentXRD {
+				names = append(names, c.Name)
+			}
+			for _, c := range dependentCRD {
 				names = append(names, c.Name)
 			}
 			sort.Strings(names)
@@ -561,7 +591,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 			}
 			meta.SetStatusCondition(&server.Status.Conditions, metav1.Condition{
 				Type: teraskyv1alpha1.CWSConditionDeletionBlocked, Status: metav1.ConditionTrue, Reason: "ConfigsStillAssigned",
-				Message: fmt.Sprintf("%d XRDConversionConfig(s) still resolve to this instance%s: %v. Reassign them or add annotation %q=\"true\" to force.", len(dependents), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation),
+				Message: fmt.Sprintf("%d config(s) still resolve to this instance%s: %v. Reassign them or add annotation %q=\"true\" to force.", len(dependentXRD)+len(dependentCRD), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation),
 			})
 			if err := r.Status().Patch(ctx, server, client.MergeFrom(orig)); err != nil {
 				return ctrl.Result{}, err

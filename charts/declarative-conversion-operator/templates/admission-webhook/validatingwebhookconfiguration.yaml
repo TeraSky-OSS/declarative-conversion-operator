@@ -25,6 +25,23 @@ webhooks:
         operations: ["CREATE", "UPDATE"]
         resources: ["xrdconversionconfigs"]
         scope: Cluster
+  - name: vcrdconversionconfig.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.admissionWebhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: {{ include "declarative-conversion-operator.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate-terasky-com-v1alpha1-crdconversionconfig
+        port: 443
+    rules:
+      - apiGroups: ["terasky.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["crdconversionconfigs"]
+        scope: Cluster
   - name: vconversionwebhookserver.terasky.com
     admissionReviewVersions: ["v1"]
     sideEffects: None

@@ -34,17 +34,31 @@ import (
 // RuleSets, ready to hand to engine.Analyze/engine.Compile alongside a
 // SchemaSource.
 func (c *XRDConversionConfig) ToRuleSets() ([]engine.RuleSet, error) {
-	out := make([]engine.RuleSet, 0, len(c.Spec.Spokes))
-	for _, spoke := range c.Spec.Spokes {
+	return spokesToRuleSets(c.Spec.HubVersion, c.Spec.Spokes, c.Spec.UnmappedFieldPolicy)
+}
+
+// ToRuleSets is CRDConversionConfig's counterpart to
+// XRDConversionConfig.ToRuleSets, sharing the exact same translation —
+// ConversionRule and its strategy-specific params carry no notion of
+// whether they're converting an XRD or a native CRD.
+func (c *CRDConversionConfig) ToRuleSets() ([]engine.RuleSet, error) {
+	return spokesToRuleSets(c.Spec.HubVersion, c.Spec.Spokes, c.Spec.UnmappedFieldPolicy)
+}
+
+// spokesToRuleSets is the shared implementation behind both
+// ToRuleSets methods above.
+func spokesToRuleSets(hubVersion string, spokes []SpokeVersionRules, policy UnmappedFieldPolicy) ([]engine.RuleSet, error) {
+	out := make([]engine.RuleSet, 0, len(spokes))
+	for _, spoke := range spokes {
 		rules, err := convertRules(spoke.Rules)
 		if err != nil {
 			return nil, fmt.Errorf("spoke %q: %w", spoke.Version, err)
 		}
 		out = append(out, engine.RuleSet{
-			HubVersion:          c.Spec.HubVersion,
+			HubVersion:          hubVersion,
 			SpokeVersion:        spoke.Version,
 			Rules:               rules,
-			UnmappedFieldPolicy: engine.UnmappedFieldPolicy(orDefault(string(c.Spec.UnmappedFieldPolicy), string(UnmappedFieldPolicyError))),
+			UnmappedFieldPolicy: engine.UnmappedFieldPolicy(orDefault(string(policy), string(UnmappedFieldPolicyError))),
 		})
 	}
 	return out, nil

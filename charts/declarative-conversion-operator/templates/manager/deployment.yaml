@@ -34,6 +34,8 @@ spec:
             - --leader-elect
             {{- end }}
             - --default-webhook-server-image={{ .Values.image.registry }}/{{ .Values.image.webhookServer.repository }}:{{ .Values.image.webhookServer.tag | default .Chart.AppVersion }}
+            - --enable-xrd-support={{ .Values.features.crossplane.enabled }}
+            - --enable-crd-support={{ .Values.features.nativeCRD.enabled }}
             {{- with .Values.manager.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

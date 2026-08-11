@@ -15,11 +15,16 @@ limitations under the License.
 */
 
 // Package assign implements the single shared rule for "which
-// ConversionWebhookServer instance serves this XRDConversionConfig." It is
+// ConversionWebhookServer instance serves this conversion config." It is
 // imported identically by the operator's controllers and by every
 // webhook-server replica's own local reconciler, so "who serves config X"
 // is never ambiguous without a network call — every party computes the
 // same answer from the same two lists of objects.
+//
+// The resolver is generic over ConfigLike so it works identically for
+// XRDConversionConfig and CRDConversionConfig — assignment only ever
+// depends on spec.webhookServerRef and each ConversionWebhookServer's
+// spec.default, neither of which differs between the two config kinds.
 package assign
 
 import (
@@ -29,15 +34,25 @@ import (
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 )
 
+// ConfigLike is the minimal surface ResolveAssignment needs from a
+// conversion config object. Both XRDConversionConfig and
+// CRDConversionConfig satisfy it: GetName comes from the embedded
+// metav1.ObjectMeta, and WebhookServerRefField is a small accessor each
+// type defines itself (see api/v1alpha1).
+type ConfigLike interface {
+	GetName() string
+	WebhookServerRefField() *teraskyv1alpha1.WebhookServerRef
+}
+
 // ResolveAssignment returns the name of the ConversionWebhookServer that
 // should serve cfg's conversions: the explicitly referenced instance if
-// cfg.Spec.WebhookServerRef is set, otherwise whichever instance in
+// cfg's webhookServerRef is set, otherwise whichever instance in
 // allServers is marked default. Exactly one default is required — zero or
 // more than one is a misconfiguration reported as an error, never silently
 // resolved by picking one.
-func ResolveAssignment(cfg *teraskyv1alpha1.XRDConversionConfig, allServers []teraskyv1alpha1.ConversionWebhookServer) (string, error) {
-	if cfg.Spec.WebhookServerRef != nil && cfg.Spec.WebhookServerRef.Name != "" {
-		name := cfg.Spec.WebhookServerRef.Name
+func ResolveAssignment[T ConfigLike](cfg T, allServers []teraskyv1alpha1.ConversionWebhookServer) (string, error) {
+	if ref := cfg.WebhookServerRefField(); ref != nil && ref.Name != "" {
+		name := ref.Name
 		for _, s := range allServers {
 			if s.Name == name {
 				return name, nil
@@ -70,20 +85,32 @@ func ResolveAssignment(cfg *teraskyv1alpha1.XRDConversionConfig, allServers []te
 // unresolvable config as not currently depending on this instance, while
 // the config's own controller will separately and loudly report the
 // resolution error on its own status.
-func IsAssignedTo(cfg *teraskyv1alpha1.XRDConversionConfig, allServers []teraskyv1alpha1.ConversionWebhookServer, serverName string) bool {
+func IsAssignedTo[T ConfigLike](cfg T, allServers []teraskyv1alpha1.ConversionWebhookServer, serverName string) bool {
 	name, err := ResolveAssignment(cfg, allServers)
 	return err == nil && name == serverName
 }
 
 // ConfigsAssignedTo filters allConfigs down to those that currently
-// resolve to the ConversionWebhookServer named serverName. Used both by
-// the ConversionWebhookServer controller (status.assignedConfigs, and the
-// deletion-block check) and by each webhook-server replica's own local
-// reconciler (deciding what belongs in its in-memory registry).
-func ConfigsAssignedTo(allConfigs []teraskyv1alpha1.XRDConversionConfig, allServers []teraskyv1alpha1.ConversionWebhookServer, serverName string) []*teraskyv1alpha1.XRDConversionConfig {
-	var out []*teraskyv1alpha1.XRDConversionConfig
+// resolve to the ConversionWebhookServer named serverName, returning
+// pointers into the input slice. Used both by the ConversionWebhookServer
+// controller (status.assignedConfigs, and the deletion-block check) and by
+// each webhook-server replica's own local reconciler (deciding what
+// belongs in its in-memory registry).
+//
+// allConfigs is a slice of values (matching how e.g.
+// XRDConversionConfigList.Items is shaped) rather than pointers, so the
+// two type parameters: V is the concrete config type, and PV is
+// constrained to "*V that also satisfies ConfigLike" — Go infers PV from V
+// via the constraint's core type, so callers only ever write
+// ConfigsAssignedTo(list.Items, servers, name) with no explicit
+// instantiation.
+func ConfigsAssignedTo[V any, PV interface {
+	*V
+	ConfigLike
+}](allConfigs []V, allServers []teraskyv1alpha1.ConversionWebhookServer, serverName string) []PV {
+	var out []PV
 	for i := range allConfigs {
-		cfg := &allConfigs[i]
+		cfg := PV(&allConfigs[i])
 		if IsAssignedTo(cfg, allServers, serverName) {
 			out = append(out, cfg)
 		}

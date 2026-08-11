@@ -424,6 +424,14 @@ type ConversionRule struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// WebhookServerRefField implements internal/assign's generic ConfigLike
+// constraint, letting the shared resolver operate over both
+// XRDConversionConfig and CRDConversionConfig without either type needing
+// to know about the other.
+func (c *XRDConversionConfig) WebhookServerRefField() *WebhookServerRef {
+	return c.Spec.WebhookServerRef
+}
+
 // SpokeVersionRules is every rule declared for one spoke version.
 type SpokeVersionRules struct {
 	Version string           `json:"version"`

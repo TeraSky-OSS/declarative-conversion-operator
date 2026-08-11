@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -49,21 +50,26 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(teraskyv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(extv1.AddToScheme(scheme))
 }
 
 func main() {
 	var (
-		serverName      string
-		tlsCertDir      string
-		conversionAddr  string
-		plainAddr       string
-		certReloadEvery time.Duration
+		serverName       string
+		tlsCertDir       string
+		conversionAddr   string
+		plainAddr        string
+		certReloadEvery  time.Duration
+		enableXRDSupport bool
+		enableCRDSupport bool
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
 	flag.StringVar(&conversionAddr, "conversion-bind-address", ":9443", "Address the TLS conversion endpoint listens on.")
 	flag.StringVar(&plainAddr, "metrics-bind-address", ":8443", "Address the plain-HTTP health/metrics/debug endpoints listen on.")
 	flag.DurationVar(&certReloadEvery, "cert-reload-interval", 30*time.Second, "How often to re-read the TLS certificate from disk.")
+	flag.BoolVar(&enableXRDSupport, "enable-xrd-support", true, "Serve conversions for XRDConversionConfig-backed XRDs. Must match the operator's own --enable-xrd-support.")
+	flag.BoolVar(&enableCRDSupport, "enable-crd-support", true, "Serve conversions for CRDConversionConfig-backed native CRDs. Must match the operator's own --enable-crd-support.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -95,7 +101,10 @@ func main() {
 	metricsReg := prometheus.NewRegistry()
 	metrics := webhookserver.NewMetrics(metricsReg)
 
-	reconciler := &webhookserver.Reconciler{Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics}
+	reconciler := &webhookserver.Reconciler{
+		Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics,
+		EnableXRDSupport: enableXRDSupport, EnableCRDSupport: enableCRDSupport,
+	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to set up registry reconciler")
 		os.Exit(1)

@@ -73,20 +73,29 @@ func (v *ConversionWebhookServerValidator) ValidateDelete(ctx context.Context, s
 	if server.Annotations[teraskyv1alpha1.AllowForceDeleteAnnotation] == "true" {
 		return nil, nil
 	}
-	var configs teraskyv1alpha1.XRDConversionConfigList
-	if err := v.Client.List(ctx, &configs); err != nil {
+	var xrdConfigs teraskyv1alpha1.XRDConversionConfigList
+	if err := v.Client.List(ctx, &xrdConfigs); err != nil {
 		return nil, fmt.Errorf("listing XRDConversionConfigs: %w", err)
+	}
+	var crdConfigs teraskyv1alpha1.CRDConversionConfigList
+	if err := v.Client.List(ctx, &crdConfigs); err != nil {
+		return nil, fmt.Errorf("listing CRDConversionConfigs: %w", err)
 	}
 	var allServers teraskyv1alpha1.ConversionWebhookServerList
 	if err := v.Client.List(ctx, &allServers); err != nil {
 		return nil, fmt.Errorf("listing ConversionWebhookServers: %w", err)
 	}
-	dependents := assign.ConfigsAssignedTo(configs.Items, allServers.Items, server.Name)
-	if len(dependents) == 0 {
+	dependentXRD := assign.ConfigsAssignedTo(xrdConfigs.Items, allServers.Items, server.Name)
+	dependentCRD := assign.ConfigsAssignedTo(crdConfigs.Items, allServers.Items, server.Name)
+	total := len(dependentXRD) + len(dependentCRD)
+	if total == 0 {
 		return nil, nil
 	}
-	names := make([]string, 0, len(dependents))
-	for _, c := range dependents {
+	names := make([]string, 0, total)
+	for _, c := range dependentXRD {
+		names = append(names, c.Name)
+	}
+	for _, c := range dependentCRD {
 		names = append(names, c.Name)
 	}
 	sort.Strings(names)
@@ -94,5 +103,5 @@ func (v *ConversionWebhookServerValidator) ValidateDelete(ctx context.Context, s
 	if server.Spec.Default {
 		suffix = " (this is the DEFAULT instance — configs with no explicit webhookServerRef depend on it too)"
 	}
-	return nil, fmt.Errorf("%d XRDConversionConfig(s) still resolve to this instance%s: %v; reassign them first, or add annotation %q=\"true\" to force", len(dependents), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation)
+	return nil, fmt.Errorf("%d config(s) still resolve to this instance%s: %v; reassign them first, or add annotation %q=\"true\" to force", total, suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation)
 }

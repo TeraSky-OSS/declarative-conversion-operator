@@ -21,6 +21,25 @@ image:
 crds:
   install: true
 
+# Both CRDs (XRDConversionConfig, CRDConversionConfig) are always installed
+# from crds/ above regardless of these toggles — Helm's crds/ directory
+# doesn't support conditionals, and an unused CRD sitting inert is
+# harmless. These toggles instead control which controllers/watches the
+# manager and every webhook-server replica actually set up.
+features:
+  # Crossplane must already be installed for this to be safe: the manager
+  # watches Crossplane's CompositeResourceDefinition GVK, and establishing
+  # that watch is fatal at startup if the GVK doesn't exist on the
+  # cluster. Disable on clusters without Crossplane.
+  crossplane:
+    enabled: true
+  # Native CRD conversion support (CRDConversionConfig) watches a core
+  # Kubernetes type that's always present, so this carries no equivalent
+  # startup risk — disable only if you simply don't want the feature
+  # active.
+  nativeCRD:
+    enabled: true
+
 manager:
   replicaCount: 1
   leaderElection:

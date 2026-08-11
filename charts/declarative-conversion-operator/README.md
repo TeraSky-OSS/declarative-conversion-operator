@@ -1,12 +1,12 @@
 # declarative-conversion-operator
 
-Declarative conversion webhooks for Crossplane XRDs.
+Declarative conversion webhooks for Crossplane XRDs and, since `CRDConversionConfig`, plain native Kubernetes CustomResourceDefinitions too.
 
 ## Prerequisites
 
 - Kubernetes 1.27+
 - [cert-manager](https://cert-manager.io/docs/installation/) installed (both this operator's own admission webhook and every `ConversionWebhookServer` instance's conversion webhook need it for TLS)
-- [Crossplane](https://docs.crossplane.io/) installed, with at least one `CompositeResourceDefinition` you want to manage multi-version conversion for
+- [Crossplane](https://docs.crossplane.io/) installed, with at least one `CompositeResourceDefinition` you want to manage multi-version conversion for — **unless** you set `features.crossplane.enabled: false` (see below), in which case Crossplane isn't required at all and only `CRDConversionConfig` (native CRDs) is available
 
 ## Install
 
@@ -14,7 +14,21 @@ Declarative conversion webhooks for Crossplane XRDs.
 helm install declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system --create-namespace
 ```
 
-By default this creates one `ConversionWebhookServer` instance named `default`, marked as the fallback target for any `XRDConversionConfig` that doesn't set `spec.webhookServerRef`.
+By default this creates one `ConversionWebhookServer` instance named `default`, marked as the fallback target for any `XRDConversionConfig`/`CRDConversionConfig` that doesn't set `spec.webhookServerRef`.
+
+### Feature toggles
+
+Both `XRDConversionConfig` (Crossplane XRDs) and `CRDConversionConfig` (native CRDs) support are enabled by default. Disable whichever you don't need:
+
+```yaml
+features:
+  crossplane:
+    enabled: false  # set false if Crossplane isn't installed on this cluster
+  nativeCRD:
+    enabled: false  # set false to disable native-CRD conversion support
+```
+
+Both CRDs are always installed regardless of these toggles (an unused CRD sitting inert is harmless); the toggles instead control which controllers/watches the manager and every `ConversionWebhookServer` replica actually set up. **Important:** if Crossplane isn't installed, `features.crossplane.enabled` must be set to `false` — the manager watches Crossplane's `CompositeResourceDefinition` type, and establishing that watch fails fatally at startup if the type doesn't exist on the cluster.
 
 ## Upgrading CRDs
 
@@ -33,6 +47,8 @@ helm upgrade declarative-conversion-operator charts/declarative-conversion-opera
 | `admissionWebhook.certificate.issuerRef` | Issuer/ClusterIssuer for this operator's own admission-webhook certificate (a separate trust surface) | bootstrap self-signed `ClusterIssuer` |
 | `conversionWebhookServer.autoscaling.enabled` | Use an HPA instead of a fixed replica count for the default instance | `false` |
 | `metrics.serviceMonitor.enabled` | Create Prometheus Operator `ServiceMonitor`s (opt-in; not auto-detected) | `false` |
+| `features.crossplane.enabled` | Enable `XRDConversionConfig` support for Crossplane XRDs. Requires Crossplane to be installed. | `true` |
+| `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support for plain native CustomResourceDefinitions. | `true` |
 
 See `values.yaml` for the full set.
 

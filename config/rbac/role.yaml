@@ -49,6 +49,15 @@ rules:
   - patch
   - watch
 - apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - apps
   resources:
   - deployments
@@ -112,6 +121,7 @@ rules:
   - terasky.com
   resources:
   - conversionwebhookservers
+  - crdconversionconfigs
   - xrdconversionconfigs
   verbs:
   - create
@@ -125,6 +135,7 @@ rules:
   - terasky.com
   resources:
   - conversionwebhookservers/finalizers
+  - crdconversionconfigs/finalizers
   - xrdconversionconfigs/finalizers
   verbs:
   - update
@@ -132,6 +143,7 @@ rules:
   - terasky.com
   resources:
   - conversionwebhookservers/status
+  - crdconversionconfigs/status
   - xrdconversionconfigs/status
   verbs:
   - get

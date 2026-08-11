@@ -1,8 +1,10 @@
 # declarative-conversion-operator
 
-A Kubernetes operator that lets admins declare field-level conversions between [Crossplane](https://crossplane.io) XRD (`CompositeResourceDefinition`) versions using built-in strategies — no hand-written conversion webhook required.
+A Kubernetes operator that lets admins declare field-level conversions between [Crossplane](https://crossplane.io) XRD (`CompositeResourceDefinition`) versions, and between plain native Kubernetes CRD versions, using built-in strategies — no hand-written conversion webhook required.
 
-Crossplane XRDs support multiple version schemas the same way native CRDs do, but wiring up a real Kubernetes conversion webhook to convert between them today means writing and deploying custom Go code. This operator replaces that with a declarative `XRDConversionConfig` custom resource: pick a hub version, describe how each spoke version's fields map to it using named strategies (`fieldRename`, `scalarToObject`, `toAnnotation`, `enumRemap`, …), and the operator validates the mapping, compiles it, and — only once everything is verified healthy — patches the target XRD to route conversion requests to a shared, horizontally-scalable webhook server.
+Both Crossplane XRDs and native CRDs support multiple version schemas, but wiring up a real Kubernetes conversion webhook to convert between them today means writing and deploying custom Go code. This operator replaces that with a declarative custom resource — `XRDConversionConfig` for Crossplane XRDs, `CRDConversionConfig` for plain native CRDs — sharing the exact same rule vocabulary: pick a hub version, describe how each spoke version's fields map to it using named strategies (`fieldRename`, `scalarToObject`, `toAnnotation`, `enumRemap`, …), and the operator validates the mapping, compiles it, and — only once everything is verified healthy — patches the target resource to route conversion requests to a shared, horizontally-scalable webhook server.
+
+Both are independently toggleable (`--enable-xrd-support` / `--enable-crd-support`, or `features.crossplane.enabled` / `features.nativeCRD.enabled` in the Helm chart) — disable XRD support on clusters without Crossplane installed, since Crossplane isn't otherwise a hard dependency.
 
 ## Why
 
@@ -14,10 +16,11 @@ Crossplane XRDs support multiple version schemas the same way native CRDs do, bu
 
 ## Architecture
 
-Two CRDs, API group `terasky.com/v1alpha1`:
+Three CRDs, API group `terasky.com/v1alpha1`:
 
-- **`XRDConversionConfig`** (cluster-scoped) — one per target XRD. Declares a hub version and, per spoke version, a list of declarative conversion rules.
-- **`ConversionWebhookServer`** (cluster-scoped) — a deployable, independently scalable instance of the shared conversion webhook runtime (its own Deployment, cert-manager `Certificate`, `Service`, `HorizontalPodAutoscaler`, `PodDisruptionBudget`). The Helm chart creates one by default, marked `default: true`; create more for scale-out or tenant isolation.
+- **`XRDConversionConfig`** (cluster-scoped) — one per target Crossplane XRD. Declares a hub version and, per spoke version, a list of declarative conversion rules.
+- **`CRDConversionConfig`** (cluster-scoped) — the same thing for a plain native `CustomResourceDefinition`, sharing the exact same rule vocabulary (`ConversionRule`/`Strategy`) and controller ordering; only the target resource type differs.
+- **`ConversionWebhookServer`** (cluster-scoped) — a deployable, independently scalable instance of the shared conversion webhook runtime (its own Deployment, cert-manager `Certificate`, `Service`, `HorizontalPodAutoscaler`, `PodDisruptionBudget`). Serves both `XRDConversionConfig`- and `CRDConversionConfig`-backed conversions. The Helm chart creates one by default, marked `default: true`; create more for scale-out or tenant isolation.
 
 ```
                     ┌─────────────────────────┐
@@ -45,6 +48,7 @@ Everything that actually performs a conversion — the controller's validation, 
 api/v1alpha1/         XRDConversionConfig, ConversionWebhookServer CRD types
 pkg/engine/            CRD-agnostic conversion engine: analyze, compile, convert
 pkg/xrdadapter/        Crossplane XRD -> engine.SchemaSource adapter
+pkg/crdadapter/        native CustomResourceDefinition -> engine.SchemaSource adapter
 internal/assign/       shared "which ConversionWebhookServer serves this config" resolver
 internal/controller/   the two reconcilers
 internal/webhook/      this operator's own admission webhooks (validate XRDConversionConfig/ConversionWebhookServer)

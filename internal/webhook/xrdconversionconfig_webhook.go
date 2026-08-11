@@ -51,6 +51,13 @@ import (
 // reported as Invalid in status.
 type XRDConversionConfigValidator struct {
 	Client client.Client
+	// Enabled mirrors --enable-xrd-support. When false, the manager never
+	// watches Crossplane's CompositeResourceDefinition GVK at all (it may
+	// not even exist on this cluster), so an XRDConversionConfig can never
+	// be reconciled; rejecting creates/updates here gives an immediate,
+	// clear reason instead of a config that silently sits unreconciled
+	// forever.
+	Enabled bool
 }
 
 var _ admission.Validator[*teraskyv1alpha1.XRDConversionConfig] = &XRDConversionConfigValidator{}
@@ -68,6 +75,10 @@ func (v *XRDConversionConfigValidator) ValidateDelete(context.Context, *teraskyv
 }
 
 func (v *XRDConversionConfigValidator) validate(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig) (admission.Warnings, error) {
+	if !v.Enabled {
+		return nil, fmt.Errorf("XRD conversion support is disabled on this installation (--enable-xrd-support=false); enable it before creating XRDConversionConfig objects")
+	}
+
 	var warnings admission.Warnings
 
 	if err := ValidateStructure(cfg); err != nil {
@@ -117,16 +128,28 @@ func summarizeErrors(report engine.AnalyzeReport) string {
 	return msg
 }
 
-// validateStructure catches shape problems the CRD's OpenAPI schema can't
+// ValidateStructure catches shape problems the CRD's OpenAPI schema can't
 // express: duplicate spoke versions, a spoke equal to the hub, and
 // strategy/params mismatches (including recursively inside ForEach).
 func ValidateStructure(cfg *teraskyv1alpha1.XRDConversionConfig) error {
-	if len(cfg.Spec.Spokes) == 0 {
+	return validateSpokesStructure(cfg.Spec.HubVersion, cfg.Spec.Spokes)
+}
+
+// ValidateCRDStructure is CRDConversionConfig's counterpart to
+// ValidateStructure, sharing the same underlying check — the structural
+// rules a rule set must satisfy don't depend on whether it's converting an
+// XRD or a native CRD.
+func ValidateCRDStructure(cfg *teraskyv1alpha1.CRDConversionConfig) error {
+	return validateSpokesStructure(cfg.Spec.HubVersion, cfg.Spec.Spokes)
+}
+
+func validateSpokesStructure(hubVersion string, spokes []teraskyv1alpha1.SpokeVersionRules) error {
+	if len(spokes) == 0 {
 		return fmt.Errorf("spec.spokes must declare at least one spoke version")
 	}
 	seen := map[string]bool{}
-	for _, s := range cfg.Spec.Spokes {
-		if s.Version == cfg.Spec.HubVersion {
+	for _, s := range spokes {
+		if s.Version == hubVersion {
 			return fmt.Errorf("spoke version %q must not equal the hub version", s.Version)
 		}
 		if seen[s.Version] {

@@ -1,3 +1,4 @@
 resources:
   - terasky_v1alpha1_xrdconversionconfig.yaml
+  - terasky_v1alpha1_crdconversionconfig.yaml
   - terasky_v1alpha1_conversionwebhookserver.yaml

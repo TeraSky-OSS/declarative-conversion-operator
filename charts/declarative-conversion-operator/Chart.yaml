@@ -1,6 +1,6 @@
 apiVersion: v2
 name: declarative-conversion-operator
-description: Declarative conversion webhooks for Crossplane XRDs — configure hub/spoke version conversions without hand-writing a webhook.
+description: Declarative conversion webhooks for Crossplane XRDs and native Kubernetes CRDs — configure hub/spoke version conversions without hand-writing a webhook.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
