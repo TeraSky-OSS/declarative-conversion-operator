@@ -134,16 +134,31 @@ func newAnalyzeCmd() *cobra.Command {
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, configPath, samplesDir, output, failOn string
-		skipIdentity, strict                            bool
+		skipIdentity, strict, live                      bool
 		versionPairs                                    []string
+		kubeconfig, kubeContext                         string
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Run every sample through every conversion path and report timing, loss, and rule coverage",
+		Long: `Run every sample through every conversion path and report timing, loss, and rule coverage.
+
+Samples come from one of two places, chosen with --samples or --live:
+
+  --samples <dir>  a directory of hand-written sample object YAML files (offline, the default workflow)
+  --live           every existing instance of the XRD's generated type, fetched live from a cluster at
+                   its hub/storage version — a pre-upgrade check: does a config-to-be-applied hold up
+                   against every object that already exists, not just fixtures?
+
+--live resolves the target cluster the same way kubectl does: --kubeconfig (falling back to $KUBECONFIG,
+then ~/.kube/config) and --context (falling back to the kubeconfig's current-context). It only needs
+get/list on the XRD's generated resource type — no write access, and no access to this operator's own
+CRDs or webhook server.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rep, err := RunTest(TestOptions{
 				XRDPath: xrdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
+				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 			})
 			if err != nil {
 				return err
@@ -161,7 +176,10 @@ func newTestCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required)")
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig YAML file (required)")
-	cmd.Flags().StringVarP(&samplesDir, "samples", "s", "", "Path to a directory of sample objects (required)")
+	cmd.Flags().StringVarP(&samplesDir, "samples", "s", "", "Path to a directory of sample objects")
+	cmd.Flags().BoolVar(&live, "live", false, "Fetch samples from a live cluster instead of --samples (a pre-upgrade check against real objects)")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (default: $KUBECONFIG, then ~/.kube/config); only used with --live")
+	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
@@ -169,7 +187,8 @@ func newTestCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	_ = cmd.MarkFlagRequired("xrd")
 	_ = cmd.MarkFlagRequired("config")
-	_ = cmd.MarkFlagRequired("samples")
+	cmd.MarkFlagsOneRequired("samples", "live")
+	cmd.MarkFlagsMutuallyExclusive("samples", "live")
 	return cmd
 }
 

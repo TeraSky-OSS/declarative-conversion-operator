@@ -102,11 +102,7 @@ func LoadSamples(dir string) ([]Sample, error) {
 			if apiVersion == "" {
 				return fmt.Errorf("%s (document %d): missing apiVersion; samples must declare which version they represent", rel, i)
 			}
-			version := apiVersion
-			if idx := strings.LastIndex(apiVersion, "/"); idx >= 0 {
-				version = apiVersion[idx+1:]
-			}
-			samples = append(samples, Sample{File: rel, Index: i, Object: doc, Version: version})
+			samples = append(samples, Sample{File: rel, Index: i, Object: doc, Version: versionFromAPIVersion(apiVersion)})
 		}
 		return nil
 	})

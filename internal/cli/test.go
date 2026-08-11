@@ -17,6 +17,7 @@ limitations under the License.
 package cli
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -33,6 +34,15 @@ type TestOptions struct {
 	// RestrictVersionPairs, if non-empty, limits testing to exactly these
 	// "from:to" pairs (both directions still need listing explicitly).
 	RestrictVersionPairs []string
+
+	// Live, when set, fetches samples from a real cluster instead of
+	// SamplesDir: every existing instance of the XRD's generated type,
+	// read at its hub/storage version. This is the "pre-upgrade check"
+	// mode — test a config-to-be-applied against every object that
+	// already exists, not just hand-written fixtures.
+	Live        bool
+	Kubeconfig  string
+	KubeContext string
 }
 
 // RunTest loads the XRD/config/samples, validates the configuration
@@ -54,12 +64,27 @@ func RunTest(opts TestOptions) (*Report, error) {
 	if err := internalwebhook.ValidateStructure(cfg); err != nil {
 		return nil, fmt.Errorf("configuration is structurally invalid: %w", err)
 	}
-	samples, err := LoadSamples(opts.SamplesDir)
-	if err != nil {
-		return nil, err
-	}
-	if len(samples) == 0 {
-		return nil, fmt.Errorf("no sample files found under %s", opts.SamplesDir)
+	var samples []Sample
+	if opts.Live {
+		dyn, err := buildDynamicClient(KubeOptions{Kubeconfig: opts.Kubeconfig, Context: opts.KubeContext})
+		if err != nil {
+			return nil, err
+		}
+		samples, err = FetchLiveSamples(context.Background(), dyn, xrd, cfg.Spec.HubVersion)
+		if err != nil {
+			return nil, fmt.Errorf("fetching live samples: %w", err)
+		}
+		if len(samples) == 0 {
+			return nil, fmt.Errorf("no live objects of %s found at version %s", xrdName(xrd), cfg.Spec.HubVersion)
+		}
+	} else {
+		samples, err = LoadSamples(opts.SamplesDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(samples) == 0 {
+			return nil, fmt.Errorf("no sample files found under %s", opts.SamplesDir)
+		}
 	}
 
 	report, versions, err := runAnalyze(xrd, cfg)

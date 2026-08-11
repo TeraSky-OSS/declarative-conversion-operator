@@ -102,6 +102,21 @@ xrdconvctl test       --xrd xrd.yaml --config config.yaml --samples ./samples/
 
 `test` runs every sample object through every served-version conversion path (round-tripping through the hub), reporting timing, fields converted, rules exercised, and — for any detected loss — exactly which field diverged between which versions and whether it was acknowledged. Exit code `0` means every path passed or only had acknowledged loss; `1` means an unacknowledged loss or failure was found; `2` means a usage/tooling error.
 
+### Pre-upgrade check: testing against everything that already exists
+
+`--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of the target XRD's generated composite resource type, fetched at its hub/storage version (so it works even before any conversion webhook is wired up):
+
+```console
+xrdconvctl test --xrd xrd.yaml --config new-config.yaml --live
+xrdconvctl test --xrd xrd.yaml --config new-config.yaml --live --kubeconfig ~/.kube/other-config --context prod
+```
+
+This is the tool to run before applying a new or changed `XRDConversionConfig`: does it hold up against every object that already exists, not just fixtures? `--kubeconfig`/`--context` resolve exactly like `kubectl` does — an explicit `--kubeconfig` path falls back to `$KUBECONFIG`, then `~/.kube/config`; an explicit `--context` falls back to the kubeconfig's `current-context`. The invoking identity only needs `get`/`list` on the XRD's generated resource type — no write access, and nothing related to this operator's own CRDs or webhook server.
+
+### Shell completion
+
+`xrdconvctl completion [bash|zsh|fish|powershell]` (built into Cobra) prints a completion script for your shell — e.g. `source <(xrdconvctl completion bash)`, or see `xrdconvctl completion --help` for how to install it permanently.
+
 ## Development
 
 ```console
