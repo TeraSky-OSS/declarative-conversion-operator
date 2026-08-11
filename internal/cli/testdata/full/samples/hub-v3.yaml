@@ -25,3 +25,6 @@ spec:
       label: "data"
     - sizeGB: "20"
       label: "logs"
+status:
+  phase: "Ready"
+  observedGeneration: 5

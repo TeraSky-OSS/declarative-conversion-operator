@@ -173,6 +173,89 @@ func TestRunTest_FullCoverage_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestStatusFieldConversion proves that conversion rules apply to
+// status.* paths exactly the same way they apply to spec.* paths — the
+// engine has no special-casing of the status subresource. The full fixture
+// declares a FieldRename rule from the hub's status.phase to v2's
+// status.state (and mirrors status identically, with no rule, on v1), so
+// this exercises both a rule-driven status conversion and an
+// identity-passthrough one.
+func TestStatusFieldConversion(t *testing.T) {
+	xrd, err := LoadXRD("testdata/full/xrd.yaml")
+	if err != nil {
+		t.Fatalf("load xrd: %v", err)
+	}
+	cfg, err := LoadConfig("testdata/full/config.yaml")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	report, _, err := runAnalyze(xrd, cfg)
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	if report.HasErrors() {
+		t.Fatalf("expected a valid config, got errors: %s", summarizeSpokeErrors(report))
+	}
+	router, err := buildRouter(cfg, report)
+	if err != nil {
+		t.Fatalf("build router: %v", err)
+	}
+
+	// Use the bundled hub sample rather than a hand-built minimal object,
+	// since several of the other rules (e.g. the JSONPatch move) require
+	// their source spec fields to be present too.
+	samples, err := LoadSamples("testdata/full/samples")
+	if err != nil {
+		t.Fatalf("load samples: %v", err)
+	}
+	var hub map[string]any
+	for _, s := range samples {
+		if s.Version == "v3" {
+			hub = s.Object
+		}
+	}
+	if hub == nil {
+		t.Fatalf("expected a v3 (hub) sample among testdata/full/samples")
+	}
+
+	// Hub -> v2: status.phase is renamed to status.state by an explicit
+	// rule.
+	v2, err := router.Convert(hub, "v3", "v2")
+	if err != nil {
+		t.Fatalf("convert v3->v2: %v", err)
+	}
+	v2Status, ok := v2["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected status in v2 output, got %#v", v2["status"])
+	}
+	if v2Status["state"] != "Ready" {
+		t.Fatalf("expected status.state=Ready (renamed from status.phase), got %#v", v2Status["state"])
+	}
+	if _, hasPhase := v2Status["phase"]; hasPhase {
+		t.Fatalf("expected status.phase not to survive the rename, got %#v", v2Status)
+	}
+
+	back, err := router.Convert(v2, "v2", "v3")
+	if err != nil {
+		t.Fatalf("convert v2->v3: %v", err)
+	}
+	backStatus, ok := back["status"].(map[string]any)
+	if !ok || backStatus["phase"] != "Ready" {
+		t.Fatalf("expected status.phase=Ready restored on the way back to the hub, got %#v", back["status"])
+	}
+
+	// Hub -> v1: status is identical in shape on both sides, so it's
+	// auto-covered by an identity op with no rule at all.
+	v1, err := router.Convert(hub, "v3", "v1")
+	if err != nil {
+		t.Fatalf("convert v3->v1: %v", err)
+	}
+	v1Status, ok := v1["status"].(map[string]any)
+	if !ok || v1Status["phase"] != "Ready" {
+		t.Fatalf("expected status.phase to pass through identically to v1, got %#v", v1["status"])
+	}
+}
+
 func TestRunTest_NoSamples_IsAnError(t *testing.T) {
 	dir := t.TempDir()
 	_, err := RunTest(TestOptions{XRDPath: "testdata/xrd.yaml", ConfigPath: "testdata/config.yaml", SamplesDir: dir})

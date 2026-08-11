@@ -25,3 +25,6 @@ spec:
   description: "Developer sandbox widget"
   size: "Small"
   legacyFlag: false
+status:
+  phase: "Pending"
+  observedGeneration: 1

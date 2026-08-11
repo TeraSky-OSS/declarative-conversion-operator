@@ -26,3 +26,6 @@ spec:
   volumes:
     - sizeGB: "50"
       label: "cache"
+status:
+  state: "Provisioning"
+  observedGeneration: 2

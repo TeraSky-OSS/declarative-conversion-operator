@@ -76,6 +76,12 @@ kubectl get xrdconversionconfig xpostgresqlinstances-conversion -o yaml
 
 `fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, one level of nesting). Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
 
+### `status` fields
+
+Rules apply to `status.*` paths exactly the same way they apply to `spec.*` — `pkg/engine` compiles and converts whatever top-level schema the XRD version declares (it never narrows to `.properties.spec`), so a `fieldRename` or any other strategy targeting `status.somePath` works identically to one targeting `spec.somePath`. This matters because a CRD conversion webhook receives the whole stored object, including `status`, regardless of whether the CRD uses the `status` subresource.
+
+The same fail-closed coverage rule applies too: a `status` field that differs in shape between hub and spoke needs an explicit rule, or the config is rejected as invalid; a `status` field with identical shape on both sides is passed through automatically with no rule at all. `internal/cli/testdata/full` has a worked example — the hub's `status.phase` is renamed to `status.state` on the `v2` spoke via an ordinary `fieldRename` rule, while `status` is left untouched (identical shape, no rule) on the `v1` spoke.
+
 ## CLI
 
 ```console

@@ -14,6 +14,14 @@ spec:
             hubPath: spec.storageGB
             spokePath: spec.storageSize
 
+        # Rules apply identically to status.* paths as they do to spec.* —
+        # this one renames the hub's status.phase to the spoke's
+        # status.state, proving the engine doesn't special-case status.
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: status.phase
+            spokePath: status.state
+
         - strategy: ScalarToObject
           scalarToObject:
             hubPath: spec.replicaCount

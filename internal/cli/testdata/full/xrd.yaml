@@ -62,6 +62,13 @@ spec:
                         type: string
                       label:
                         type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                observedGeneration:
+                  type: integer
     - name: v2
       served: true
       referenceable: false
@@ -124,6 +131,16 @@ spec:
                         type: string
                       label:
                         type: string
+            status:
+              type: object
+              properties:
+                # renamed from the hub's status.phase via a FieldRename rule
+                # scoped to status.*, proving rules apply to status the same
+                # way they apply to spec
+                state:
+                  type: string
+                observedGeneration:
+                  type: integer
     - name: v1
       served: true
       referenceable: false
@@ -188,3 +205,12 @@ spec:
                   enum: ["Small", "Medium", "Large"]
                 legacyFlag:
                   type: boolean
+            status:
+              type: object
+              properties:
+                # identical to the hub's status shape, so it's auto-covered
+                # here with no rule needed at all
+                phase:
+                  type: string
+                observedGeneration:
+                  type: integer
