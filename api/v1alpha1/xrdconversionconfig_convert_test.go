@@ -25,8 +25,9 @@ import (
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
-// rawJSON builds an extv1.JSON from a literal JSON snippet, panicking on a
-// malformed literal (a test-authoring bug, not a case under test).
+// rawJSON builds an extv1.JSON from a literal, wrapping the bytes verbatim
+// without validating them — some tests deliberately pass malformed JSON to
+// exercise jsonToAny's error path.
 func rawJSON(literal string) extv1.JSON {
 	return extv1.JSON{Raw: []byte(literal)}
 }
@@ -308,7 +309,7 @@ func TestConvertParams_InvalidJSONValue(t *testing.T) {
 	}
 }
 
-func TestConvertParams_DefaultValueOmittedIsNil(t *testing.T) {
+func TestConvertParams_ConstantOmittedValueIsNil(t *testing.T) {
 	// An unset extv1.JSON.Raw (as opposed to an explicit JSON "null") must
 	// convert to a nil Go value, not an error — jsonToAny's empty-Raw guard.
 	rule := ConversionRule{Strategy: StrategyConstant, Constant: &ConstantParams{Path: "p", ExistsOn: SideHub}}
@@ -316,7 +317,10 @@ func TestConvertParams_DefaultValueOmittedIsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	params := out[0].Params.(engine.ConstantParams)
+	params, ok := out[0].Params.(engine.ConstantParams)
+	if !ok {
+		t.Fatalf("expected engine.ConstantParams, got %T", out[0].Params)
+	}
 	if params.Value != nil {
 		t.Fatalf("expected a nil Value for an omitted JSON literal, got %v", params.Value)
 	}

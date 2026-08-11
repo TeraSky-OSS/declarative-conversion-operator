@@ -49,7 +49,7 @@ func TestCRDReconcile_AddsFinalizerThenApplies(t *testing.T) {
 	cfg := renameRuleCRDConfig("cfg", "foos.example.org")
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(crd, cfg, server, secret).build().Build()
+	c := newFakeClient(crd, cfg, server, secret).Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	// A single Reconcile call both adds the finalizer and runs
@@ -90,7 +90,7 @@ func TestCRDReconcile_AddsFinalizerThenApplies(t *testing.T) {
 func TestCRDReconcile_TargetCRDMissing_MarksInvalid(t *testing.T) {
 	cfg := renameRuleCRDConfig("cfg", "missing.example.org")
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
-	c := newFakeClient(cfg).build().Build()
+	c := newFakeClient(cfg).Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
@@ -109,7 +109,7 @@ func TestCRDReconcile_CRDNotEstablished_Pending(t *testing.T) {
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(crd, cfg, server, secret).build().Build()
+	c := newFakeClient(crd, cfg, server, secret).Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	res, err := reconcileCRD(t, r, "cfg")
@@ -133,7 +133,7 @@ func TestCRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(crd, cfg, server, secret).build().Build()
+	c := newFakeClient(crd, cfg, server, secret).Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	live := getCRDConfig(t, r, "cfg")
@@ -167,7 +167,7 @@ func TestCRDReconcile_Delete_BlockedByMultipleServedVersions(t *testing.T) {
 	now := metav1.Now()
 	cfg.DeletionTimestamp = &now
 
-	c := newFakeClient(crd, cfg).build().Build()
+	c := newFakeClient(crd, cfg).Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	res, err := reconcileCRD(t, r, "cfg")
@@ -195,7 +195,7 @@ func TestCRDReconcile_Delete_UnsafeOverrideRemovesFinalizer(t *testing.T) {
 	now := metav1.Now()
 	cfg.DeletionTimestamp = &now
 
-	c := newFakeClient(crd, cfg).build().Build()
+	c := newFakeClient(crd, cfg).Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
@@ -208,7 +208,7 @@ func TestCRDReconcile_Delete_UnsafeOverrideRemovesFinalizer(t *testing.T) {
 }
 
 func TestCRDReconcile_NotFound_IsIgnored(t *testing.T) {
-	c := newFakeClient().build().Build()
+	c := newFakeClient().Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 	if _, err := reconcileCRD(t, r, "does-not-exist"); err != nil {
 		t.Fatalf("expected a NotFound Get to be swallowed, got %v", err)

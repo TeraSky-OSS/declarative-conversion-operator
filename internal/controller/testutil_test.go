@@ -49,19 +49,11 @@ func must(err error) {
 // enabled for every custom type these reconcilers Status().Patch — without
 // this, the fake client's Update would silently clobber (rather than
 // preserve) status on a spec-only Update, unlike a real API server.
-func newFakeClient(initObjs ...runtime.Object) *fakeClientBuilder {
-	return &fakeClientBuilder{objs: initObjs}
-}
-
-type fakeClientBuilder struct {
-	objs []runtime.Object
-}
-
-func (b *fakeClientBuilder) build() *fake.ClientBuilder {
+func newFakeClient(initObjs ...runtime.Object) *fake.ClientBuilder {
 	return fake.NewClientBuilder().
 		WithScheme(newScheme()).
 		WithStatusSubresource(&teraskyv1alpha1.XRDConversionConfig{}, &teraskyv1alpha1.CRDConversionConfig{}, &teraskyv1alpha1.ConversionWebhookServer{}).
-		WithRuntimeObjects(b.objs...)
+		WithRuntimeObjects(initObjs...)
 }
 
 // establishedXRD returns a minimal, structurally valid unstructured
@@ -203,7 +195,7 @@ func readyServer(name string) (*teraskyv1alpha1.ConversionWebhookServer, *corev1
 		},
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: cwsCertificateSecretName(name), Namespace: "operator-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: cwsCertificateSecretName(name), Namespace: server.Spec.Namespace},
 		Data:       map[string][]byte{"ca.crt": []byte("fake-ca-bundle")},
 	}
 	return server, secret

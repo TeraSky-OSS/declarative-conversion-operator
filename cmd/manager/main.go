@@ -173,6 +173,11 @@ func main() {
 	}
 }
 
+// serviceAccountNamespaceFile is a var (not a const) so tests can point it
+// at a path that's guaranteed not to exist, rather than depending on
+// whether the test happens to be running inside a real Kubernetes pod.
+var serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
 // currentNamespace returns the namespace the operator is running in,
 // read from the projected service account token directory Kubernetes
 // mounts into every pod. Falls back to "default" for local/dev runs
@@ -182,7 +187,7 @@ func currentNamespace() string {
 	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
 		return ns
 	}
-	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+	if data, err := os.ReadFile(serviceAccountNamespaceFile); err == nil {
 		if ns := string(data); ns != "" {
 			return ns
 		}

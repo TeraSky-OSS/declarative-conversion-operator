@@ -21,6 +21,8 @@ limitations under the License.
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -31,11 +33,32 @@ func TestCurrentNamespace_PodNamespaceEnvVar(t *testing.T) {
 	}
 }
 
+func TestCurrentNamespace_ReadsServiceAccountFile(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "namespace")
+	if err := os.WriteFile(path, []byte("from-file-ns"), 0o600); err != nil {
+		t.Fatalf("writing fixture file: %v", err)
+	}
+	old := serviceAccountNamespaceFile
+	serviceAccountNamespaceFile = path
+	defer func() { serviceAccountNamespaceFile = old }()
+
+	if got := currentNamespace(); got != "from-file-ns" {
+		t.Fatalf("expected the namespace read from the service account file, got %q", got)
+	}
+}
+
 func TestCurrentNamespace_FallsBackToDefault(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "")
-	// This test's sandbox has no
-	// /var/run/secrets/kubernetes.io/serviceaccount/namespace file, so this
-	// also exercises that read failing and falling through.
+	// Point at a path that's guaranteed not to exist, rather than relying
+	// on this test's sandbox not being a real Kubernetes pod (where the
+	// real service-account file would exist and this would otherwise
+	// return that namespace instead of "default").
+	old := serviceAccountNamespaceFile
+	serviceAccountNamespaceFile = filepath.Join(t.TempDir(), "does-not-exist")
+	defer func() { serviceAccountNamespaceFile = old }()
+
 	if got := currentNamespace(); got != "default" {
 		t.Fatalf("expected the \"default\" fallback outside a cluster, got %q", got)
 	}

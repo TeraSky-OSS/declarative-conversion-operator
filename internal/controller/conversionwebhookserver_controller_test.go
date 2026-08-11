@@ -61,7 +61,7 @@ func TestCWSReconcile_HappyPath_CreatesChildResources(t *testing.T) {
 			},
 		},
 	}
-	c := newFakeClient(server).build().Build()
+	c := newFakeClient(server).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns", DefaultImage: "test/image:v1"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
@@ -121,6 +121,9 @@ func TestCWSReconcile_HappyPath_CreatesChildResources(t *testing.T) {
 	if meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.CWSConditionCertificateReady) {
 		t.Fatalf("expected CertificateReady=False without a real cert-manager")
 	}
+	if meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.CWSConditionAvailable) {
+		t.Fatalf("expected Available=False since the fake client never marks the Deployment Available")
+	}
 }
 
 func TestCWSReconcile_Autoscaling_CreatesHPA_NoStaticReplicas(t *testing.T) {
@@ -132,7 +135,7 @@ func TestCWSReconcile_Autoscaling_CreatesHPA_NoStaticReplicas(t *testing.T) {
 			Autoscaling: &teraskyv1alpha1.AutoscalingSpec{MinReplicas: 2, MaxReplicas: 5},
 		},
 	}
-	c := newFakeClient(server).build().Build()
+	c := newFakeClient(server).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
@@ -158,7 +161,7 @@ func TestCWSReconcile_PodDisruptionBudget_Created(t *testing.T) {
 			PodDisruptionBudget: &teraskyv1alpha1.PodDisruptionBudgetSpec{MinAvailable: &minAvail},
 		},
 	}
-	c := newFakeClient(server).build().Build()
+	c := newFakeClient(server).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
@@ -183,7 +186,7 @@ func TestCWSReconcile_TogglingAutoscalingOff_DeletesExistingHPA(t *testing.T) {
 		},
 	}
 	existingHPA := &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "srv-webhook-server", Namespace: "operator-ns"}}
-	c := newFakeClient(server, existingHPA).build().Build()
+	c := newFakeClient(server, existingHPA).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
@@ -209,7 +212,7 @@ func TestCWSReconcile_DefaultConflict_SetsCondition(t *testing.T) {
 			Certificate: teraskyv1alpha1.CertificateSpec{IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"}},
 		},
 	}
-	c := newFakeClient(other, server).build().Build()
+	c := newFakeClient(other, server).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
@@ -233,7 +236,7 @@ func TestCWSReconcile_Delete_BlockedByDependentConfigs(t *testing.T) {
 	depCfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
 	depCfg.Spec.WebhookServerRef = &teraskyv1alpha1.WebhookServerRef{Name: "srv"}
 
-	c := newFakeClient(server, depCfg).build().Build()
+	c := newFakeClient(server, depCfg).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	res, err := reconcileCWS(t, r, "srv")
@@ -264,15 +267,16 @@ func TestCWSReconcile_Delete_ForceAnnotationBypassesBlock(t *testing.T) {
 	depCfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
 	depCfg.Spec.WebhookServerRef = &teraskyv1alpha1.WebhookServerRef{Name: "srv"}
 
-	c := newFakeClient(server, depCfg).build().Build()
+	c := newFakeClient(server, depCfg).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got teraskyv1alpha1.ConversionWebhookServer
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv"}, &got); err == nil {
-		t.Fatalf("expected the server to be gone once force-deleted, got %+v", got)
+	err := r.Get(context.Background(), types.NamespacedName{Name: "srv"}, &got)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected the server to be gone once force-deleted, got err=%v obj=%+v", err, got)
 	}
 }
 
@@ -285,20 +289,21 @@ func TestCWSReconcile_Delete_NoDependents_RemovesFinalizer(t *testing.T) {
 	now := metav1.Now()
 	server.DeletionTimestamp = &now
 
-	c := newFakeClient(server).build().Build()
+	c := newFakeClient(server).Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 
 	if _, err := reconcileCWS(t, r, "srv"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got teraskyv1alpha1.ConversionWebhookServer
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv"}, &got); err == nil {
-		t.Fatalf("expected the server to be gone once its finalizer is removed, got %+v", got)
+	err := r.Get(context.Background(), types.NamespacedName{Name: "srv"}, &got)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected the server to be gone once its finalizer is removed, got err=%v obj=%+v", err, got)
 	}
 }
 
 func TestCWSReconcile_NotFound_IsIgnored(t *testing.T) {
-	c := newFakeClient().build().Build()
+	c := newFakeClient().Build()
 	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns"}
 	if _, err := reconcileCWS(t, r, "does-not-exist"); err != nil {
 		t.Fatalf("expected a NotFound Get to be swallowed, got %v", err)

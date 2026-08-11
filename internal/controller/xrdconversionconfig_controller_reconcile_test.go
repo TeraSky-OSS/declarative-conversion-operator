@@ -22,11 +22,13 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 func reconcileXRD(t *testing.T, r *XRDConversionConfigReconciler, name string) (reconcile.Result, error) {
@@ -48,15 +50,9 @@ func TestXRDReconcile_AddsFinalizerThenApplies(t *testing.T) {
 	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(cfg, server, secret).build().Build()
+	c := newFakeClient(cfg, server, secret).Build()
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
-	// First reconcile only adds the finalizer and returns (mirroring the
-	// real controller-runtime flow: it Updates, then the caller's next
-	// event drives reconcileNormal). Feeding it the live XRD only from the
-	// second call on isn't required by the code, but keeping both present
-	// throughout matches how a real cluster would behave and exercises the
-	// same code path.
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -89,40 +85,41 @@ func TestXRDReconcile_AddsFinalizerThenApplies(t *testing.T) {
 	}
 
 	// The XRD itself should now carry the patched conversion webhook config.
-	var patchedXRD = establishedXRD("xfoos.example.org")
+	patchedXRD := &unstructured.Unstructured{}
+	patchedXRD.SetGroupVersionKind(xrdadapter.GroupVersionKind)
 	if err := r.Get(context.Background(), types.NamespacedName{Name: "xfoos.example.org"}, patchedXRD); err != nil {
 		t.Fatalf("getting patched XRD: %v", err)
 	}
-	strategy, found, _ := stringField(patchedXRD.Object, "spec", "conversion", "strategy")
+	strategy, found := stringField(patchedXRD.Object, "spec", "conversion", "strategy")
 	if !found || strategy != "Webhook" {
 		t.Fatalf("expected spec.conversion.strategy=Webhook on the target XRD, found=%v strategy=%q", found, strategy)
 	}
 }
 
-func stringField(obj map[string]any, path ...string) (string, bool, error) {
+func stringField(obj map[string]any, path ...string) (string, bool) {
 	m := obj
 	for i, p := range path {
 		v, ok := m[p]
 		if !ok {
-			return "", false, nil
+			return "", false
 		}
 		if i == len(path)-1 {
 			s, ok := v.(string)
-			return s, ok, nil
+			return s, ok
 		}
 		next, ok := v.(map[string]any)
 		if !ok {
-			return "", false, nil
+			return "", false
 		}
 		m = next
 	}
-	return "", false, nil
+	return "", false
 }
 
 func TestXRDReconcile_TargetXRDMissing_MarksInvalid(t *testing.T) {
 	cfg := renameRuleXRDConfig("cfg", "missing.example.org")
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
-	c := newFakeClient(cfg).build().Build()
+	c := newFakeClient(cfg).Build()
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
@@ -144,7 +141,7 @@ func TestXRDReconcile_XRDNotEstablished_Pending(t *testing.T) {
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(cfg, server, secret).build().Build()
+	c := newFakeClient(cfg, server, secret).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -170,7 +167,7 @@ func TestXRDReconcile_ServerNotReady_Pending(t *testing.T) {
 	server, secret := readyServer("srv")
 	server.Status.ReadyReplicas = 0 // not ready
 
-	c := newFakeClient(cfg, server, secret).build().Build()
+	c := newFakeClient(cfg, server, secret).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -194,7 +191,7 @@ func TestXRDReconcile_NoAssignableServer_Invalid(t *testing.T) {
 	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 	// No ConversionWebhookServer exists at all.
-	c := newFakeClient(cfg).build().Build()
+	c := newFakeClient(cfg).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -217,7 +214,7 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(cfg, server, secret).build().Build()
+	c := newFakeClient(cfg, server, secret).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -239,11 +236,12 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 		t.Fatalf("expected phase Failed under FailClosed drift, got %q (message: %s)", got.Status.Phase, got.Status.Message)
 	}
 
-	var patchedXRD = establishedXRD("xfoos.example.org")
+	patchedXRD := &unstructured.Unstructured{}
+	patchedXRD.SetGroupVersionKind(xrdadapter.GroupVersionKind)
 	if err := r.Get(context.Background(), types.NamespacedName{Name: "xfoos.example.org"}, patchedXRD); err != nil {
 		t.Fatalf("getting XRD: %v", err)
 	}
-	strategy, found, _ := stringField(patchedXRD.Object, "spec", "conversion", "strategy")
+	strategy, found := stringField(patchedXRD.Object, "spec", "conversion", "strategy")
 	if !found || strategy != "None" {
 		t.Fatalf("expected the XRD to be reverted to strategy=None, found=%v strategy=%q", found, strategy)
 	}
@@ -257,7 +255,7 @@ func TestXRDReconcile_Drift_KeepServingStale(t *testing.T) {
 	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 	server, secret := readyServer("srv")
 
-	c := newFakeClient(cfg, server, secret).build().Build()
+	c := newFakeClient(cfg, server, secret).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -286,7 +284,7 @@ func TestXRDReconcile_Delete_BlockedByMultipleServedVersions(t *testing.T) {
 	now := metav1.Now()
 	cfg.DeletionTimestamp = &now
 
-	c := newFakeClient(cfg).build().Build()
+	c := newFakeClient(cfg).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -317,7 +315,7 @@ func TestXRDReconcile_Delete_UnsafeOverrideRemovesFinalizer(t *testing.T) {
 	now := metav1.Now()
 	cfg.DeletionTimestamp = &now
 
-	c := newFakeClient(cfg).build().Build()
+	c := newFakeClient(cfg).Build()
 	if err := c.Create(context.Background(), xrd); err != nil {
 		t.Fatalf("creating XRD fixture: %v", err)
 	}
@@ -341,7 +339,7 @@ func TestXRDReconcile_Delete_NeverAppliedSkipsRevert(t *testing.T) {
 	now := metav1.Now()
 	cfg.DeletionTimestamp = &now
 
-	c := newFakeClient(cfg).build().Build()
+	c := newFakeClient(cfg).Build()
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 
 	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
@@ -355,7 +353,7 @@ func TestXRDReconcile_Delete_NeverAppliedSkipsRevert(t *testing.T) {
 }
 
 func TestXRDReconcile_NotFound_IsIgnored(t *testing.T) {
-	c := newFakeClient().build().Build()
+	c := newFakeClient().Build()
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 	if _, err := reconcileXRD(t, r, "does-not-exist"); err != nil {
 		t.Fatalf("expected a NotFound Get to be swallowed, got %v", err)
