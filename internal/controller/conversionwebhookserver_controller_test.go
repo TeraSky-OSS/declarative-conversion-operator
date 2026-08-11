@@ -118,11 +118,22 @@ func TestCWSReconcile_HappyPath_CreatesChildResources(t *testing.T) {
 	if !meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.CWSConditionServiceReady) {
 		t.Fatalf("expected ServiceReady=True, got %+v", got.Status.Conditions)
 	}
-	if meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.CWSConditionCertificateReady) {
-		t.Fatalf("expected CertificateReady=False without a real cert-manager")
+	requireConditionFalse(t, got.Status.Conditions, teraskyv1alpha1.CWSConditionCertificateReady, "without a real cert-manager")
+	requireConditionFalse(t, got.Status.Conditions, teraskyv1alpha1.CWSConditionAvailable, "since the fake client never marks the Deployment Available")
+}
+
+// requireConditionFalse fails the test unless conditionType is present with
+// Status == False — unlike a bare !meta.IsStatusConditionTrue check, this
+// also catches the condition being absent or Unknown, either of which would
+// otherwise slip through a merely-not-True assertion.
+func requireConditionFalse(t *testing.T, conditions []metav1.Condition, conditionType, why string) {
+	t.Helper()
+	c := meta.FindStatusCondition(conditions, conditionType)
+	if c == nil {
+		t.Fatalf("expected condition %s to be present and False (%s), but it was absent: %+v", conditionType, why, conditions)
 	}
-	if meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.CWSConditionAvailable) {
-		t.Fatalf("expected Available=False since the fake client never marks the Deployment Available")
+	if c.Status != metav1.ConditionFalse {
+		t.Fatalf("expected condition %s=False (%s), got %s", conditionType, why, c.Status)
 	}
 }
 
