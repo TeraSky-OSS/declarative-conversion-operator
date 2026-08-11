@@ -1,0 +1,7 @@
+apiVersion: e2e.example.org/v1
+kind: XWidget
+metadata:
+  name: e2e-widget
+  namespace: default
+spec:
+  storageSize: "500"

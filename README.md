@@ -111,6 +111,10 @@ make build                  # build all three binaries into bin/
 make helm-lint helm-template
 ```
 
+### End-to-end tests
+
+`make test-e2e` (`hack/e2e-test.sh`) proves the conversion webhook works against a real `kube-apiserver`, not just `pkg/engine` offline: it creates a [kind](https://kind.sigs.k8s.io/) cluster, installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), builds this repo's `manager`/`webhook-server` images and loads them straight into the cluster (no registry push), installs the operator via its own Helm chart, then applies a real `CompositeResourceDefinition` + `XRDConversionConfig` and confirms a composite resource created at one served version reads back correctly converted at another — including that a hub-only field is dropped, not silently mis-rendered. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; runs identically in CI (`.github/workflows/e2e.yml`) and locally. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).

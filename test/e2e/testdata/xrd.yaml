@@ -1,0 +1,45 @@
+# A minimal but real Crossplane v2 CompositeResourceDefinition used only to
+# prove, against a live cluster, that the conversion webhook this operator
+# wires up actually gets invoked by the kube-apiserver and actually
+# converts objects — everything else about this operator is already
+# covered offline by internal/cli/testdata (see xrdconvctl test). This XRD
+# deliberately has no Composition and is never expected to become Synced;
+# we only care about the composite resource's own stored/served schema
+# and its conversion behavior, not Crossplane's provisioning pipeline.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xwidgets.e2e.example.org
+spec:
+  scope: Namespaced
+  group: e2e.example.org
+  names:
+    kind: XWidget
+    plural: xwidgets
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                description:
+                  type: string
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string

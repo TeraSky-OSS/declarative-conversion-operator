@@ -46,6 +46,10 @@ vet: ## Run go vet against code.
 test: generate manifests fmt vet ## Run unit tests.
 	go test ./... -race -count=1
 
+.PHONY: test-e2e
+test-e2e: ## Run the real end-to-end test: kind + cert-manager + Crossplane + this operator, proving the conversion webhook works against a live apiserver. Requires docker, kind, kubectl, and helm on PATH. Set KEEP_CLUSTER=1 to skip teardown for debugging.
+	./hack/e2e-test.sh
+
 ##@ Build
 
 .PHONY: build
