@@ -84,12 +84,12 @@ func TestCoerceScalarValue_UncoercibleTypeErrors(t *testing.T) {
 func TestAsFloat64(t *testing.T) {
 	cases := []any{float64(7), int64(7), int(7), int32(7)}
 	for _, in := range cases {
-		f, ok := asFloat64(in)
+		f, ok := AsFloat64(in)
 		if !ok || f != 7 {
-			t.Fatalf("asFloat64(%v %T) = (%v, %v), want (7, true)", in, in, f, ok)
+			t.Fatalf("AsFloat64(%v %T) = (%v, %v), want (7, true)", in, in, f, ok)
 		}
 	}
-	if _, ok := asFloat64("7"); ok {
-		t.Fatalf("expected asFloat64 to reject a string")
+	if _, ok := AsFloat64("7"); ok {
+		t.Fatalf("expected AsFloat64 to reject a string")
 	}
 }

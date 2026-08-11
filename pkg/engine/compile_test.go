@@ -808,6 +808,38 @@ func TestNumericScale_IntegerDestinationIsLossy(t *testing.T) {
 	}
 }
 
+// TestNumericScale_AcceptsIntegerTypesFromLiveCluster is a regression test
+// for a real bug caught by `convctl test --live`: client-go's dynamic
+// client decodes whole JSON numbers as int64 (via apimachinery's
+// unstructured scheme), unlike the real admission-webhook path (plain
+// encoding/json), which always produces float64. numericScaleOp asserted
+// its input was float64 directly instead of going through AsFloat64 (as
+// coerceScalarValue does), so this strategy failed hard under --live on
+// any int64-decoded sample even though the same rule set works fine
+// against the real webhook.
+func TestNumericScale_AcceptsIntegerTypesFromLiveCluster(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"memoryMB": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"memoryGB": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyNumericScale, Params: NumericScaleParams{HubPath: ParsePath("memoryMB"), SpokePath: ParsePath("memoryGB"), Factor: 1024}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"memoryMB": int64(2048)}})
+	if err != nil {
+		t.Fatalf("convert h2s with an int64 input (as client-go's dynamic client decodes it): %v", err)
+	}
+	if out["memoryGB"] != float64(2) {
+		t.Fatalf("expected memoryGB=2, got %#v", out["memoryGB"])
+	}
+}
+
 func TestNumericScale_BothNumberIsLossless(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"ratio": numSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"percent": numSchema()})

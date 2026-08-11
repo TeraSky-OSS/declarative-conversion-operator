@@ -41,7 +41,7 @@ func isCoercibleScalar(k FieldKind) bool {
 // which is enough to pick the right conversion in every direction.
 //
 // Numbers canonically end up as float64 (what encoding/json produces), but
-// asFloat64 also accepts int/int32/int64: client-go's dynamic client (used
+// AsFloat64 also accepts int/int32/int64: client-go's dynamic client (used
 // by `convctl test --live`) decodes whole JSON numbers via apimachinery's
 // unstructured scheme, which hands back int64 rather than float64 — a
 // divergence from the real admission-webhook path (plain encoding/json)
@@ -55,13 +55,13 @@ func coerceScalarValue(v any, to FieldKind) (any, error) {
 		case bool:
 			return strconv.FormatBool(t), nil
 		default:
-			if f, ok := asFloat64(v); ok {
+			if f, ok := AsFloat64(v); ok {
 				return formatNumber(f), nil
 			}
 			return nil, fmt.Errorf("cannot coerce %T to string", v)
 		}
 	case FieldKindInteger, FieldKindNumber:
-		if f, ok := asFloat64(v); ok {
+		if f, ok := AsFloat64(v); ok {
 			return f, nil
 		}
 		switch t := v.(type) {
@@ -97,10 +97,10 @@ func coerceScalarValue(v any, to FieldKind) (any, error) {
 	}
 }
 
-// asFloat64 normalizes any Go numeric type a JSON/YAML decoder in this
+// AsFloat64 normalizes any Go numeric type a JSON/YAML decoder in this
 // codebase's various call paths might produce into the float64
 // representation the rest of this package treats as canonical.
-func asFloat64(v any) (float64, bool) {
+func AsFloat64(v any) (float64, bool) {
 	switch t := v.(type) {
 	case float64:
 		return t, true
