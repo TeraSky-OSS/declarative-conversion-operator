@@ -1,5 +1,8 @@
 # declarative-conversion-operator
 
+!!! warning "Alpha, under active development"
+    APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome on [GitHub](https://github.com/terasky-oss/declarative-conversion-operator).
+
 **Declarative conversion webhooks for [Crossplane](https://crossplane.io) XRDs *and* plain native Kubernetes CRDs — configure hub/spoke version conversions without hand-writing a webhook.**
 
 ## The problem
