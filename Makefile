@@ -23,7 +23,11 @@ generate: controller-gen ## Generate deepcopy code for api/v1alpha1.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate CRD and RBAC manifests into config/.
-	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
+	# allowDangerousTypes=true: NumericScaleParams.Factor is a plain float64
+	# scale factor (not a Kubernetes resource.Quantity), which is fine for a
+	# human-authored config field — controller-gen otherwise refuses to
+	# generate a CRD schema for any float type at all.
+	$(CONTROLLER_GEN) crd:allowDangerousTypes=true paths="./api/..." output:crd:artifacts:config=config/crd/bases
 	$(CONTROLLER_GEN) rbac:roleName=manager-role paths="./..." output:rbac:artifacts:config=config/rbac
 
 .PHONY: helm-sync

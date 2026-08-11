@@ -35,6 +35,14 @@ const (
 	StrategyDelete                 Strategy = "Delete"
 	StrategyJSONPatch              Strategy = "JSONPatch"
 	StrategyForEach                Strategy = "ForEach"
+	StrategyTypeCoerce             Strategy = "TypeCoerce"
+	StrategyScalarToFields         Strategy = "ScalarToFields"
+	StrategyFieldsToScalar         Strategy = "FieldsToScalar"
+	StrategyArrayToMapByKey        Strategy = "ArrayToMapByKey"
+	StrategyMapToArrayByKey        Strategy = "MapToArrayByKey"
+	StrategyNumericScale           Strategy = "NumericScale"
+	StrategyListJoin               Strategy = "ListJoin"
+	StrategyListSplit              Strategy = "ListSplit"
 )
 
 // UnmappedFieldPolicy controls what happens when a field exists in a hub or
@@ -244,6 +252,116 @@ type ForEachParams struct {
 }
 
 func (ForEachParams) isRuleParams() {}
+
+// TypeCoerceParams converts a scalar field's JSON type (string, integer,
+// number, or boolean) between whatever the hub and spoke schemas each
+// declare at Path — e.g. a field that was a string in one version and
+// becomes an integer in another. Both directions are always treated as
+// lossless: canonically-formatted values round-trip exactly, though a
+// malformed value (a non-numeric string being coerced to a number, say)
+// is a runtime conversion error rather than a lossiness concern.
+type TypeCoerceParams struct {
+	Path FieldPath // same path on both sides
+}
+
+func (TypeCoerceParams) isRuleParams() {}
+
+// ScalarToFieldsParams: the hub field is a single scalar string; Pattern
+// (a regexp with named capture groups) decomposes it into SpokeFields
+// (capture group name -> spoke path), each coerced to that field's
+// declared schema type. JoinTemplate (a Go text/template referencing the
+// same group names, e.g. "{{.value}}{{.unit}}") reassembles the spoke
+// fields back into the hub scalar for the reverse direction. The engine
+// cannot verify that Pattern and JoinTemplate are true inverses of each
+// other, so this is always treated as lossy unless LosslessOverride is
+// set.
+type ScalarToFieldsParams struct {
+	HubPath          FieldPath
+	Pattern          string
+	SpokeFields      map[string]FieldPath // capture group name -> spoke path
+	JoinTemplate     string
+	LosslessOverride bool
+}
+
+func (ScalarToFieldsParams) isRuleParams() {}
+
+// FieldsToScalarParams is the structural mirror of ScalarToFieldsParams:
+// several hub sibling fields are joined into a single spoke scalar via
+// JoinTemplate, and split back into the hub fields via Pattern.
+type FieldsToScalarParams struct {
+	HubFields        map[string]FieldPath // capture group name -> hub path
+	Pattern          string
+	SpokePath        FieldPath
+	JoinTemplate     string
+	LosslessOverride bool
+}
+
+func (FieldsToScalarParams) isRuleParams() {}
+
+// ArrayToMapByKeyParams: the hub field is an array of objects; the spoke
+// field is a map from each object's KeyField value to the rest of that
+// object (KeyField itself becomes the map key and is not duplicated into
+// the value). This is the common "list-map" versus "map" API-evolution
+// pattern. Array->map is lossless provided every element has a unique,
+// present KeyField value (a duplicate or missing key is a runtime error,
+// not silent data loss); map->array is always treated as lossy, since Go
+// map iteration has no stable order and the reconstructed array is
+// emitted sorted by key, which may not match whatever order the original
+// array had.
+type ArrayToMapByKeyParams struct {
+	HubPath, SpokePath FieldPath
+	KeyField           string
+}
+
+func (ArrayToMapByKeyParams) isRuleParams() {}
+
+// MapToArrayByKeyParams is the structural mirror of ArrayToMapByKeyParams:
+// the hub field is the map, the spoke field is the array.
+type MapToArrayByKeyParams struct {
+	HubPath, SpokePath FieldPath
+	KeyField           string
+}
+
+func (MapToArrayByKeyParams) isRuleParams() {}
+
+// NumericScaleParams rescales a numeric field by a fixed factor between
+// hub and spoke (hubValue == spokeValue * Factor) — e.g. converting
+// stored megabytes to a displayed gigabyte field. HubPath and SpokePath
+// may be equal if only the scale changes, or different if the field is
+// renamed at the same time. A direction that lands on a schema field
+// declared as an integer is treated as lossy (the division/multiplication
+// may not land on a whole number for every possible input), even though
+// any individual sample value might happen to divide evenly.
+type NumericScaleParams struct {
+	HubPath, SpokePath FieldPath
+	Factor             float64
+}
+
+func (NumericScaleParams) isRuleParams() {}
+
+// ListJoinParams: the hub field is an array of scalars; the spoke field is
+// a single string produced by joining the array's (string-coerced)
+// elements with Separator, and split back into an array of the hub item
+// type on the reverse direction. Always treated as lossless — an element
+// that happens to contain Separator as a substring will fail to
+// round-trip and is correctly surfaced as an unacknowledged loss by
+// xrdconvctl test, since that is a genuine data problem, not an expected
+// characteristic of this strategy.
+type ListJoinParams struct {
+	HubPath, SpokePath FieldPath
+	Separator          string
+}
+
+func (ListJoinParams) isRuleParams() {}
+
+// ListSplitParams is the structural mirror of ListJoinParams: the hub
+// field is the delimited string, the spoke field is the array.
+type ListSplitParams struct {
+	HubPath, SpokePath FieldPath
+	Separator          string
+}
+
+func (ListSplitParams) isRuleParams() {}
 
 // RuleSet is every rule declared for one hub<->spoke version pair.
 type RuleSet struct {

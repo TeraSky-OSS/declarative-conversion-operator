@@ -99,6 +99,8 @@ var allStrategies = []string{
 	"SingletonArrayToObject", "ObjectToSingletonArray",
 	"FieldsToMap", "MapToFields", "ToAnnotation", "ToLabel",
 	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
+	"TypeCoerce", "ScalarToFields", "FieldsToScalar",
+	"ArrayToMapByKey", "MapToArrayByKey", "NumericScale", "ListJoin", "ListSplit",
 }
 
 // TestRunTest_FullCoverage_EndToEnd exercises a much richer fixture

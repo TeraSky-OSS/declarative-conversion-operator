@@ -196,6 +196,30 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.ForEach != nil {
 		set++
 	}
+	if r.TypeCoerce != nil {
+		set++
+	}
+	if r.ScalarToFields != nil {
+		set++
+	}
+	if r.FieldsToScalar != nil {
+		set++
+	}
+	if r.ArrayToMapByKey != nil {
+		set++
+	}
+	if r.MapToArrayByKey != nil {
+		set++
+	}
+	if r.NumericScale != nil {
+		set++
+	}
+	if r.ListJoin != nil {
+		set++
+	}
+	if r.ListSplit != nil {
+		set++
+	}
 	if set != 1 {
 		return fmt.Errorf("strategy %q requires exactly one matching params field to be set, found %d", r.Strategy, set)
 	}

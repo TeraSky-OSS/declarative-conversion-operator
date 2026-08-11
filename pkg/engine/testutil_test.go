@@ -22,6 +22,8 @@ import (
 
 func strSchema() extv1.JSONSchemaProps  { return extv1.JSONSchemaProps{Type: "string"} }
 func boolSchema() extv1.JSONSchemaProps { return extv1.JSONSchemaProps{Type: "boolean"} }
+func intSchema() extv1.JSONSchemaProps  { return extv1.JSONSchemaProps{Type: "integer"} }
+func numSchema() extv1.JSONSchemaProps  { return extv1.JSONSchemaProps{Type: "number"} }
 
 func objSchema(props map[string]extv1.JSONSchemaProps, required ...string) extv1.JSONSchemaProps {
 	return extv1.JSONSchemaProps{Type: "object", Properties: props, Required: required}

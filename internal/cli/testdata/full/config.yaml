@@ -81,6 +81,34 @@ spec:
                 path: /spec/legacyFlag
             losslessOverride: true
 
+        - strategy: TypeCoerce
+          typeCoerce:
+            path: spec.priority
+
+        - strategy: ScalarToFields
+          scalarToFields:
+            hubPath: spec.diskSize
+            pattern: '^(?P<value>\d+)(?P<unit>[A-Za-z]+)$'
+            spokeFields:
+              value: spec.diskSizeValue
+              unit: spec.diskSizeUnit
+            joinTemplate: "{{.value}}{{.unit}}"
+            losslessOverride: true
+
+        - strategy: NumericScale
+          numericScale:
+            hubPath: spec.memoryMB
+            spokePath: spec.memoryGB
+            factor: 1024
+          acknowledgeLossy: true
+          reason: "both memoryMB and memoryGB are integers, so a memoryMB value that isn't an exact multiple of 1024 rounds when displayed as GB"
+
+        - strategy: ListJoin
+          listJoin:
+            hubPath: spec.dnsServers
+            spokePath: spec.dnsServersCSV
+            separator: ","
+
     - version: v1
       rules:
         - strategy: SingletonArrayToObject
@@ -138,3 +166,35 @@ spec:
                 fieldRename:
                   hubPath: label
                   spokePath: name
+
+        - strategy: FieldsToScalar
+          fieldsToScalar:
+            hubFields:
+              name: spec.contactName
+              email: spec.contactEmail
+            pattern: '^(?P<name>[^<]+) <(?P<email>[^>]+)>$'
+            spokePath: spec.contact
+            joinTemplate: "{{.name}} <{{.email}}>"
+            losslessOverride: true
+
+        - strategy: ArrayToMapByKey
+          arrayToMapByKey:
+            hubPath: spec.endpoints
+            spokePath: spec.endpoints
+            keyField: name
+          acknowledgeLossy: true
+          reason: "the array->map hub->spoke direction is lossless, but the reverse (spoke->hub) reconstructs the array sorted by key rather than preserving whatever order the original array had"
+
+        - strategy: MapToArrayByKey
+          mapToArrayByKey:
+            hubPath: spec.limitsByTier
+            spokePath: spec.tierLimits
+            keyField: tier
+          acknowledgeLossy: true
+          reason: "the map->array hub->spoke direction reconstructs the array sorted by key rather than preserving any particular order"
+
+        - strategy: ListSplit
+          listSplit:
+            hubPath: spec.allowedCIDRsCSV
+            spokePath: spec.allowedCIDRs
+            separator: ","

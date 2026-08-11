@@ -530,6 +530,333 @@ func TestForEach_NestedFieldRename(t *testing.T) {
 	}
 }
 
+func TestTypeCoerce_RoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"replicas": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"replicas": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("replicas")}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"replicas": "3"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["replicas"] != float64(3) {
+		t.Fatalf("expected replicas=3 (number), got %#v", out["replicas"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["replicas"] != "3" {
+		t.Fatalf("expected replicas=\"3\" (string), got %#v", back["replicas"])
+	}
+}
+
+func TestTypeCoerce_NonCoercibleTypeIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"tags": arrSchema(strSchema(), nil)})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tags": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("tags")}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatalf("expected an error coercing a non-scalar (array) field")
+	}
+}
+
+func TestScalarToFields_RequiresAcknowledgementUnlessOverridden(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"size": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"sizeValue": intSchema(),
+		"sizeUnit":  strSchema(),
+	})
+	params := ScalarToFieldsParams{
+		HubPath: ParsePath("size"),
+		Pattern: `^(?P<value>\d+)(?P<unit>[A-Za-z]+)$`,
+		SpokeFields: map[string]FieldPath{
+			"value": ParsePath("sizeValue"),
+			"unit":  ParsePath("sizeUnit"),
+		},
+		JoinTemplate: "{{.value}}{{.unit}}",
+	}
+	rs := RuleSet{Rules: []Rule{{Strategy: StrategyScalarToFields, Params: params}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatalf("expected an unacknowledged-lossy error without losslessOverride")
+	}
+
+	params.LosslessOverride = true
+	rs2 := RuleSet{Rules: []Rule{{Strategy: StrategyScalarToFields, Params: params}}}
+	plan, diags2, err := Compile(rs2, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags2, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors with losslessOverride: %v", errs)
+	}
+
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"size": "3Gi"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["sizeValue"] != float64(3) || out["sizeUnit"] != "Gi" {
+		t.Fatalf("unexpected split result: %#v", out)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["size"] != "3Gi" {
+		t.Fatalf("expected size=3Gi rejoined, got %#v", back["size"])
+	}
+}
+
+func TestFieldsToScalar_RoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"region": strSchema(),
+		"zone":   strSchema(),
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"location": strSchema()})
+	params := FieldsToScalarParams{
+		HubFields: map[string]FieldPath{
+			"region": ParsePath("region"),
+			"zone":   ParsePath("zone"),
+		},
+		Pattern:          `^(?P<region>[a-z0-9-]+)/(?P<zone>[a-z])$`,
+		SpokePath:        ParsePath("location"),
+		JoinTemplate:     "{{.region}}/{{.zone}}",
+		LosslessOverride: true,
+	}
+	rs := RuleSet{Rules: []Rule{{Strategy: StrategyFieldsToScalar, Params: params}}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"region": "us-east-1", "zone": "a"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["location"] != "us-east-1/a" {
+		t.Fatalf("expected location=us-east-1/a, got %#v", out["location"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["region"] != "us-east-1" || back["zone"] != "a" {
+		t.Fatalf("unexpected split-back result: %#v", back)
+	}
+}
+
+func TestArrayToMapByKey_RoundTripAndDuplicateKeyError(t *testing.T) {
+	itemSchema := objSchema(map[string]extv1.JSONSchemaProps{"name": strSchema(), "cidr": strSchema()})
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"zones": arrSchema(itemSchema, nil)})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"zones": openMapSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyArrayToMapByKey, Params: ArrayToMapByKeyParams{HubPath: ParsePath("zones"), SpokePath: ParsePath("zones"), KeyField: "name"}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// map->array direction is always treated as lossy (order not preserved).
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatalf("expected an unacknowledged-lossy error for the map->array direction")
+	}
+
+	hubObj := map[string]any{"zones": []any{
+		map[string]any{"name": "a", "cidr": "10.0.0.0/24"},
+		map[string]any{"name": "b", "cidr": "10.0.1.0/24"},
+	}}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: hubObj})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	m, ok := out["zones"].(map[string]any)
+	if !ok || len(m) != 2 {
+		t.Fatalf("expected a 2-entry map, got %#v", out["zones"])
+	}
+	aVal, ok := m["a"].(map[string]any)
+	if !ok || aVal["cidr"] != "10.0.0.0/24" || aVal["name"] != nil {
+		t.Fatalf("expected zone %q's key field to be dropped from its value: %#v", "a", aVal)
+	}
+
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	backArr, ok := back["zones"].([]any)
+	if !ok || len(backArr) != 2 {
+		t.Fatalf("expected a 2-element array back, got %#v", back["zones"])
+	}
+	if backArr[0].(map[string]any)["name"] != "a" || backArr[1].(map[string]any)["name"] != "b" {
+		t.Fatalf("expected array sorted by key (a, b), got %#v", backArr)
+	}
+
+	// Duplicate keys are a runtime error, not a silent drop.
+	dupObj := map[string]any{"zones": []any{
+		map[string]any{"name": "a", "cidr": "10.0.0.0/24"},
+		map[string]any{"name": "a", "cidr": "10.0.1.0/24"},
+	}}
+	if _, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: dupObj}); err == nil {
+		t.Fatalf("expected a duplicate-key conversion error")
+	}
+}
+
+func TestMapToArrayByKey_IsStructuralMirror(t *testing.T) {
+	itemSchema := objSchema(map[string]extv1.JSONSchemaProps{"name": strSchema(), "cidr": strSchema()})
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"zones": openMapSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"zones": arrSchema(itemSchema, nil)})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyMapToArrayByKey, Params: MapToArrayByKeyParams{HubPath: ParsePath("zones"), SpokePath: ParsePath("zones"), KeyField: "name"}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	hubObj := map[string]any{"zones": map[string]any{"a": map[string]any{"cidr": "10.0.0.0/24"}}}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: hubObj})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	arr, ok := out["zones"].([]any)
+	if !ok || len(arr) != 1 || arr[0].(map[string]any)["name"] != "a" {
+		t.Fatalf("unexpected array result: %#v", out["zones"])
+	}
+}
+
+func TestNumericScale_IntegerDestinationIsLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"storageMB": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"storageGB": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyNumericScale, Params: NumericScaleParams{HubPath: ParsePath("storageMB"), SpokePath: ParsePath("storageGB"), Factor: 1024}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatalf("expected an unacknowledged-lossy error when both sides are integer-typed")
+	}
+
+	rs2 := RuleSet{Rules: []Rule{
+		{Strategy: StrategyNumericScale, Params: NumericScaleParams{HubPath: ParsePath("storageMB"), SpokePath: ParsePath("storageGB"), Factor: 1024}, AcknowledgeLossy: true},
+	}}
+	plan, diags2, err := Compile(rs2, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags2, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"storageMB": float64(2048)}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["storageGB"] != float64(2) {
+		t.Fatalf("expected storageGB=2, got %#v", out["storageGB"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["storageMB"] != float64(2048) {
+		t.Fatalf("expected storageMB=2048 round trip, got %#v", back["storageMB"])
+	}
+}
+
+func TestNumericScale_BothNumberIsLossless(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"ratio": numSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"percent": numSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyNumericScale, Params: NumericScaleParams{HubPath: ParsePath("ratio"), SpokePath: ParsePath("percent"), Factor: 0.01}},
+	}}
+	_, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("expected no errors (both sides are number-typed, so fully lossless): %v", errs)
+	}
+}
+
+func TestListJoin_RoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"tags": arrSchema(strSchema(), nil)})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tagsCSV": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyListJoin, Params: ListJoinParams{HubPath: ParsePath("tags"), SpokePath: ParsePath("tagsCSV"), Separator: ","}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"tags": []any{"a", "b", "c"}}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if out["tagsCSV"] != "a,b,c" {
+		t.Fatalf("expected tagsCSV=a,b,c, got %#v", out["tagsCSV"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if !reflect.DeepEqual(back["tags"], []any{"a", "b", "c"}) {
+		t.Fatalf("expected round-tripped tags, got %#v", back["tags"])
+	}
+
+	// Empty array <-> empty string, not a one-element array of "".
+	emptyOut, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"tags": []any{}}})
+	if err != nil {
+		t.Fatalf("convert empty h2s: %v", err)
+	}
+	if emptyOut["tagsCSV"] != "" {
+		t.Fatalf("expected empty string, got %#v", emptyOut["tagsCSV"])
+	}
+	emptyBack, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: emptyOut})
+	if err != nil {
+		t.Fatalf("convert empty s2h: %v", err)
+	}
+	if arr, ok := emptyBack["tags"].([]any); !ok || len(arr) != 0 {
+		t.Fatalf("expected an empty array, got %#v", emptyBack["tags"])
+	}
+}
+
+func TestListSplit_IsStructuralMirror(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"tagsCSV": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tags": arrSchema(strSchema(), nil)})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyListSplit, Params: ListSplitParams{HubPath: ParsePath("tagsCSV"), SpokePath: ParsePath("tags"), Separator: ","}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"tagsCSV": "a,b"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if !reflect.DeepEqual(out["tags"], []any{"a", "b"}) {
+		t.Fatalf("expected [a b], got %#v", out["tags"])
+	}
+}
+
 func TestDuplicateClaim_IsCompileError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": strSchema(), "c": strSchema()})

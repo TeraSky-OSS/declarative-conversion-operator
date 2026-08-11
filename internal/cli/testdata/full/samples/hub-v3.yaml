@@ -25,6 +25,25 @@ spec:
       label: "data"
     - sizeGB: "20"
       label: "logs"
+  priority: 5
+  diskSize: "50Gi"
+  memoryMB: 3000
+  dnsServers:
+    - "8.8.8.8"
+    - "1.1.1.1"
+  contactName: "Jane Doe"
+  contactEmail: "jane@example.com"
+  endpoints:
+    - name: "web"
+      url: "https://web.example.com"
+    - name: "api"
+      url: "https://api.example.com"
+  limitsByTier:
+    gold:
+      limit: "1000"
+    silver:
+      limit: "500"
+  allowedCIDRsCSV: "10.0.0.0/8,192.168.0.0/16"
 status:
   phase: "Ready"
   observedGeneration: 5

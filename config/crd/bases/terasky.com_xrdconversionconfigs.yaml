@@ -95,6 +95,24 @@ spec:
                               AcknowledgeLossy must be true if this rule is lossy in any
                               direction, or validation fails (fail-closed default posture).
                             type: boolean
+                          arrayToMapByKey:
+                            description: |-
+                              ArrayToMapByKeyParams: the hub field is an array of objects; the spoke
+                              field is a map from each object's KeyField value to the rest of that
+                              object (KeyField itself becomes the map key and is not duplicated into
+                              the value) — the common "list-map" versus "map" API-evolution pattern.
+                            properties:
+                              hubPath:
+                                type: string
+                              keyField:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - keyField
+                            - spokePath
+                            type: object
                           constant:
                             description: ConstantParams forces a field to a fixed
                               value on the side it exists on.
@@ -240,6 +258,32 @@ spec:
                             - hubPaths
                             - spokeMapPath
                             type: object
+                          fieldsToScalar:
+                            description: |-
+                              FieldsToScalarParams is the structural mirror of ScalarToFieldsParams:
+                              several hub sibling fields are joined into a single spoke scalar via
+                              JoinTemplate, and split back into the hub fields via Pattern.
+                            properties:
+                              hubFields:
+                                additionalProperties:
+                                  type: string
+                                description: HubFields maps each named capture group
+                                  to the hub path it reads from.
+                                type: object
+                              joinTemplate:
+                                type: string
+                              losslessOverride:
+                                type: boolean
+                              pattern:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubFields
+                            - joinTemplate
+                            - pattern
+                            - spokePath
+                            type: object
                           forEach:
                             description: |-
                               ForEachParams applies a nested rule list to each element of a hub array
@@ -317,6 +361,56 @@ spec:
                                   type: object
                                 type: array
                             type: object
+                          listJoin:
+                            description: |-
+                              ListJoinParams: the hub field is an array of scalars; the spoke field is
+                              a single string produced by joining the array's (string-coerced)
+                              elements with Separator, and split back into an array on the reverse
+                              direction.
+                            properties:
+                              hubPath:
+                                type: string
+                              separator:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - separator
+                            - spokePath
+                            type: object
+                          listSplit:
+                            description: |-
+                              ListSplitParams is the structural mirror of ListJoinParams: the hub
+                              field is the delimited string, the spoke field is the array.
+                            properties:
+                              hubPath:
+                                type: string
+                              separator:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - separator
+                            - spokePath
+                            type: object
+                          mapToArrayByKey:
+                            description: |-
+                              MapToArrayByKeyParams is the structural mirror of ArrayToMapByKeyParams:
+                              the hub field is the map, the spoke field is the array.
+                            properties:
+                              hubPath:
+                                type: string
+                              keyField:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - keyField
+                            - spokePath
+                            type: object
                           mapToFields:
                             description: MapToFieldsParams is the structural mirror
                               of FieldsToMapParams.
@@ -343,6 +437,23 @@ spec:
                             required:
                             - hubMapPath
                             - spokePaths
+                            type: object
+                          numericScale:
+                            description: |-
+                              NumericScaleParams rescales a numeric field by a fixed factor between
+                              hub and spoke (hubValue == spokeValue * Factor) — e.g. converting
+                              stored megabytes to a displayed gigabyte field.
+                            properties:
+                              factor:
+                                type: number
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - factor
+                            - hubPath
+                            - spokePath
                             type: object
                           objectToScalar:
                             description: |-
@@ -377,6 +488,44 @@ spec:
                             type: object
                           reason:
                             type: string
+                          scalarToFields:
+                            description: |-
+                              ScalarToFieldsParams: the hub field is a single scalar string; Pattern
+                              (a regexp with named capture groups) decomposes it into SpokeFields
+                              (capture group name -> spoke path), each coerced to that field's
+                              declared schema type. JoinTemplate (a Go text/template referencing the
+                              same group names, e.g. "{{.value}}{{.unit}}") reassembles the spoke
+                              fields back into the hub scalar for the reverse direction. The engine
+                              cannot verify that Pattern and JoinTemplate are true inverses of each
+                              other, so this is always treated as lossy unless LosslessOverride is
+                              set.
+                            properties:
+                              hubPath:
+                                type: string
+                              joinTemplate:
+                                description: |-
+                                  JoinTemplate is a Go text/template referencing the same group names
+                                  as Pattern, e.g. "{{.value}}{{.unit}}".
+                                type: string
+                              losslessOverride:
+                                type: boolean
+                              pattern:
+                                description: |-
+                                  Pattern is a regexp with named capture groups, e.g.
+                                  "^(?P<value>\\d+)(?P<unit>[A-Za-z]+)$".
+                                type: string
+                              spokeFields:
+                                additionalProperties:
+                                  type: string
+                                description: SpokeFields maps each named capture group
+                                  to the spoke path it fills.
+                                type: object
+                            required:
+                            - hubPath
+                            - joinTemplate
+                            - pattern
+                            - spokeFields
+                            type: object
                           scalarToObject:
                             description: |-
                               ScalarToObjectParams: the hub field is a scalar; the spoke field is an
@@ -427,6 +576,14 @@ spec:
                             - Delete
                             - JSONPatch
                             - ForEach
+                            - TypeCoerce
+                            - ScalarToFields
+                            - FieldsToScalar
+                            - ArrayToMapByKey
+                            - MapToArrayByKey
+                            - NumericScale
+                            - ListJoin
+                            - ListSplit
                             type: string
                           toAnnotation:
                             description: ToMetadataParams backs both ToAnnotation
@@ -467,6 +624,18 @@ spec:
                             required:
                             - hubPath
                             - key
+                            type: object
+                          typeCoerce:
+                            description: |-
+                              TypeCoerceParams converts a scalar field's JSON type (string, integer,
+                              number, or boolean) between whatever the hub and spoke schemas each
+                              declare at Path — e.g. a field that was a string in one version and
+                              becomes an integer in another.
+                            properties:
+                              path:
+                                type: string
+                            required:
+                            - path
                             type: object
                         required:
                         - strategy
@@ -688,6 +857,14 @@ spec:
                             - Delete
                             - JSONPatch
                             - ForEach
+                            - TypeCoerce
+                            - ScalarToFields
+                            - FieldsToScalar
+                            - ArrayToMapByKey
+                            - MapToArrayByKey
+                            - NumericScale
+                            - ListJoin
+                            - ListSplit
                             type: string
                           warnings:
                             items:

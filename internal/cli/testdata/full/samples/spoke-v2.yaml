@@ -26,6 +26,19 @@ spec:
   volumes:
     - sizeGB: "50"
       label: "cache"
+  priority: "9"
+  diskSizeValue: 25
+  diskSizeUnit: "Gi"
+  memoryGB: 2
+  dnsServersCSV: "9.9.9.9,4.2.2.2"
+  contactName: "Alex Rivera"
+  contactEmail: "alex@example.com"
+  endpoints:
+    - name: "admin"
+      url: "https://admin.example.com"
+  limitsByTier:
+    bronze:
+      limit: "100"
 status:
   state: "Provisioning"
   observedGeneration: 2

@@ -25,6 +25,23 @@ spec:
   description: "Developer sandbox widget"
   size: "Small"
   legacyFlag: false
+  contact: "Sam Lee <sam@example.com>"
+  endpoints:
+    dev:
+      url: "https://dev.example.com"
+  tierLimits:
+    - tier: "silver"
+      limit: "20"
+    - tier: "bronze"
+      limit: "10"
+  allowedCIDRs:
+    - "10.1.0.0/16"
+    - "10.2.0.0/16"
+  priority: 1
+  diskSize: "10Gi"
+  memoryMB: 2048
+  dnsServers:
+    - "10.0.0.53"
 status:
   phase: "Pending"
   observedGeneration: 1

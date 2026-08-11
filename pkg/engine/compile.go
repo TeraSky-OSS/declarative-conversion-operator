@@ -18,6 +18,8 @@ package engine
 
 import (
 	"fmt"
+	"regexp"
+	"text/template"
 
 	"encoding/json"
 	jsonpatch "github.com/evanphx/json-patch/v5"
@@ -145,6 +147,50 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			h2sOp, s2hOp, lossless, ruleDiags = resolveForEach(idx, p, hub, spoke, claimedHub, claimedSpoke, policy, depth)
 			rr.HubPaths = []string{p.HubItemsPath.String()}
 			rr.SpokePaths = []string{p.SpokeItemsPath.String()}
+
+		case TypeCoerceParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveTypeCoerce(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.Path.String()}
+			rr.SpokePaths = []string{p.Path.String()}
+
+		case ScalarToFieldsParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveScalarToFields(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			for _, sp := range p.SpokeFields {
+				rr.SpokePaths = append(rr.SpokePaths, sp.String())
+			}
+
+		case FieldsToScalarParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveFieldsToScalar(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			for _, hp := range p.HubFields {
+				rr.HubPaths = append(rr.HubPaths, hp.String())
+			}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case ArrayToMapByKeyParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveArrayToMapByKey(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case MapToArrayByKeyParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveMapToArrayByKey(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case NumericScaleParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveNumericScale(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case ListJoinParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveListJoin(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case ListSplitParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveListSplit(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
 
 		default:
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d: unknown or unset strategy params", idx))
@@ -734,4 +780,288 @@ func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps,
 	h2s := forEachOp{srcItemsPath: p.HubItemsPath, dstItemsPath: p.SpokeItemsPath, nested: nestedH2S}
 	s2h := forEachOp{srcItemsPath: p.SpokeItemsPath, dstItemsPath: p.HubItemsPath, nested: nestedS2H}
 	return h2s, s2h, nestedVerdict, diags
+}
+
+func resolveTypeCoerce(idx int, p TypeCoerceParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	hubKind := FieldKindUnknown
+	if hubNode, err := lookupPath(hub, p.Path); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (TypeCoerce): hub: %v", idx, err))
+	} else {
+		hubKind, _ = classify(hubNode)
+		if !isCoercibleScalar(hubKind) {
+			diags = append(diags, errorf(idx, "rule %d (TypeCoerce): hub field %q is %s, not a coercible scalar type", idx, p.Path, hubKind))
+		}
+	}
+	spokeKind := FieldKindUnknown
+	if spokeNode, err := lookupPath(spoke, p.Path); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (TypeCoerce): spoke: %v", idx, err))
+	} else {
+		spokeKind, _ = classify(spokeNode)
+		if !isCoercibleScalar(spokeKind) {
+			diags = append(diags, errorf(idx, "rule %d (TypeCoerce): spoke field %q is %s, not a coercible scalar type", idx, p.Path, spokeKind))
+		}
+	}
+	if d := claim(claimedHub, p.Path, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.Path, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := coerceOp{path: p.Path, toKind: spokeKind}
+	s2h := coerceOp{path: p.Path, toKind: hubKind}
+	return h2s, s2h, LosslessVerdict{true, true}, diags
+}
+
+// resolveScalarToFields and resolveFieldsToScalar share the same
+// validation shape (compile the pattern, parse the template, resolve
+// every named field's schema kind), so compileSplitJoin does the common
+// work once and each caller wires the ops for its own direction.
+func compileSplitJoin(idx int, strategy Strategy, pattern, joinTemplate string, fields map[string]FieldPath, fieldsRoot *extv1.JSONSchemaProps, claimed map[string]bool, side string) (*regexp.Regexp, *template.Template, map[string]FieldKind, []Diagnostic) {
+	var diags []Diagnostic
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): invalid pattern: %v", idx, strategy, err))
+	}
+	tmpl, err := template.New("join").Option("missingkey=error").Parse(joinTemplate)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): invalid joinTemplate: %v", idx, strategy, err))
+	}
+	if re != nil {
+		declared := map[string]bool{}
+		for _, name := range re.SubexpNames() {
+			if name != "" {
+				declared[name] = true
+			}
+		}
+		for name := range fields {
+			if !declared[name] {
+				diags = append(diags, errorf(idx, "rule %d (%s): field %q has no matching named capture group in pattern", idx, strategy, name))
+			}
+		}
+	}
+	kinds := map[string]FieldKind{}
+	for name, path := range fields {
+		node, err := lookupPath(fieldsRoot, path)
+		if err != nil {
+			diags = append(diags, errorf(idx, "rule %d (%s): %s: %v", idx, strategy, side, err))
+			continue
+		}
+		kind, _ := classify(node)
+		if !isCoercibleScalar(kind) {
+			diags = append(diags, errorf(idx, "rule %d (%s): %s field %q is %s, not a coercible scalar type", idx, strategy, side, path, kind))
+		}
+		kinds[name] = kind
+		if d := claim(claimed, path, idx, side); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+	return re, tmpl, kinds, diags
+}
+
+// resolveScalarToFields handles the escape-hatch strategy pair described
+// on ScalarToFieldsParams. Like JSONPatch, the engine cannot verify that
+// Pattern and JoinTemplate are true inverses of each other, so lossiness
+// always comes from the author's own LosslessOverride flag.
+func resolveScalarToFields(idx int, p ScalarToFieldsParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if _, err := lookupPath(hub, p.HubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ScalarToFields): hub: %v", idx, err))
+	}
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	re, tmpl, kinds, splitDiags := compileSplitJoin(idx, StrategyScalarToFields, p.Pattern, p.JoinTemplate, p.SpokeFields, spoke, claimedSpoke, "spoke")
+	diags = append(diags, splitDiags...)
+	diags = append(diags, warnf(idx, "rule %d (ScalarToFields): the engine cannot verify pattern/joinTemplate are true inverses; correctness and coverage are the author's responsibility", idx))
+
+	var h2s, s2h Op
+	if re != nil {
+		h2s = splitFieldOp{sourcePath: p.HubPath, pattern: re, destFields: p.SpokeFields, destKinds: kinds}
+	}
+	if tmpl != nil {
+		s2h = joinFieldsOp{srcFields: p.SpokeFields, destPath: p.HubPath, tmpl: tmpl}
+	}
+	lossless := LosslessVerdict{HubToSpoke: p.LosslessOverride, SpokeToHub: p.LosslessOverride}
+	return h2s, s2h, lossless, diags
+}
+
+// resolveFieldsToScalar is the structural mirror of resolveScalarToFields.
+func resolveFieldsToScalar(idx int, p FieldsToScalarParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if _, err := lookupPath(spoke, p.SpokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (FieldsToScalar): spoke: %v", idx, err))
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	re, tmpl, kinds, splitDiags := compileSplitJoin(idx, StrategyFieldsToScalar, p.Pattern, p.JoinTemplate, p.HubFields, hub, claimedHub, "hub")
+	diags = append(diags, splitDiags...)
+	diags = append(diags, warnf(idx, "rule %d (FieldsToScalar): the engine cannot verify pattern/joinTemplate are true inverses; correctness and coverage are the author's responsibility", idx))
+
+	var h2s, s2h Op
+	if tmpl != nil {
+		h2s = joinFieldsOp{srcFields: p.HubFields, destPath: p.SpokePath, tmpl: tmpl}
+	}
+	if re != nil {
+		s2h = splitFieldOp{sourcePath: p.SpokePath, pattern: re, destFields: p.HubFields, destKinds: kinds}
+	}
+	lossless := LosslessVerdict{HubToSpoke: p.LosslessOverride, SpokeToHub: p.LosslessOverride}
+	return h2s, s2h, lossless, diags
+}
+
+// resolveArrayToMapByKey: array->map is lossless (modulo the runtime
+// duplicate/missing-key errors arrayToMapByKeyOp itself reports);
+// map->array is always treated as lossy since the reconstructed array is
+// sorted by key rather than reproducing whatever order the original had.
+func resolveArrayToMapByKey(idx int, p ArrayToMapByKeyParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if _, err := lookupPath(hub, p.HubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ArrayToMapByKey): hub: %v", idx, err))
+	}
+	if _, err := lookupPath(spoke, p.SpokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ArrayToMapByKey): spoke: %v", idx, err))
+	}
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := arrayToMapByKeyOp{arrayPath: p.HubPath, mapPath: p.SpokePath, keyField: p.KeyField}
+	s2h := mapToArrayByKeyOp{mapPath: p.SpokePath, arrayPath: p.HubPath, keyField: p.KeyField}
+	return h2s, s2h, LosslessVerdict{HubToSpoke: true, SpokeToHub: false}, diags
+}
+
+// resolveMapToArrayByKey is the structural mirror of
+// resolveArrayToMapByKey: the hub is the map, the spoke is the array.
+func resolveMapToArrayByKey(idx int, p MapToArrayByKeyParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if _, err := lookupPath(hub, p.HubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (MapToArrayByKey): hub: %v", idx, err))
+	}
+	if _, err := lookupPath(spoke, p.SpokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (MapToArrayByKey): spoke: %v", idx, err))
+	}
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := mapToArrayByKeyOp{mapPath: p.HubPath, arrayPath: p.SpokePath, keyField: p.KeyField}
+	s2h := arrayToMapByKeyOp{arrayPath: p.SpokePath, mapPath: p.HubPath, keyField: p.KeyField}
+	return h2s, s2h, LosslessVerdict{HubToSpoke: false, SpokeToHub: true}, diags
+}
+
+// resolveNumericScale: the direction landing on an integer-typed field is
+// treated as lossy, since dividing/multiplying by Factor may not produce
+// a whole number for every possible input even though any one sample
+// value might happen to.
+func resolveNumericScale(idx int, p NumericScaleParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if p.Factor == 0 {
+		diags = append(diags, errorf(idx, "rule %d (NumericScale): factor must not be zero", idx))
+	}
+	hubKind := FieldKindUnknown
+	if hubNode, err := lookupPath(hub, p.HubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (NumericScale): hub: %v", idx, err))
+	} else {
+		hubKind, _ = classify(hubNode)
+		if hubKind != FieldKindInteger && hubKind != FieldKindNumber {
+			diags = append(diags, errorf(idx, "rule %d (NumericScale): hub field %q is %s, not numeric", idx, p.HubPath, hubKind))
+		}
+	}
+	spokeKind := FieldKindUnknown
+	if spokeNode, err := lookupPath(spoke, p.SpokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (NumericScale): spoke: %v", idx, err))
+	} else {
+		spokeKind, _ = classify(spokeNode)
+		if spokeKind != FieldKindInteger && spokeKind != FieldKindNumber {
+			diags = append(diags, errorf(idx, "rule %d (NumericScale): spoke field %q is %s, not numeric", idx, p.SpokePath, spokeKind))
+		}
+	}
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := numericScaleOp{fromPath: p.HubPath, toPath: p.SpokePath, factor: p.Factor, multiply: false, round: spokeKind == FieldKindInteger}
+	s2h := numericScaleOp{fromPath: p.SpokePath, toPath: p.HubPath, factor: p.Factor, multiply: true, round: hubKind == FieldKindInteger}
+	lossless := LosslessVerdict{HubToSpoke: spokeKind == FieldKindNumber, SpokeToHub: hubKind == FieldKindNumber}
+	return h2s, s2h, lossless, diags
+}
+
+// resolveListJoin: always lossless. An element that happens to contain
+// Separator as a substring will fail to round-trip, which xrdconvctl test
+// correctly surfaces as an unacknowledged loss — that's a genuine data
+// problem, not a documented risk of this strategy the way pattern-based
+// escape hatches are.
+func resolveListJoin(idx int, p ListJoinParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	itemKind := FieldKindUnknown
+	hubNode, err := lookupPath(hub, p.HubPath)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ListJoin): hub: %v", idx, err))
+	} else {
+		kind, _ := classify(hubNode)
+		if kind != FieldKindArray || hubNode.Items == nil || hubNode.Items.Schema == nil {
+			diags = append(diags, errorf(idx, "rule %d (ListJoin): hub field %q must be an array with a known item schema", idx, p.HubPath))
+		} else {
+			itemKind, _ = classify(hubNode.Items.Schema)
+			if !isCoercibleScalar(itemKind) {
+				diags = append(diags, errorf(idx, "rule %d (ListJoin): hub array %q items are %s, not a coercible scalar type", idx, p.HubPath, itemKind))
+			}
+		}
+	}
+	if spokeNode, err := lookupPath(spoke, p.SpokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ListJoin): spoke: %v", idx, err))
+	} else if kind, _ := classify(spokeNode); kind != FieldKindString {
+		diags = append(diags, errorf(idx, "rule %d (ListJoin): spoke field %q is %s, not a string", idx, p.SpokePath, kind))
+	}
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := joinListOp{arrayPath: p.HubPath, stringPath: p.SpokePath, separator: p.Separator}
+	s2h := splitListOp{stringPath: p.SpokePath, arrayPath: p.HubPath, separator: p.Separator, itemKind: itemKind}
+	return h2s, s2h, LosslessVerdict{true, true}, diags
+}
+
+// resolveListSplit is the structural mirror of resolveListJoin: the hub
+// field is the delimited string, the spoke field is the array.
+func resolveListSplit(idx int, p ListSplitParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if hubNode, err := lookupPath(hub, p.HubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ListSplit): hub: %v", idx, err))
+	} else if kind, _ := classify(hubNode); kind != FieldKindString {
+		diags = append(diags, errorf(idx, "rule %d (ListSplit): hub field %q is %s, not a string", idx, p.HubPath, kind))
+	}
+	itemKind := FieldKindUnknown
+	spokeNode, err := lookupPath(spoke, p.SpokePath)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (ListSplit): spoke: %v", idx, err))
+	} else {
+		kind, _ := classify(spokeNode)
+		if kind != FieldKindArray || spokeNode.Items == nil || spokeNode.Items.Schema == nil {
+			diags = append(diags, errorf(idx, "rule %d (ListSplit): spoke field %q must be an array with a known item schema", idx, p.SpokePath))
+		} else {
+			itemKind, _ = classify(spokeNode.Items.Schema)
+			if !isCoercibleScalar(itemKind) {
+				diags = append(diags, errorf(idx, "rule %d (ListSplit): spoke array %q items are %s, not a coercible scalar type", idx, p.SpokePath, itemKind))
+			}
+		}
+	}
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := splitListOp{stringPath: p.HubPath, arrayPath: p.SpokePath, separator: p.Separator, itemKind: itemKind}
+	s2h := joinListOp{arrayPath: p.SpokePath, stringPath: p.HubPath, separator: p.Separator}
+	return h2s, s2h, LosslessVerdict{true, true}, diags
 }

@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit
 type Strategy string
 
 const (
@@ -91,6 +91,14 @@ const (
 	StrategyDelete                 Strategy = "Delete"
 	StrategyJSONPatch              Strategy = "JSONPatch"
 	StrategyForEach                Strategy = "ForEach"
+	StrategyTypeCoerce             Strategy = "TypeCoerce"
+	StrategyScalarToFields         Strategy = "ScalarToFields"
+	StrategyFieldsToScalar         Strategy = "FieldsToScalar"
+	StrategyArrayToMapByKey        Strategy = "ArrayToMapByKey"
+	StrategyMapToArrayByKey        Strategy = "MapToArrayByKey"
+	StrategyNumericScale           Strategy = "NumericScale"
+	StrategyListJoin               Strategy = "ListJoin"
+	StrategyListSplit              Strategy = "ListSplit"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -264,6 +272,95 @@ type ForEachParams struct {
 	Rules          []ConversionRule `json:"rules"`
 }
 
+// TypeCoerceParams converts a scalar field's JSON type (string, integer,
+// number, or boolean) between whatever the hub and spoke schemas each
+// declare at Path — e.g. a field that was a string in one version and
+// becomes an integer in another.
+type TypeCoerceParams struct {
+	Path string `json:"path"`
+}
+
+// ScalarToFieldsParams: the hub field is a single scalar string; Pattern
+// (a regexp with named capture groups) decomposes it into SpokeFields
+// (capture group name -> spoke path), each coerced to that field's
+// declared schema type. JoinTemplate (a Go text/template referencing the
+// same group names, e.g. "{{.value}}{{.unit}}") reassembles the spoke
+// fields back into the hub scalar for the reverse direction. The engine
+// cannot verify that Pattern and JoinTemplate are true inverses of each
+// other, so this is always treated as lossy unless LosslessOverride is
+// set.
+type ScalarToFieldsParams struct {
+	HubPath string `json:"hubPath"`
+	// Pattern is a regexp with named capture groups, e.g.
+	// "^(?P<value>\\d+)(?P<unit>[A-Za-z]+)$".
+	Pattern string `json:"pattern"`
+	// SpokeFields maps each named capture group to the spoke path it fills.
+	SpokeFields map[string]string `json:"spokeFields"`
+	// JoinTemplate is a Go text/template referencing the same group names
+	// as Pattern, e.g. "{{.value}}{{.unit}}".
+	JoinTemplate string `json:"joinTemplate"`
+	// +optional
+	LosslessOverride bool `json:"losslessOverride,omitempty"`
+}
+
+// FieldsToScalarParams is the structural mirror of ScalarToFieldsParams:
+// several hub sibling fields are joined into a single spoke scalar via
+// JoinTemplate, and split back into the hub fields via Pattern.
+type FieldsToScalarParams struct {
+	// HubFields maps each named capture group to the hub path it reads from.
+	HubFields    map[string]string `json:"hubFields"`
+	Pattern      string            `json:"pattern"`
+	SpokePath    string            `json:"spokePath"`
+	JoinTemplate string            `json:"joinTemplate"`
+	// +optional
+	LosslessOverride bool `json:"losslessOverride,omitempty"`
+}
+
+// ArrayToMapByKeyParams: the hub field is an array of objects; the spoke
+// field is a map from each object's KeyField value to the rest of that
+// object (KeyField itself becomes the map key and is not duplicated into
+// the value) — the common "list-map" versus "map" API-evolution pattern.
+type ArrayToMapByKeyParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	KeyField  string `json:"keyField"`
+}
+
+// MapToArrayByKeyParams is the structural mirror of ArrayToMapByKeyParams:
+// the hub field is the map, the spoke field is the array.
+type MapToArrayByKeyParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	KeyField  string `json:"keyField"`
+}
+
+// NumericScaleParams rescales a numeric field by a fixed factor between
+// hub and spoke (hubValue == spokeValue * Factor) — e.g. converting
+// stored megabytes to a displayed gigabyte field.
+type NumericScaleParams struct {
+	HubPath   string  `json:"hubPath"`
+	SpokePath string  `json:"spokePath"`
+	Factor    float64 `json:"factor"`
+}
+
+// ListJoinParams: the hub field is an array of scalars; the spoke field is
+// a single string produced by joining the array's (string-coerced)
+// elements with Separator, and split back into an array on the reverse
+// direction.
+type ListJoinParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	Separator string `json:"separator"`
+}
+
+// ListSplitParams is the structural mirror of ListJoinParams: the hub
+// field is the delimited string, the spoke field is the array.
+type ListSplitParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	Separator string `json:"separator"`
+}
+
 // ConversionRule is one declarative conversion rule between the hub version
 // and a spoke version. Exactly one of the strategy-specific fields below
 // should be set, matching Strategy.
@@ -300,6 +397,22 @@ type ConversionRule struct {
 	JSONPatch *JSONPatchParams `json:"jsonPatch,omitempty"`
 	// +optional
 	ForEach *ForEachParams `json:"forEach,omitempty"`
+	// +optional
+	TypeCoerce *TypeCoerceParams `json:"typeCoerce,omitempty"`
+	// +optional
+	ScalarToFields *ScalarToFieldsParams `json:"scalarToFields,omitempty"`
+	// +optional
+	FieldsToScalar *FieldsToScalarParams `json:"fieldsToScalar,omitempty"`
+	// +optional
+	ArrayToMapByKey *ArrayToMapByKeyParams `json:"arrayToMapByKey,omitempty"`
+	// +optional
+	MapToArrayByKey *MapToArrayByKeyParams `json:"mapToArrayByKey,omitempty"`
+	// +optional
+	NumericScale *NumericScaleParams `json:"numericScale,omitempty"`
+	// +optional
+	ListJoin *ListJoinParams `json:"listJoin,omitempty"`
+	// +optional
+	ListSplit *ListSplitParams `json:"listSplit,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).

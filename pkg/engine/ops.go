@@ -19,6 +19,11 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"regexp"
+	"sort"
+	"strings"
+	"text/template"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 )
@@ -415,4 +420,278 @@ func (o forEachOp) apply(ctx *execContext) error {
 		outArr[i] = elemCtx.output
 	}
 	return setValue(ctx.output, o.dstItemsPath, outArr)
+}
+
+// coerceOp reads a scalar and rewrites it as whatever JSON type toKind
+// expects (TypeCoerce). It needs no source-kind parameter: it type-
+// switches on the value it actually reads.
+type coerceOp struct {
+	path   FieldPath
+	toKind FieldKind
+}
+
+func (o coerceOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.path)
+	if !ok {
+		return nil
+	}
+	coerced, err := coerceScalarValue(v, o.toKind)
+	if err != nil {
+		return fmt.Errorf("typeCoerce: %q: %w", o.path, err)
+	}
+	return setValue(ctx.output, o.path, coerced)
+}
+
+// splitFieldOp reads a single string, matches it against pattern, and
+// writes each named capture group to its destination field, coerced to
+// that field's declared type. Used for ScalarToFields' hub->spoke
+// direction and FieldsToScalar's spoke->hub direction.
+type splitFieldOp struct {
+	sourcePath FieldPath
+	pattern    *regexp.Regexp
+	destFields map[string]FieldPath
+	destKinds  map[string]FieldKind
+}
+
+func (o splitFieldOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.sourcePath)
+	if !ok {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("splitField: value at %q is not a string", o.sourcePath)
+	}
+	match := o.pattern.FindStringSubmatch(s)
+	if match == nil {
+		return fmt.Errorf("splitField: value %q at %q does not match pattern %q", s, o.sourcePath, o.pattern.String())
+	}
+	captured := map[string]string{}
+	for i, name := range o.pattern.SubexpNames() {
+		if name == "" {
+			continue
+		}
+		captured[name] = match[i]
+	}
+	for name, destPath := range o.destFields {
+		raw, ok := captured[name]
+		if !ok {
+			return fmt.Errorf("splitField: pattern has no capture group named %q", name)
+		}
+		coerced, err := coerceScalarValue(raw, o.destKinds[name])
+		if err != nil {
+			return fmt.Errorf("splitField: group %q: %w", name, err)
+		}
+		if err := setValue(ctx.output, destPath, coerced); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// joinFieldsOp reads several named fields and renders destPath by
+// executing tmpl against them. Used for FieldsToScalar's hub->spoke
+// direction and ScalarToFields' spoke->hub direction.
+type joinFieldsOp struct {
+	srcFields map[string]FieldPath
+	destPath  FieldPath
+	tmpl      *template.Template
+}
+
+func (o joinFieldsOp) apply(ctx *execContext) error {
+	data := map[string]any{}
+	anyPresent := false
+	for name, srcPath := range o.srcFields {
+		v, ok := getValue(ctx.input, srcPath)
+		if !ok {
+			continue
+		}
+		anyPresent = true
+		data[name] = v
+	}
+	if !anyPresent {
+		return nil
+	}
+	var buf strings.Builder
+	if err := o.tmpl.Execute(&buf, data); err != nil {
+		return fmt.Errorf("joinFields: template execution: %w", err)
+	}
+	return setValue(ctx.output, o.destPath, buf.String())
+}
+
+// arrayToMapByKeyOp converts an array of objects into a map keyed by each
+// object's KeyField value, removing KeyField from the value itself (it's
+// recoverable from the map key). A duplicate or missing key is a runtime
+// error, never a silent drop.
+type arrayToMapByKeyOp struct {
+	arrayPath, mapPath FieldPath
+	keyField           string
+}
+
+func (o arrayToMapByKeyOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.arrayPath)
+	if !ok {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return fmt.Errorf("arrayToMapByKey: value at %q is not an array", o.arrayPath)
+	}
+	out := map[string]any{}
+	for i, elem := range arr {
+		m, ok := elem.(map[string]any)
+		if !ok {
+			return fmt.Errorf("arrayToMapByKey: element %d at %q is not an object", i, o.arrayPath)
+		}
+		keyVal, ok := m[o.keyField]
+		if !ok {
+			return fmt.Errorf("arrayToMapByKey: element %d at %q is missing key field %q", i, o.arrayPath, o.keyField)
+		}
+		keyStr, ok := keyVal.(string)
+		if !ok {
+			return fmt.Errorf("arrayToMapByKey: element %d at %q: key field %q is not a string", i, o.arrayPath, o.keyField)
+		}
+		if _, dup := out[keyStr]; dup {
+			return fmt.Errorf("arrayToMapByKey: duplicate key %q at %q", keyStr, o.arrayPath)
+		}
+		rest := map[string]any{}
+		for k, vv := range m {
+			if k == o.keyField {
+				continue
+			}
+			rest[k] = deepCopyValue(vv)
+		}
+		out[keyStr] = rest
+	}
+	return setValue(ctx.output, o.mapPath, out)
+}
+
+// mapToArrayByKeyOp is the inverse of arrayToMapByKeyOp: it re-inserts
+// each map key as KeyField on its value object and emits the results as
+// an array sorted by key, for determinism (Go map iteration order is not
+// stable, and the original array's order — if any — cannot be recovered).
+type mapToArrayByKeyOp struct {
+	mapPath, arrayPath FieldPath
+	keyField           string
+}
+
+func (o mapToArrayByKeyOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.mapPath)
+	if !ok {
+		return nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("mapToArrayByKey: value at %q is not an object", o.mapPath)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]any, 0, len(keys))
+	for _, k := range keys {
+		valMap, ok := m[k].(map[string]any)
+		if !ok {
+			return fmt.Errorf("mapToArrayByKey: value at %q[%q] is not an object", o.mapPath, k)
+		}
+		elem := map[string]any{o.keyField: k}
+		for kk, vv := range valMap {
+			elem[kk] = deepCopyValue(vv)
+		}
+		out = append(out, elem)
+	}
+	return setValue(ctx.output, o.arrayPath, out)
+}
+
+// numericScaleOp reads a number and writes it multiplied or divided by
+// factor, optionally rounded to the nearest whole number when the
+// destination field is integer-typed.
+type numericScaleOp struct {
+	fromPath, toPath FieldPath
+	factor           float64
+	multiply         bool // true: to = from*factor; false: to = from/factor
+	round            bool
+}
+
+func (o numericScaleOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.fromPath)
+	if !ok {
+		return nil
+	}
+	f, ok := v.(float64)
+	if !ok {
+		return fmt.Errorf("numericScale: value at %q is not numeric", o.fromPath)
+	}
+	var result float64
+	if o.multiply {
+		result = f * o.factor
+	} else {
+		result = f / o.factor
+	}
+	if o.round {
+		result = math.Round(result)
+	}
+	return setValue(ctx.output, o.toPath, result)
+}
+
+// joinListOp reads an array of scalars and writes it as a single string,
+// joining string-coerced elements with separator.
+type joinListOp struct {
+	arrayPath, stringPath FieldPath
+	separator             string
+}
+
+func (o joinListOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.arrayPath)
+	if !ok {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return fmt.Errorf("listJoin: value at %q is not an array", o.arrayPath)
+	}
+	parts := make([]string, len(arr))
+	for i, elem := range arr {
+		s, err := coerceScalarValue(elem, FieldKindString)
+		if err != nil {
+			return fmt.Errorf("listJoin: element %d: %w", i, err)
+		}
+		parts[i] = s.(string)
+	}
+	return setValue(ctx.output, o.stringPath, strings.Join(parts, o.separator))
+}
+
+// splitListOp is the inverse of joinListOp: it splits a string on
+// separator and writes the parts as an array, each coerced to itemKind.
+// An empty string produces an empty array, not a one-element array
+// containing "".
+type splitListOp struct {
+	stringPath, arrayPath FieldPath
+	separator             string
+	itemKind              FieldKind
+}
+
+func (o splitListOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.stringPath)
+	if !ok {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("listSplit: value at %q is not a string", o.stringPath)
+	}
+	var parts []string
+	if s != "" {
+		parts = strings.Split(s, o.separator)
+	}
+	out := make([]any, len(parts))
+	for i, p := range parts {
+		coerced, err := coerceScalarValue(p, o.itemKind)
+		if err != nil {
+			return fmt.Errorf("listSplit: element %d: %w", i, err)
+		}
+		out[i] = coerced
+	}
+	return setValue(ctx.output, o.arrayPath, out)
 }

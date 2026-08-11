@@ -234,9 +234,97 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			Rules: nested,
 		}, nil
 
+	case StrategyTypeCoerce:
+		if r.TypeCoerce == nil {
+			return nil, fmt.Errorf("requires typeCoerce params")
+		}
+		return engine.TypeCoerceParams{Path: engine.ParsePath(r.TypeCoerce.Path)}, nil
+
+	case StrategyScalarToFields:
+		if r.ScalarToFields == nil {
+			return nil, fmt.Errorf("requires scalarToFields params")
+		}
+		return engine.ScalarToFieldsParams{
+			HubPath:          engine.ParsePath(r.ScalarToFields.HubPath),
+			Pattern:          r.ScalarToFields.Pattern,
+			SpokeFields:      parsePathMap(r.ScalarToFields.SpokeFields),
+			JoinTemplate:     r.ScalarToFields.JoinTemplate,
+			LosslessOverride: r.ScalarToFields.LosslessOverride,
+		}, nil
+
+	case StrategyFieldsToScalar:
+		if r.FieldsToScalar == nil {
+			return nil, fmt.Errorf("requires fieldsToScalar params")
+		}
+		return engine.FieldsToScalarParams{
+			HubFields:        parsePathMap(r.FieldsToScalar.HubFields),
+			Pattern:          r.FieldsToScalar.Pattern,
+			SpokePath:        engine.ParsePath(r.FieldsToScalar.SpokePath),
+			JoinTemplate:     r.FieldsToScalar.JoinTemplate,
+			LosslessOverride: r.FieldsToScalar.LosslessOverride,
+		}, nil
+
+	case StrategyArrayToMapByKey:
+		if r.ArrayToMapByKey == nil {
+			return nil, fmt.Errorf("requires arrayToMapByKey params")
+		}
+		return engine.ArrayToMapByKeyParams{
+			HubPath: engine.ParsePath(r.ArrayToMapByKey.HubPath), SpokePath: engine.ParsePath(r.ArrayToMapByKey.SpokePath),
+			KeyField: r.ArrayToMapByKey.KeyField,
+		}, nil
+
+	case StrategyMapToArrayByKey:
+		if r.MapToArrayByKey == nil {
+			return nil, fmt.Errorf("requires mapToArrayByKey params")
+		}
+		return engine.MapToArrayByKeyParams{
+			HubPath: engine.ParsePath(r.MapToArrayByKey.HubPath), SpokePath: engine.ParsePath(r.MapToArrayByKey.SpokePath),
+			KeyField: r.MapToArrayByKey.KeyField,
+		}, nil
+
+	case StrategyNumericScale:
+		if r.NumericScale == nil {
+			return nil, fmt.Errorf("requires numericScale params")
+		}
+		return engine.NumericScaleParams{
+			HubPath: engine.ParsePath(r.NumericScale.HubPath), SpokePath: engine.ParsePath(r.NumericScale.SpokePath),
+			Factor: r.NumericScale.Factor,
+		}, nil
+
+	case StrategyListJoin:
+		if r.ListJoin == nil {
+			return nil, fmt.Errorf("requires listJoin params")
+		}
+		return engine.ListJoinParams{
+			HubPath: engine.ParsePath(r.ListJoin.HubPath), SpokePath: engine.ParsePath(r.ListJoin.SpokePath),
+			Separator: r.ListJoin.Separator,
+		}, nil
+
+	case StrategyListSplit:
+		if r.ListSplit == nil {
+			return nil, fmt.Errorf("requires listSplit params")
+		}
+		return engine.ListSplitParams{
+			HubPath: engine.ParsePath(r.ListSplit.HubPath), SpokePath: engine.ParsePath(r.ListSplit.SpokePath),
+			Separator: r.ListSplit.Separator,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", r.Strategy)
 	}
+}
+
+// parsePathMap converts a map of name -> dotted path string (as declared
+// in the CRD-facing API) into name -> engine.FieldPath.
+func parsePathMap(m map[string]string) map[string]engine.FieldPath {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]engine.FieldPath, len(m))
+	for k, v := range m {
+		out[k] = engine.ParsePath(v)
+	}
+	return out
 }
 
 func parsePaths(paths []string) []engine.FieldPath {

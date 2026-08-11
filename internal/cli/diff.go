@@ -89,18 +89,41 @@ func isIgnoredPath(path string) bool {
 
 // pathMatchesAny reports whether path (or one of its ancestor paths, so a
 // rule that claims a whole object subtree also covers its nested leaves)
-// appears in the given set of dotted paths considered lossy.
+// appears in the given set of dotted paths considered lossy. Array index
+// brackets (e.g. the "[0]" in "spec.zones[0].name", which diffLeaves adds
+// when comparing array elements) are stripped before matching, since
+// declared rule paths never include them — a rule targets "spec.zones" as
+// a whole, not any one index of it.
 func pathMatchesAny(path string, set map[string]bool) bool {
 	if len(set) == 0 {
 		return false
 	}
-	segs := strings.Split(path, ".")
+	segs := strings.Split(stripArrayIndices(path), ".")
 	for i := len(segs); i > 0; i-- {
 		if set[strings.Join(segs[:i], ".")] {
 			return true
 		}
 	}
 	return false
+}
+
+// stripArrayIndices removes every "[N]" suffix diffLeaves appends to array
+// element segments, e.g. "spec.zones[0].name" -> "spec.zones.name", so
+// per-element diff paths can be matched against a rule's declared
+// (index-free) field paths.
+func stripArrayIndices(path string) string {
+	var b strings.Builder
+	b.Grow(len(path))
+	for i := 0; i < len(path); i++ {
+		if path[i] == '[' {
+			for i < len(path) && path[i] != ']' {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(path[i])
+	}
+	return b.String()
 }
 
 // countLeaves counts scalar leaves in an unstructured tree, used for the
