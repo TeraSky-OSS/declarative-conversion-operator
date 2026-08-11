@@ -28,6 +28,7 @@ import (
 // TestOptions configures RunTest.
 type TestOptions struct {
 	XRDPath      string
+	CRDPath      string
 	ConfigPath   string
 	SamplesDir   string
 	SkipIdentity bool
@@ -36,21 +37,44 @@ type TestOptions struct {
 	RestrictVersionPairs []string
 
 	// Live, when set, fetches samples from a real cluster instead of
-	// SamplesDir: every existing instance of the XRD's generated type,
-	// read at its hub/storage version. This is the "pre-upgrade check"
-	// mode — test a config-to-be-applied against every object that
-	// already exists, not just hand-written fixtures.
+	// SamplesDir: every existing instance of the XRD's (or CRD's)
+	// generated type, read at its hub/storage version. This is the
+	// "pre-upgrade check" mode — test a config-to-be-applied against
+	// every object that already exists, not just hand-written fixtures.
 	Live        bool
 	Kubeconfig  string
 	KubeContext string
 }
 
-// RunTest loads the XRD/config/samples, validates the configuration
-// exactly like the controller and admission webhook would, then tests
-// every sample across every served-version pair (spoke_i -> hub -> spoke_j,
-// including the hub itself as source or target), reporting timing, pass/
-// loss/fail, rules exercised, and precisely which fields diverged where.
+// RunTest loads the config, its target XRD or CRD, and samples, validates
+// the configuration exactly like the controller and admission webhook
+// would, then tests every sample across every served-version pair
+// (spoke_i -> hub -> spoke_j, including the hub itself as source or
+// target), reporting timing, pass/loss/fail, rules exercised, and
+// precisely which fields diverged where.
+//
+// Which of XRDPath/CRDPath applies is determined by the config's own
+// kind, not by which field the caller happened to set.
 func RunTest(opts TestOptions) (*Report, error) {
+	kind, err := PeekConfigKind(opts.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case "CRDConversionConfig":
+		if opts.CRDPath == "" {
+			return nil, fmt.Errorf("%s is a CRDConversionConfig; pass its target schema with --crd, not --xrd", opts.ConfigPath)
+		}
+		return runTestCRD(opts)
+	default: // "XRDConversionConfig"
+		if opts.XRDPath == "" {
+			return nil, fmt.Errorf("%s is an XRDConversionConfig; pass its target schema with --xrd, not --crd", opts.ConfigPath)
+		}
+		return runTestXRD(opts)
+	}
+}
+
+func runTestXRD(opts TestOptions) (*Report, error) {
 	start := time.Now()
 
 	xrd, err := LoadXRD(opts.XRDPath)
@@ -98,7 +122,65 @@ func RunTest(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	return runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+}
 
+func runTestCRD(opts TestOptions) (*Report, error) {
+	start := time.Now()
+
+	crd, err := LoadCRD(opts.CRDPath)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := LoadCRDConfig(opts.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := internalwebhook.ValidateCRDStructure(cfg); err != nil {
+		return nil, fmt.Errorf("configuration is structurally invalid: %w", err)
+	}
+	var samples []Sample
+	if opts.Live {
+		dyn, err := buildDynamicClient(KubeOptions{Kubeconfig: opts.Kubeconfig, Context: opts.KubeContext})
+		if err != nil {
+			return nil, err
+		}
+		samples, err = FetchLiveSamplesCRD(context.Background(), dyn, crd, cfg.Spec.HubVersion)
+		if err != nil {
+			return nil, fmt.Errorf("fetching live samples: %w", err)
+		}
+		if len(samples) == 0 {
+			return nil, fmt.Errorf("no live objects of %s found at version %s", crdName(crd), cfg.Spec.HubVersion)
+		}
+	} else {
+		samples, err = LoadSamples(opts.SamplesDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(samples) == 0 {
+			return nil, fmt.Errorf("no sample files found under %s", opts.SamplesDir)
+		}
+	}
+
+	report, versions, err := runAnalyzeCRD(crd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if report.HasErrors() {
+		return nil, fmt.Errorf("configuration is invalid against the CRD schema, cannot test conversions:%s", summarizeSpokeErrors(report))
+	}
+	router, err := buildRouterCRD(cfg, report)
+	if err != nil {
+		return nil, err
+	}
+	return runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+}
+
+// runTestCommon is runTestXRD/runTestCRD's shared tail: exercising every
+// sample across every served-version pair is entirely independent of
+// whether the target is an XRD or a native CRD, once a Router and an
+// AnalyzeReport already exist.
+func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, start time.Time) (*Report, error) {
 	served := servedVersions(versions)
 	targets := served
 	if len(opts.RestrictVersionPairs) > 0 {
@@ -109,9 +191,10 @@ func RunTest(opts TestOptions) (*Report, error) {
 	ruleUsage := map[string]int{}
 
 	rep := &Report{}
-	rep.Meta.XRD = xrdName(xrd)
-	rep.Meta.Config = cfg.Name
-	rep.Meta.HubVersion = cfg.Spec.HubVersion
+	rep.Meta.ResourceKind = resourceKind
+	rep.Meta.Resource = resourceName
+	rep.Meta.Config = configName
+	rep.Meta.HubVersion = hubVersion
 	rep.Meta.ServedVersions = served
 	rep.Meta.GeneratedAt = nowRFC3339()
 
@@ -121,7 +204,7 @@ func RunTest(opts TestOptions) (*Report, error) {
 			if opts.SkipIdentity && target == s.Version {
 				continue
 			}
-			pr := testOnePath(router, cfg.Spec.HubVersion, lossyPaths, report, s, target, ruleUsage)
+			pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, ruleUsage)
 			sr.Paths = append(sr.Paths, pr)
 			rep.Summary.PathsTested++
 			switch pr.Result {

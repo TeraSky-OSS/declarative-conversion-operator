@@ -17,8 +17,10 @@ limitations under the License.
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -71,12 +73,12 @@ func newVersionCmd() *cobra.Command {
 var Version = "dev"
 
 func newValidateCmd() *cobra.Command {
-	var configPath, xrdPath, output string
+	var configPath, xrdPath, crdPath, output string
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Run the same static checks the admission webhook performs, offline",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			res, err := RunValidate(configPath, xrdPath)
+			res, err := RunValidate(configPath, xrdPath, crdPath)
 			if err != nil {
 				return err
 			}
@@ -84,7 +86,7 @@ func newValidateCmd() *cobra.Command {
 				return writeJSON(cmd, res)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "config: %s\nstructurally valid: %v\n", res.Config, res.StructurallyValid)
-			if xrdPath != "" {
+			if xrdPath != "" || crdPath != "" {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "schema validated: %v\n", res.SchemaValidated)
 			}
 			for _, e := range res.Errors {
@@ -96,20 +98,22 @@ func newValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig YAML file (required)")
-	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (optional; enables live schema validation)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (optional; enables live schema validation against an XRDConversionConfig)")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (optional; enables live schema validation against a CRDConversionConfig)")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
 	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	return cmd
 }
 
 func newAnalyzeCmd() *cobra.Command {
-	var xrdPath, configPath, output string
+	var xrdPath, crdPath, configPath, output string
 	cmd := &cobra.Command{
 		Use:   "analyze",
 		Short: "Schema-only lossy/coverage analysis, no samples needed",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out, err := RunAnalyze(xrdPath, configPath)
+			out, err := RunAnalyze(xrdPath, crdPath, configPath)
 			if err != nil {
 				return err
 			}
@@ -123,70 +127,104 @@ func newAnalyzeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required)")
-	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig YAML file (required)")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for an XRDConversionConfig)")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for a CRDConversionConfig)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
-	_ = cmd.MarkFlagRequired("xrd")
 	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	return cmd
 }
 
 func newTestCmd() *cobra.Command {
 	var (
-		xrdPath, configPath, samplesDir, output, failOn string
-		skipIdentity, strict, live                      bool
-		versionPairs                                    []string
-		kubeconfig, kubeContext                         string
+		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
+		skipIdentity, strict, live                                           bool
+		versionPairs                                                         []string
+		kubeconfig, kubeContext                                              string
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Run every sample through every conversion path and report timing, loss, and rule coverage",
 		Long: `Run every sample through every conversion path and report timing, loss, and rule coverage.
 
+Works against either an XRDConversionConfig (pass --xrd) or a CRDConversionConfig (pass --crd) —
+which one is required is determined by --config's own kind.
+
 Samples come from one of two places, chosen with --samples or --live:
 
   --samples <dir>  a directory of hand-written sample object YAML files (offline, the default workflow)
-  --live           every existing instance of the XRD's generated type, fetched live from a cluster at
-                   its hub/storage version — a pre-upgrade check: does a config-to-be-applied hold up
-                   against every object that already exists, not just fixtures?
+  --live           every existing instance of the XRD's/CRD's generated type, fetched live from a
+                   cluster at its hub/storage version — a pre-upgrade check: does a config-to-be-applied
+                   hold up against every object that already exists, not just fixtures?
 
 --live resolves the target cluster the same way kubectl does: --kubeconfig (falling back to $KUBECONFIG,
 then ~/.kube/config) and --context (falling back to the kubeconfig's current-context). It only needs
-get/list on the XRD's generated resource type — no write access, and no access to this operator's own
-CRDs or webhook server.`,
+get/list on the target resource type — no write access, and no access to this operator's own CRDs or
+webhook server.
+
+--output selects table (default), json, or junit; junit is meant for CI test-result reporting (e.g.
+GitHub Actions' test-reporting integrations, GitLab, Jenkins). --output-file writes the full report to
+a file instead of stdout — a short pass/loss/fail/error summary is still printed to stdout either way.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json", "junit":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table, json, or junit)", output)
+			}
 			rep, err := RunTest(TestOptions{
-				XRDPath: xrdPath, ConfigPath: configPath, SamplesDir: samplesDir,
+				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 			})
 			if err != nil {
 				return err
 			}
-			if output == "json" {
-				if err := writeJSON(cmd, rep); err != nil {
-					return err
-				}
-			} else {
-				rep.WriteTable(cmd.OutOrStdout())
+
+			var buf bytes.Buffer
+			switch output {
+			case "json":
+				err = writeJSONTo(&buf, rep)
+			case "junit":
+				err = rep.WriteJUnit(&buf)
+			default:
+				rep.WriteTable(&buf)
 			}
+			if err != nil {
+				return err
+			}
+
+			if outputFile != "" {
+				if err := os.WriteFile(outputFile, buf.Bytes(), 0o644); err != nil {
+					return fmt.Errorf("writing report to %s: %w", outputFile, err)
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "output written to file %s\n", outputFile)
+				rep.WriteSummaryLine(cmd.OutOrStdout())
+			} else {
+				_, _ = cmd.OutOrStdout().Write(buf.Bytes())
+			}
+
 			exitCode = decideExitCode(rep, failOn, strict)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required)")
-	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig YAML file (required)")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for an XRDConversionConfig)")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for a CRDConversionConfig)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
 	cmd.Flags().StringVarP(&samplesDir, "samples", "s", "", "Path to a directory of sample objects")
 	cmd.Flags().BoolVar(&live, "live", false, "Fetch samples from a live cluster instead of --samples (a pre-upgrade check against real objects)")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (default: $KUBECONFIG, then ~/.kube/config); only used with --live")
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|junit")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write the full report to this file instead of stdout; a short summary still prints to stdout")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
 	cmd.Flags().StringVar(&failOn, "fail-on", "loss", "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
-	_ = cmd.MarkFlagRequired("xrd")
 	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	cmd.MarkFlagsOneRequired("samples", "live")
 	cmd.MarkFlagsMutuallyExclusive("samples", "live")
 	return cmd
@@ -210,7 +248,11 @@ func decideExitCode(rep *Report, failOn string, strict bool) int {
 }
 
 func writeJSON(cmd *cobra.Command, v any) error {
-	enc := json.NewEncoder(cmd.OutOrStdout())
+	return writeJSONTo(cmd.OutOrStdout(), v)
+}
+
+func writeJSONTo(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

@@ -19,9 +19,11 @@ package cli
 import (
 	"fmt"
 
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/crdadapter"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
@@ -49,6 +51,43 @@ func runAnalyze(xrd *unstructured.Unstructured, cfg *teraskyv1alpha1.XRDConversi
 // an error naming the first spoke that failed to compile — a Router built
 // from a partially-valid report would silently mis-serve untested paths.
 func buildRouter(cfg *teraskyv1alpha1.XRDConversionConfig, report engine.AnalyzeReport) (*engine.Router, error) {
+	plans, err := compiledPlans(report)
+	if err != nil {
+		return nil, err
+	}
+	return &engine.Router{Hub: cfg.Spec.HubVersion, Plans: plans}, nil
+}
+
+// runAnalyzeCRD is runAnalyze's sibling for a native CRD + CRDConversionConfig,
+// running the exact same engine.Analyze code path via pkg/crdadapter instead
+// of pkg/xrdadapter.
+func runAnalyzeCRD(crd *extv1.CustomResourceDefinition, cfg *teraskyv1alpha1.CRDConversionConfig) (engine.AnalyzeReport, []engine.VersionSchema, error) {
+	source := crdadapter.New(crd)
+	versions, err := source.Versions()
+	if err != nil {
+		return engine.AnalyzeReport{}, nil, fmt.Errorf("reading CRD versions: %w", err)
+	}
+	ruleSets, err := cfg.ToRuleSets()
+	if err != nil {
+		return engine.AnalyzeReport{}, versions, fmt.Errorf("invalid rule configuration: %w", err)
+	}
+	report, err := engine.Analyze(engine.AnalyzeInput{Source: source, HubVersion: cfg.Spec.HubVersion, Spokes: ruleSets})
+	if err != nil {
+		return engine.AnalyzeReport{}, versions, fmt.Errorf("analysis failed: %w", err)
+	}
+	return report, versions, nil
+}
+
+// buildRouterCRD is buildRouter's sibling for CRDConversionConfig.
+func buildRouterCRD(cfg *teraskyv1alpha1.CRDConversionConfig, report engine.AnalyzeReport) (*engine.Router, error) {
+	plans, err := compiledPlans(report)
+	if err != nil {
+		return nil, err
+	}
+	return &engine.Router{Hub: cfg.Spec.HubVersion, Plans: plans}, nil
+}
+
+func compiledPlans(report engine.AnalyzeReport) (map[string]*engine.Plan, error) {
 	plans := map[string]*engine.Plan{}
 	for _, sr := range report.SpokeReports {
 		if sr.CompiledPlan == nil {
@@ -56,7 +95,7 @@ func buildRouter(cfg *teraskyv1alpha1.XRDConversionConfig, report engine.Analyze
 		}
 		plans[sr.Version] = sr.CompiledPlan
 	}
-	return &engine.Router{Hub: cfg.Spec.HubVersion, Plans: plans}, nil
+	return plans, nil
 }
 
 func servedVersions(versions []engine.VersionSchema) []string {
@@ -82,6 +121,13 @@ func summarizeSpokeErrors(report engine.AnalyzeReport) string {
 func xrdName(xrd *unstructured.Unstructured) string {
 	if n := xrd.GetName(); n != "" {
 		return n
+	}
+	return "(unnamed)"
+}
+
+func crdName(crd *extv1.CustomResourceDefinition) string {
+	if crd.Name != "" {
+		return crd.Name
 	}
 	return "(unnamed)"
 }

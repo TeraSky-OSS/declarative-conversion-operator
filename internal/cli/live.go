@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -77,23 +78,44 @@ func xrdResourceInfo(xrd *unstructured.Unstructured) (group, plural string, err 
 }
 
 // FetchLiveSamples lists every existing instance of the XRD's generated
-// composite resource type at hubVersion — the storage/referenceable
-// version, which the apiserver always serves directly from etcd with no
-// conversion webhook involved. That's deliberate: a pre-upgrade check has
-// to work at the exact moment spec.conversion is still None, or still
-// pointing at whatever was configured before, so it can never depend on
-// the very conversion path it's about to validate.
-//
-// Results are paginated through in full rather than capped, since a
-// pre-upgrade check that silently missed some fraction of live objects
-// would report false confidence — worse than not running it at all.
+// composite resource type at hubVersion. See fetchLiveSamplesByGVR for why
+// hubVersion specifically, and why pagination isn't capped.
 func FetchLiveSamples(ctx context.Context, dyn dynamic.Interface, xrd *unstructured.Unstructured, hubVersion string) ([]Sample, error) {
 	group, plural, err := xrdResourceInfo(xrd)
 	if err != nil {
 		return nil, err
 	}
-	gvr := schema.GroupVersionResource{Group: group, Version: hubVersion, Resource: plural}
+	return fetchLiveSamplesByGVR(ctx, dyn, schema.GroupVersionResource{Group: group, Version: hubVersion, Resource: plural}, hubVersion)
+}
 
+// FetchLiveSamplesCRD is FetchLiveSamples's sibling for a native
+// CustomResourceDefinition. Unlike xrdResourceInfo, no unstructured
+// digging is needed: a typed CRD already exposes spec.group and
+// spec.names.plural directly.
+func FetchLiveSamplesCRD(ctx context.Context, dyn dynamic.Interface, crd *extv1.CustomResourceDefinition, hubVersion string) ([]Sample, error) {
+	if crd.Spec.Group == "" {
+		return nil, fmt.Errorf("crd is missing spec.group")
+	}
+	if crd.Spec.Names.Plural == "" {
+		return nil, fmt.Errorf("crd is missing spec.names.plural")
+	}
+	gvr := schema.GroupVersionResource{Group: crd.Spec.Group, Version: hubVersion, Resource: crd.Spec.Names.Plural}
+	return fetchLiveSamplesByGVR(ctx, dyn, gvr, hubVersion)
+}
+
+// fetchLiveSamplesByGVR is FetchLiveSamples/FetchLiveSamplesCRD's shared
+// pagination loop, listing every existing instance of gvr at hubVersion —
+// the storage/referenceable version, which the apiserver always serves
+// directly from etcd with no conversion webhook involved. That's
+// deliberate: a pre-upgrade check has to work at the exact moment
+// spec.conversion is still None, or still pointing at whatever was
+// configured before, so it can never depend on the very conversion path
+// it's about to validate.
+//
+// Results are paginated through in full rather than capped, since a
+// pre-upgrade check that silently missed some fraction of live objects
+// would report false confidence — worse than not running it at all.
+func fetchLiveSamplesByGVR(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, hubVersion string) ([]Sample, error) {
 	var samples []Sample
 	continueToken := ""
 	for {

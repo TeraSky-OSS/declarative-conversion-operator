@@ -32,9 +32,34 @@ type ValidateResult struct {
 	Errors            []string `json:"errors,omitempty"`
 }
 
-// RunValidate loads a config (and, if provided, an XRD) and runs exactly
-// the checks the admission webhook performs at apply time.
-func RunValidate(configPath, xrdPath string) (*ValidateResult, error) {
+// RunValidate loads a config (and, if provided, its target XRD or CRD) and
+// runs exactly the checks the admission webhook performs at apply time.
+// Which of xrdPath/crdPath applies is determined by the config's own kind,
+// not by which flag the caller happened to pass — a config validated
+// against the wrong resource type is worse than not validated at all.
+func RunValidate(configPath, xrdPath, crdPath string) (*ValidateResult, error) {
+	if xrdPath != "" && crdPath != "" {
+		return nil, fmt.Errorf("--xrd and --crd are mutually exclusive")
+	}
+	kind, err := PeekConfigKind(configPath)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case "CRDConversionConfig":
+		if xrdPath != "" {
+			return nil, fmt.Errorf("%s is a CRDConversionConfig; use --crd, not --xrd, to validate it against a schema", configPath)
+		}
+		return runValidateCRD(configPath, crdPath)
+	default: // "XRDConversionConfig"
+		if crdPath != "" {
+			return nil, fmt.Errorf("%s is an XRDConversionConfig; use --xrd, not --crd, to validate it against a schema", configPath)
+		}
+		return runValidateXRD(configPath, xrdPath)
+	}
+}
+
+func runValidateXRD(configPath, xrdPath string) (*ValidateResult, error) {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return nil, err
@@ -61,6 +86,39 @@ func RunValidate(configPath, xrdPath string) (*ValidateResult, error) {
 	}
 	if report.HasErrors() {
 		res.Errors = append(res.Errors, fmt.Sprintf("configuration is invalid against the XRD schema:%s", summarizeSpokeErrors(report)))
+		return res, nil
+	}
+	res.SchemaValidated = true
+	return res, nil
+}
+
+func runValidateCRD(configPath, crdPath string) (*ValidateResult, error) {
+	cfg, err := LoadCRDConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	res := &ValidateResult{Config: cfg.Name}
+
+	if err := internalwebhook.ValidateCRDStructure(cfg); err != nil {
+		res.Errors = append(res.Errors, err.Error())
+		return res, nil
+	}
+	res.StructurallyValid = true
+
+	if crdPath == "" {
+		return res, nil
+	}
+	crd, err := LoadCRD(crdPath)
+	if err != nil {
+		return nil, err
+	}
+	report, _, err := runAnalyzeCRD(crd, cfg)
+	if err != nil {
+		res.Errors = append(res.Errors, err.Error())
+		return res, nil
+	}
+	if report.HasErrors() {
+		res.Errors = append(res.Errors, fmt.Sprintf("configuration is invalid against the CRD schema:%s", summarizeSpokeErrors(report)))
 		return res, nil
 	}
 	res.SchemaValidated = true

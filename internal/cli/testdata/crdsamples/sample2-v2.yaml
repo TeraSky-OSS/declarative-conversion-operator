@@ -1,0 +1,7 @@
+apiVersion: example.org/v2
+kind: Widget
+metadata:
+  name: sample2
+spec:
+  storageGB: "200"
+  legacyDebugFlag: true

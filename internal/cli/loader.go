@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -61,6 +62,62 @@ func LoadConfig(path string) (*teraskyv1alpha1.XRDConversionConfig, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+// LoadCRD reads a single CustomResourceDefinition YAML document from path,
+// decoded into the typed apiextensions.k8s.io/v1 type pkg/crdadapter itself
+// works with. Unlike LoadXRD, this doesn't stay unstructured: a
+// CustomResourceDefinition is a core Kubernetes type this module already
+// depends on, so there's no reason to avoid the typed decode the way
+// pkg/xrdadapter avoids vendoring Crossplane's own types.
+func LoadCRD(path string) (*extv1.CustomResourceDefinition, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	var crd extv1.CustomResourceDefinition
+	if err := sigsyaml.Unmarshal(data, &crd); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return &crd, nil
+}
+
+// LoadCRDConfig reads a single CRDConversionConfig YAML document from path.
+func LoadCRDConfig(path string) (*teraskyv1alpha1.CRDConversionConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	var cfg teraskyv1alpha1.CRDConversionConfig
+	if err := sigsyaml.UnmarshalStrict(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return &cfg, nil
+}
+
+// PeekConfigKind reads just a config YAML's top-level `kind` field, letting
+// callers dispatch between XRDConversionConfig and CRDConversionConfig
+// handling before committing to parsing the file as either concrete type.
+// Fails closed on a missing or unrecognized kind rather than guessing.
+func PeekConfigKind(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	var m struct {
+		Kind string `json:"kind"`
+	}
+	if err := sigsyaml.Unmarshal(data, &m); err != nil {
+		return "", fmt.Errorf("parsing %s: %w", path, err)
+	}
+	switch m.Kind {
+	case "XRDConversionConfig", "CRDConversionConfig":
+		return m.Kind, nil
+	case "":
+		return "", fmt.Errorf("%s: missing kind (expected XRDConversionConfig or CRDConversionConfig)", path)
+	default:
+		return "", fmt.Errorf("%s: unrecognized kind %q (expected XRDConversionConfig or CRDConversionConfig)", path, m.Kind)
+	}
 }
 
 // Sample is one loaded sample object, with the version it asserts to be
