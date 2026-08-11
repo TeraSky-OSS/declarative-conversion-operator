@@ -18,9 +18,12 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  MANAGER_IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/declarative-conversion-operator
-  WEBHOOK_SERVER_IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/declarative-conversion-webhook-server
-  CHART_REPO: ghcr.io/${{ toLower(github.repository_owner) }}/charts
+  # ghcr.io requires lowercase paths; github.repository_owner is "TeraSky-OSS"
+  # (mixed case), so this is hardcoded lowercase rather than derived, same as
+  # matrix.image below.
+  MANAGER_IMAGE: ghcr.io/terasky-oss/declarative-conversion-operator
+  WEBHOOK_SERVER_IMAGE: ghcr.io/terasky-oss/declarative-conversion-webhook-server
+  CHART_REPO: ghcr.io/terasky-oss/charts
 
 jobs:
   test:
