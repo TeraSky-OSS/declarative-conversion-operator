@@ -18,12 +18,17 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -235,6 +240,10 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	if got.Status.Phase != teraskyv1alpha1.PhaseFailed {
 		t.Fatalf("expected phase Failed under FailClosed drift, got %q (message: %s)", got.Status.Phase, got.Status.Message)
 	}
+	applied := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != "Reverted" {
+		t.Fatalf("expected ConditionApplied=False Reason=Reverted after successful FailClosed revert, got %+v", applied)
+	}
 
 	patchedXRD := &unstructured.Unstructured{}
 	patchedXRD.SetGroupVersionKind(xrdadapter.GroupVersionKind)
@@ -244,6 +253,86 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	strategy, found := stringField(patchedXRD.Object, "spec", "conversion", "strategy")
 	if !found || strategy != "None" {
 		t.Fatalf("expected the XRD to be reverted to strategy=None, found=%v strategy=%q", found, strategy)
+	}
+}
+
+func TestXRDReconcile_Drift_FailClosed_RevertFailure_HonestStatus(t *testing.T) {
+	xrd := establishedXRD("xfoos.example.org")
+	// Pretend the live XRD still has webhook conversion wired.
+	_ = unstructured.SetNestedMap(xrd.Object, map[string]any{
+		"strategy": "Webhook",
+		"webhook":  map[string]any{"clientConfig": map[string]any{"url": "https://example.invalid/convert"}},
+	}, "spec", "conversion")
+	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
+	cfg.Spec.DriftPolicy = teraskyv1alpha1.DriftPolicyFailClosed
+	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
+	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+		Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionTrue, Reason: "Applied", Message: "previously applied",
+	})
+	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
+	server, secret := readyServer("srv")
+
+	c := newFakeClient(cfg, server, secret).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+				return fmt.Errorf("injected apply failure")
+			},
+		}).
+		Build()
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
+	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
+
+	live := getXRDConfig(t, r, "cfg")
+	live.Spec.Spokes[0].Rules[0].FieldRename.HubPath = "spec.doesNotExist"
+	if err := r.Update(context.Background(), live); err != nil {
+		t.Fatalf("updating config: %v", err)
+	}
+
+	_, err := reconcileXRD(t, r, "cfg")
+	if err == nil {
+		t.Fatalf("expected reconcile to return an error so the work is requeued with backoff")
+	}
+	if !strings.Contains(err.Error(), "injected apply failure") {
+		t.Fatalf("expected wrapped revert error, got: %v", err)
+	}
+
+	got := getXRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseFailed {
+		t.Fatalf("expected phase Failed after revert failure, got %q", got.Status.Phase)
+	}
+	if strings.Contains(got.Status.Message, "reverted to strategy=None") {
+		t.Fatalf("status must not claim a successful revert; message=%q", got.Status.Message)
+	}
+	if !strings.Contains(got.Status.Message, "failed to revert") {
+		t.Fatalf("expected honest failed-to-revert message, got %q", got.Status.Message)
+	}
+	applied := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != "RevertFailed" {
+		t.Fatalf("expected ConditionApplied=False Reason=RevertFailed, got %+v", applied)
+	}
+
+	liveXRD := &unstructured.Unstructured{}
+	liveXRD.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "xfoos.example.org"}, liveXRD); err != nil {
+		t.Fatalf("getting XRD: %v", err)
+	}
+	strategy, found := stringField(liveXRD.Object, "spec", "conversion", "strategy")
+	if !found || strategy != "Webhook" {
+		t.Fatalf("expected live XRD conversion to remain Webhook after failed revert, found=%v strategy=%q", found, strategy)
+	}
+
+	// A subsequent reconcile with the same injected failure must keep
+	// retrying FailClosed revert (not treat Phase=Failed as terminal success).
+	_, err = reconcileXRD(t, r, "cfg")
+	if err == nil {
+		t.Fatalf("expected second reconcile to keep returning revert errors for backoff requeue")
+	}
+	got = getXRDConfig(t, r, "cfg")
+	applied = meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
+	if applied == nil || applied.Reason != "RevertFailed" {
+		t.Fatalf("expected RevertFailed to remain so FailClosed keeps retrying, got %+v", applied)
 	}
 }
 
