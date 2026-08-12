@@ -33,7 +33,6 @@ spec:
 | `certificate.issuerRef` | The cert-manager `Issuer`/`ClusterIssuer` for this instance's webhook TLS certificate. `certificate.dnsNames`, `.duration`, `.renewBefore` are also available. |
 | `service.{type,port,annotations}` | The `Service` fronting this instance's pods. |
 | `podDisruptionBudget.{minAvailable,maxUnavailable}` | Creates a `PodDisruptionBudget` for this instance. |
-| `cacheSelector` | Optionally restricts which XRDs/`XRDConversionConfig`s this instance's pods watch and cache — bounds memory and cold-start cost in a cluster with many unrelated XRDs. |
 
 ## Status
 
