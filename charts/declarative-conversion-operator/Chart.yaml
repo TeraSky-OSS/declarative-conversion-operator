@@ -4,6 +4,12 @@ description: Declarative conversion webhooks for Crossplane XRDs and native Kube
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+# Matches docs/installation.md prerequisites (Kubernetes 1.27+). Chart templates
+# use apps/v1 Deployments, policy/v1 PodDisruptionBudgets, and
+# admissionregistration.k8s.io/v1 ValidatingWebhookConfigurations — all stable
+# well before 1.27; the floor is the documented operator baseline, not the
+# absolute API introduction version.
+kubeVersion: ">=1.27.0-0"
 home: https://github.com/terasky-oss/declarative-conversion-operator
 keywords:
   - crossplane
@@ -12,5 +18,25 @@ keywords:
   - crd-conversion
 maintainers:
   - name: terasky-oss
+    url: https://github.com/terasky-oss
 sources:
   - https://github.com/terasky-oss/declarative-conversion-operator
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Seamless Upgrades
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://terasky-oss.github.io/declarative-conversion-operator/
+    - name: Source
+      url: https://github.com/terasky-oss/declarative-conversion-operator
+    - name: Issues
+      url: https://github.com/terasky-oss/declarative-conversion-operator/issues
+  artifacthub.io/recommendations: |
+    - url: https://artifacthub.io/packages/helm/cert-manager/cert-manager
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial chart packaging for the declarative conversion operator.
