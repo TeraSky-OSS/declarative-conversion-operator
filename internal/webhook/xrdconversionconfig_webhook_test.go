@@ -117,6 +117,15 @@ func TestValidateStructure_WarnPolicyRequiresReason(t *testing.T) {
 		t.Fatalf("expected error to name unmappedFieldReason, got: %v", err)
 	}
 
+	cfg.Spec.UnmappedFieldReason = " \t\n"
+	err = ValidateStructure(cfg)
+	if err == nil {
+		t.Fatalf("expected error for whitespace-only UnmappedFieldReason")
+	}
+	if !strings.Contains(err.Error(), "unmappedFieldReason") {
+		t.Fatalf("expected error to name unmappedFieldReason, got: %v", err)
+	}
+
 	cfg.Spec.UnmappedFieldReason = "intentionally leaving legacy fields unclaimed during migration"
 	if err := ValidateStructure(cfg); err != nil {
 		t.Fatalf("unexpected error when reason is provided: %v", err)
@@ -138,6 +147,12 @@ func TestValidateCRDStructure_WarnPolicyRequiresReason(t *testing.T) {
 	if err := ValidateCRDStructure(cfg); err == nil {
 		t.Fatalf("expected error when UnmappedFieldPolicy=Warn without UnmappedFieldReason")
 	}
+
+	cfg.Spec.UnmappedFieldReason = " \t\n"
+	if err := ValidateCRDStructure(cfg); err == nil {
+		t.Fatalf("expected error for whitespace-only UnmappedFieldReason")
+	}
+
 	cfg.Spec.UnmappedFieldReason = "migration window"
 	if err := ValidateCRDStructure(cfg); err != nil {
 		t.Fatalf("unexpected error when reason is provided: %v", err)
