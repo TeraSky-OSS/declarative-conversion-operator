@@ -8,6 +8,7 @@ convctl analyze   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o tab
 convctl test      --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
 convctl diff      --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o json|table]
 convctl diff      --config config.yaml --live [-o json|table]
+convctl convert   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
 ```
 
 ## `convctl validate`
@@ -119,6 +120,37 @@ Plus, at the top level, a hub-version change and any spoke version added or remo
 With `--live`, the cluster is always the *from* side and the local file is the *to* side, so the diff reads as "what applying this file would change". If the cluster has no config of that name yet, the from side becomes an empty rule set over the same spoke versions — every rule in your file shows up as an addition, which is a far more useful answer than refusing to run.
 
 Exit codes are `0` when the two sides are equivalent, `1` when any delta is found, and `2` for usage or load errors — so `convctl diff` drops straight into a CI gate that fails a PR whose config change wasn't intended.
+
+## `convctl convert`
+
+Converts a single object and prints the result. Where `convctl test` round-trips fixtures and grades them, `convert` is the "just show me the output" tool — for eyeballing what a rule actually produces, or for piping a converted object straight into `kubectl apply`.
+
+```console
+convctl convert --xrd xrd.yaml --config xrdconversionconfig.yaml --sample widget-v1.yaml --to v3
+convctl convert --crd crd.yaml --config crdconversionconfig.yaml --sample widget.yaml --to v2 -o json
+```
+
+| Flag | Description |
+|---|---|
+| `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig` YAML file. **Required.** |
+| `-x, --xrd` | Path to an XRD YAML file. Required for an `XRDConversionConfig`; mutually exclusive with `--crd`. |
+| `--crd` | Path to a CRD YAML file. Required for a `CRDConversionConfig`. |
+| `--sample` | Path to a single-document YAML file holding the object to convert. **Required.** A multi-document file is an error, not a silent "convert the first one". |
+| `--to` | Version to convert into. **Required.** |
+| `--from` | Source version. Defaults to the version in the sample's own `apiVersion`. |
+| `-o, --output` | `yaml` (default) or `json`. |
+
+The output object's `apiVersion` is rewritten to `<group>/<to>`, with the group taken from the XRD's or CRD's `spec.group` — the engine itself only ever knows version *names*, so the schema is the only thing that can supply the group. Spoke-to-spoke conversions route through the hub exactly as they do in production, and a config that doesn't validate against the schema is refused before any conversion runs.
+
+```console
+$ convctl convert --xrd xrd.yaml --config config.yaml --sample sample1-v1.yaml --to v2
+apiVersion: example.org/v2
+kind: Foo
+metadata:
+  name: sample1
+spec:
+  storageGB: "100"
+```
 
 ## Pre-upgrade checks: testing against everything that already exists
 

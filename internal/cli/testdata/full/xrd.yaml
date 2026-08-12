@@ -4,6 +4,10 @@ metadata:
   name: xwidgets.example.org
 spec:
   scope: Namespaced
+  group: example.org
+  names:
+    kind: Widget
+    plural: xwidgets
   versions:
     - name: v3
       served: true
