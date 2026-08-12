@@ -61,7 +61,7 @@ Each `ConversionWebhookServer` replica is symmetric and self-sufficient — ther
 | `ConversionWebhookServer` deleted/scaled to 0 while configs still reference it (including as `default`) | Finalizer blocks deletion unless zero configs resolve to it, or the explicit force-delete annotation is present. |
 | A config update makes a previously-lossless conversion lossy | Full re-validation happens before any XRD patch; a regression sets `Invalid` and the old plan keeps running unpatched. |
 | The XRD's schema drifts after a config was `Applied` | Re-validated every reconcile. A clean drift self-heals silently; a failing one goes loudly `Stale` but keeps serving the last known-good plan by default (`driftPolicy: KeepServingStale`). |
-| Two configs target the same XRD | Blocked structurally by a unique field index plus the admission webhook — never a race to resolve at runtime. |
+| Two configs target the same XRD/CRD name | Blocked by admission webhook uniqueness across both XRDConversionConfig and CRDConversionConfig — registry keys are the bare target name, so cross-kind collisions are rejected too. |
 | The cert-manager `Certificate` rotates | The controller watches the Secret directly and refreshes `caBundle` on the XRD — cert-manager's CA injector doesn't support `CompositeResourceDefinition` as an injection target. |
 
 ## Repository layout

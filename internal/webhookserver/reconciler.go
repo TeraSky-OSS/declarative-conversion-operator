@@ -68,11 +68,9 @@ const (
 // controller-runtime's normal backoff-and-retry applies.
 //
 // Note: registry keys are the bare target-resource name, shared between
-// the XRD and CRD paths. A CRDConversionConfig deliberately targeting the
-// native CustomResourceDefinition Crossplane generates for some XRD's
-// composite type (same name, by construction) would collide with that
-// XRD's own registry entry — an already-redundant, self-inflicted
-// configuration this package doesn't attempt to detect or prevent.
+// the XRD and CRD paths. Cross-kind collisions (an XRDConversionConfig and
+// a CRDConversionConfig targeting the same name) are rejected at admission
+// by internal/webhook.validateRegistryKeyAvailable.
 type Reconciler struct {
 	client.Client
 	ServerName string

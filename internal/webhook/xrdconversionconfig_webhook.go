@@ -277,17 +277,5 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 }
 
 func (v *XRDConversionConfigValidator) validateUniqueTarget(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig) error {
-	var list teraskyv1alpha1.XRDConversionConfigList
-	if err := v.Client.List(ctx, &list); err != nil {
-		return fmt.Errorf("listing existing XRDConversionConfigs: %w", err)
-	}
-	for _, other := range list.Items {
-		if other.Name == cfg.Name {
-			continue
-		}
-		if other.Spec.TargetXRD.Name == cfg.Spec.TargetXRD.Name {
-			return fmt.Errorf("XRDConversionConfig %q already targets XRD %q; only one config per XRD is supported", other.Name, cfg.Spec.TargetXRD.Name)
-		}
-	}
-	return nil
+	return validateRegistryKeyAvailable(ctx, v.Client, cfg.Spec.TargetXRD.Name, cfg.Name, "xrd")
 }
