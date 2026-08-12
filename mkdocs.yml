@@ -98,9 +98,9 @@ nav:
   - FAQ: faq.md
   - Limitations: limitations.md
   - Security:
-      - security/pod-security.md
-      - security/metrics.md
-      - security/rbac.md
+      - Pod security: security/pod-security.md
+      - Metrics trust boundary: security/metrics.md
+      - RBAC blast radius: security/rbac.md
   - Roadmap: roadmap.md
 
 extra:

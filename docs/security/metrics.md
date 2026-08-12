@@ -24,12 +24,17 @@ CWS pods except:
 1. **Webhook ports** (`9443`) — left without a `from` selector so the
    apiserver can always reach conversion/admission webhooks.
 2. **Probe port** on the manager (`8081`) — same rationale for kubelet.
-3. **Metrics ports** — optionally restricted via
+3. **Manager metrics** (`8080`) — optionally restricted via
    `networkPolicy.metrics.allowedPeers` (a list of
    [`NetworkPolicyPeer`](https://kubernetes.io/docs/reference/kubernetes-api/policy-resources/network-policy-v1/#NetworkPolicyPeer)
    objects).
+4. **Webhook-server plain-HTTP port** (`8443`) — always admitted without a
+   `from` selector. Probes (`/healthz`, `/readyz`) and metrics share this
+   port, so peer-restricting it would break kubelet health checks on CNIs
+   that enforce NetworkPolicy for node→pod traffic.
 
-Example — only Prometheus in the `monitoring` namespace may scrape:
+Example — only Prometheus in the `monitoring` namespace may scrape **manager**
+metrics:
 
 ```yaml
 networkPolicy:
@@ -44,12 +49,15 @@ networkPolicy:
             app.kubernetes.io/name: prometheus
 ```
 
-With `allowedPeers: []` (the default when NetworkPolicy is on), metrics
-remain reachable from any in-cluster source while non-metrics ports stay
-locked to the webhook/probe rules above.
+With `allowedPeers: []` (the default when NetworkPolicy is on), manager
+metrics remain reachable from any in-cluster source while non-metrics ports
+stay locked to the webhook/probe rules above. CWS `8443` stays open either
+way for the probe reason above.
 
 ## Future hardening
 
+Serving webhook-server probes on a dedicated port (mirroring the manager's
+`8081` / `8080` split) would let NetworkPolicy peer-restrict CWS metrics.
 Authenticating scrapers with `kube-rbac-proxy` or controller-runtime's
-secure-metrics serving is a useful next step for clusters that cannot
+secure-metrics serving is another useful next step for clusters that cannot
 rely on NetworkPolicy alone. File an issue if your environment requires it.

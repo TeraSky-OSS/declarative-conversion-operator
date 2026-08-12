@@ -152,13 +152,14 @@ metrics:
 
 # Opt-in NetworkPolicies for manager + default ConversionWebhookServer pods.
 # Off by default so existing installs see no behavior change. When enabled,
-# non-webhook/non-metrics ingress is denied; see docs/security/metrics.md.
+# non-webhook/non-probe ingress is denied; see docs/security/metrics.md.
 networkPolicy:
   enabled: false
   metrics:
     # List of networking.k8s.io NetworkPolicyPeer objects allowed to scrape
-    # metrics ports. Empty = any source may scrape metrics (webhook ports
-    # remain open to the apiserver either way).
+    # the *manager* metrics port (8080). Empty = any source may scrape.
+    # Does not apply to CWS port 8443 (probes share that port). Webhook
+    # ports remain open to the apiserver either way.
     # Example:
     #   allowedPeers:
     #     - namespaceSelector:

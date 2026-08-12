@@ -63,14 +63,14 @@ spec:
     - ports:
         - protocol: TCP
           port: 9443
-    {{- if .Values.metrics.enabled }}
+    # Health probes (/healthz, /readyz) and metrics share plain-HTTP port
+    # 8443 on the webhook-server. Always admit without a from-selector so
+    # kubelet probes work on CNIs that enforce NetworkPolicy for node→pod
+    # traffic. Peer-restricting this shared port would break probes; see
+    # docs/security/metrics.md. Manager can peer-restrict metrics because
+    # its probe port (8081) is separate from metrics (8080).
     - ports:
         - protocol: TCP
           port: 8443
-      {{- with .Values.networkPolicy.metrics.allowedPeers }}
-      from:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-    {{- end }}
 {{- end }}
 {{- end }}
