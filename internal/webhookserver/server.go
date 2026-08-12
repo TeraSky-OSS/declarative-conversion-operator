@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -127,10 +129,16 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	xrdName := strings.TrimPrefix(r.URL.Path, "/convert/")
 	direction := "unknown"
 
+	ctx, span := Tracer.Start(r.Context(), "ConversionReview",
+		trace.WithAttributes(attribute.String("target", xrdName)))
+	defer span.End()
+	_ = ctx
+
 	defer func() {
 		if rec := recover(); rec != nil {
 			s.writeReview(w, "", nil, fmt.Sprintf("internal error: %v", rec))
 			s.observe(xrdName, direction, "panic", start)
+			span.RecordError(fmt.Errorf("panic: %v", rec))
 		}
 	}()
 
@@ -170,6 +178,12 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		}
 		fromVersion := versionOf(stringField(obj, "apiVersion"))
 		direction = fromVersion + "->" + toVersion
+		_, objSpan := Tracer.Start(ctx, "Convert",
+			trace.WithAttributes(
+				attribute.String("target", xrdName),
+				attribute.String("from_version", fromVersion),
+				attribute.String("to_version", toVersion),
+			))
 		if fromVersion == entry.Router.Hub {
 			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
 		} else if toVersion == entry.Router.Hub {
@@ -178,18 +192,23 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 
 		out, err := entry.Router.Convert(obj, fromVersion, toVersion)
 		if err != nil {
+			objSpan.RecordError(err)
+			objSpan.End()
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf("converting %s -> %s: %v", fromVersion, toVersion, err))
 			s.observe(xrdName, direction, "error", start)
+			span.RecordError(err)
 			if s.Metrics != nil {
 				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "error").Inc()
 			}
 			return
 		}
+		objSpan.End()
 		out["apiVersion"] = review.Request.DesiredAPIVersion
 		b, err := json.Marshal(out)
 		if err != nil {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf("marshaling converted object: %v", err))
 			s.observe(xrdName, direction, "error", start)
+			span.RecordError(err)
 			return
 		}
 		converted = append(converted, runtime.RawExtension{Raw: b})

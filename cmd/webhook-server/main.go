@@ -62,6 +62,8 @@ func main() {
 		certReloadEvery  time.Duration
 		enableXRDSupport bool
 		enableCRDSupport bool
+		otelEndpoint     string
+		otelSampleRatio  float64
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -70,6 +72,8 @@ func main() {
 	flag.DurationVar(&certReloadEvery, "cert-reload-interval", 30*time.Second, "How often to re-read the TLS certificate from disk.")
 	flag.BoolVar(&enableXRDSupport, "enable-xrd-support", true, "Serve conversions for XRDConversionConfig-backed XRDs. Must match the operator's own --enable-xrd-support.")
 	flag.BoolVar(&enableCRDSupport, "enable-crd-support", true, "Serve conversions for CRDConversionConfig-backed native CRDs. Must match the operator's own --enable-crd-support.")
+	flag.StringVar(&otelEndpoint, "otel-exporter-otlp-endpoint", "", "Optional OTLP/gRPC endpoint for conversion-path tracing (empty = tracing disabled).")
+	flag.Float64Var(&otelSampleRatio, "otel-trace-sample-ratio", 0.1, "Trace sampling ratio when --otel-exporter-otlp-endpoint is set (0.0–1.0).")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -82,6 +86,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--webhook-server-name is required")
 		os.Exit(1)
 	}
+
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	shutdownTracing, err := webhookserver.InitTracing(rootCtx, otelEndpoint, otelSampleRatio)
+	if err != nil {
+		logger.Error(err, "unable to initialize OpenTelemetry tracing")
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	// This manager exists purely to run the registry reconciler's
 	// informers/cache — it serves no admission webhooks and no default
@@ -118,8 +132,7 @@ func main() {
 
 	server := &webhookserver.Server{Registry: registry, Metrics: metrics}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	ctx := rootCtx
 
 	mgrErrCh := make(chan error, 1)
 	go func() { mgrErrCh <- mgr.Start(ctx) }()
