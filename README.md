@@ -1,5 +1,11 @@
 # declarative-conversion-operator
 
+> **Canonical name.** The product, Helm chart, Go module, and GitHub repository
+> are all **`declarative-conversion-operator`**
+> (`github.com/terasky-oss/declarative-conversion-operator`). Older checkouts or
+> local directories may still be named `xrd-conversion-operator` — that is the
+> same project; prefer the declarative name in docs, scripts, and new clones.
+
 > [!WARNING]
 > **Alpha, under active development.** APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome.
 
@@ -134,6 +140,8 @@ This is the tool to run before applying a new or changed `XRDConversionConfig`: 
 `convctl completion [bash|zsh|fish|powershell]` (built into Cobra) prints a completion script for your shell — e.g. `source <(convctl completion bash)`, or see `convctl completion --help` for how to install it permanently.
 
 ## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop. Short version:
 
 ```console
 make generate manifests   # regenerate deepcopy code and CRD/RBAC YAML from kubebuilder markers
