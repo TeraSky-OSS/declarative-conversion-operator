@@ -34,6 +34,37 @@ func TestConversionWebhookServerValidator_CheckDefault_NoConflictWhenNotDefault(
 	}
 }
 
+func TestConversionWebhookServerValidator_ExtraArgs_RejectsManagedFlag(t *testing.T) {
+	c := newFakeClient().Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			ExtraArgs: []string{"--webhook-server-name=evil"},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), server); err == nil {
+		t.Fatal("expected ExtraArgs naming a managed flag to be rejected")
+	}
+	if _, err := v.ValidateUpdate(context.Background(), server, server); err == nil {
+		t.Fatal("expected ExtraArgs naming a managed flag to be rejected on update")
+	}
+}
+
+func TestConversionWebhookServerValidator_ExtraArgs_AllowsOptional(t *testing.T) {
+	c := newFakeClient().Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			ExtraArgs: []string{"--cert-reload-interval=1m", "--zap-devel", "true"},
+		},
+	}
+	if _, err := v.ValidateCreate(context.Background(), server); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestConversionWebhookServerValidator_CheckDefault_FirstDefaultAllowed(t *testing.T) {
 	c := newFakeClient().Build()
 	v := &ConversionWebhookServerValidator{Client: c}

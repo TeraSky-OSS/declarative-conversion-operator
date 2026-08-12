@@ -98,6 +98,8 @@ certManager:
 # reconciles that CR into the real child resources, so templating them here
 # too would fight the controller's reconciliation loop. Create additional
 # instances directly as ConversionWebhookServer CRs for scale-out/tenancy.
+# Pod-level knobs that aren't listed below (notably spec.extraArgs) are set
+# on the ConversionWebhookServer CR itself — see docs/configuration/conversionwebhookserver.md.
 conversionWebhookServer:
   create: true
   name: default
@@ -126,7 +128,6 @@ conversionWebhookServer:
     type: ClusterIP
     port: 443
     annotations: {}
-  extraArgs: []
   nodeSelector: {}
   tolerations: []
   affinity: {}

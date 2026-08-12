@@ -2,7 +2,7 @@
 
 A `ConversionWebhookServer` is a deployable, independently scalable instance of the shared conversion webhook runtime — the thing that actually receives `ConversionReview` requests from the apiserver and converts objects. The Helm chart creates exactly one, named `default` and marked `spec.default: true`; create more directly as CRs for scale-out or tenant isolation.
 
-It's cluster-scoped, but its owned resources (Deployment, Service, Certificate, HPA, PDB) live in a real namespace given by `spec.namespace` (defaulting to the operator's own install namespace).
+It's cluster-scoped, but its owned resources (Deployment, Service, Certificate, HPA, PDB) live in a real namespace given by `spec.namespace` (defaulting to the operator's own install namespace). The Deployment itself is built by the operator from this CR — not from Helm templates — so pod args and similar knobs live here (for example `spec.extraArgs`), not under Helm `conversionWebhookServer.*`.
 
 ## Spec
 
@@ -14,6 +14,8 @@ metadata:
 spec:
   default: true
   replicas: 2
+  extraArgs:
+    - --cert-reload-interval=1m
   certificate:
     issuerRef:
       name: declarative-conversion-operator-selfsigned-issuer
@@ -30,6 +32,7 @@ spec:
 | `autoscaling.{minReplicas,maxReplicas,targetCPUUtilizationPercentage}` | Creates a `HorizontalPodAutoscaler` for this instance instead of a fixed count. |
 | `image.{repository,tag,pullPolicy}` | Overrides the webhook-server image for this instance. Omit to use the operator's own default (set via Helm `image.webhookServer.*` / a manager flag). |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `serviceAccountName` | Standard Kubernetes pod-scheduling knobs, applied to this instance's Deployment. |
+| `extraArgs` | Additional container arguments appended after operator-managed flags (`--webhook-server-name`, `--tls-cert-dir`, bind addresses, feature toggles). For optional webhook-server flags (e.g. `--cert-reload-interval`, zap options). Admission and reconcile reject ExtraArgs that name those managed flags. |
 | `certificate.issuerRef` | The cert-manager `Issuer`/`ClusterIssuer` for this instance's webhook TLS certificate. `certificate.dnsNames`, `.duration`, `.renewBefore` are also available. |
 | `service.{type,port,annotations}` | The `Service` fronting this instance's pods. |
 | `podDisruptionBudget.{minAvailable,maxUnavailable}` | Creates a `PodDisruptionBudget` for this instance. |

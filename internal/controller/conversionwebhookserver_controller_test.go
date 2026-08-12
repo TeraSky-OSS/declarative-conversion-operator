@@ -51,6 +51,82 @@ func getCWS(t *testing.T, r *ConversionWebhookServerReconciler, name string) *te
 	return &s
 }
 
+func TestCWSReconcile_ExtraArgs_AppendedToDeployment(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+			ExtraArgs: []string{"--cert-reload-interval=1m", "--zap-devel=true"},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{
+		Client:           c,
+		Scheme:           newScheme(),
+		DefaultNamespace: "operator-ns",
+		DefaultImage:     "test/image:v1",
+		EnableXRDSupport: true,
+		EnableCRDSupport: false,
+	}
+
+	if _, err := reconcileCWS(t, r, "srv"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var dep appsv1.Deployment
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv-webhook-server", Namespace: "operator-ns"}, &dep); err != nil {
+		t.Fatalf("expected a Deployment to be created: %v", err)
+	}
+	if len(dep.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(dep.Spec.Template.Spec.Containers))
+	}
+	got := dep.Spec.Template.Spec.Containers[0].Args
+	wantPrefix := []string{
+		"--webhook-server-name=srv",
+		"--tls-cert-dir=/tls",
+		"--conversion-bind-address=:9443",
+		"--metrics-bind-address=:8443",
+		"--enable-xrd-support=true",
+		"--enable-crd-support=false",
+	}
+	want := append(append([]string{}, wantPrefix...), "--cert-reload-interval=1m", "--zap-devel=true")
+	if len(got) != len(want) {
+		t.Fatalf("args length: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("args[%d]=%q, want %q (full got=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestCWSReconcile_ExtraArgs_RejectsManagedFlag(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+			ExtraArgs: []string{"--tls-cert-dir", "/evil"},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{
+		Client:           c,
+		Scheme:           newScheme(),
+		DefaultNamespace: "operator-ns",
+		DefaultImage:     "test/image:v1",
+	}
+
+	if _, err := reconcileCWS(t, r, "srv"); err == nil {
+		t.Fatal("expected reconcile to fail when ExtraArgs override a managed flag")
+	}
+}
+
 func TestCWSReconcile_HappyPath_CreatesChildResources(t *testing.T) {
 	server := &teraskyv1alpha1.ConversionWebhookServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "srv"},

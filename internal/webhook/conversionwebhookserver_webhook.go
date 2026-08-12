@@ -43,10 +43,16 @@ type ConversionWebhookServerValidator struct {
 var _ admission.Validator[*teraskyv1alpha1.ConversionWebhookServer] = &ConversionWebhookServerValidator{}
 
 func (v *ConversionWebhookServerValidator) ValidateCreate(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer) (admission.Warnings, error) {
+	if err := teraskyv1alpha1.ValidateWebhookServerExtraArgs(server.Spec.ExtraArgs); err != nil {
+		return nil, err
+	}
 	return nil, v.checkDefault(ctx, server)
 }
 
 func (v *ConversionWebhookServerValidator) ValidateUpdate(ctx context.Context, _, newServer *teraskyv1alpha1.ConversionWebhookServer) (admission.Warnings, error) {
+	if err := teraskyv1alpha1.ValidateWebhookServerExtraArgs(newServer.Spec.ExtraArgs); err != nil {
+		return nil, err
+	}
 	return nil, v.checkDefault(ctx, newServer)
 }
 

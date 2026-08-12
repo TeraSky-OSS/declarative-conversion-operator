@@ -327,17 +327,27 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	// When Autoscaling is set, replicas is left nil so the HPA owns it and
 	// this controller never fights it on every reconcile.
 
+	// Operator-managed flags first so identity/TLS/bind/feature wiring is
+	// always present; ExtraArgs are appended for optional flags only.
+	// Reject managed-flag overrides here too so a bypassed admission webhook
+	// cannot still rewrite identity/TLS/bind/feature args on the Deployment.
+	if err := teraskyv1alpha1.ValidateWebhookServerExtraArgs(server.Spec.ExtraArgs); err != nil {
+		return err
+	}
+	args := []string{
+		fmt.Sprintf("--webhook-server-name=%s", server.Name),
+		"--tls-cert-dir=/tls",
+		fmt.Sprintf("--conversion-bind-address=:%d", webhookServerConversionPort),
+		fmt.Sprintf("--metrics-bind-address=:%d", webhookServerMetricsPort),
+		fmt.Sprintf("--enable-xrd-support=%t", r.EnableXRDSupport),
+		fmt.Sprintf("--enable-crd-support=%t", r.EnableCRDSupport),
+	}
+	args = append(args, server.Spec.ExtraArgs...)
+
 	container := applycorev1.Container().
 		WithName("webhook-server").
 		WithImage(image).
-		WithArgs(
-			fmt.Sprintf("--webhook-server-name=%s", server.Name),
-			"--tls-cert-dir=/tls",
-			fmt.Sprintf("--conversion-bind-address=:%d", webhookServerConversionPort),
-			fmt.Sprintf("--metrics-bind-address=:%d", webhookServerMetricsPort),
-			fmt.Sprintf("--enable-xrd-support=%t", r.EnableXRDSupport),
-			fmt.Sprintf("--enable-crd-support=%t", r.EnableCRDSupport),
-		).
+		WithArgs(args...).
 		WithPorts(
 			applycorev1.ContainerPort().WithName("conversion").WithContainerPort(webhookServerConversionPort),
 			applycorev1.ContainerPort().WithName("metrics").WithContainerPort(webhookServerMetricsPort),
