@@ -127,9 +127,10 @@ type ConversionWebhookServerSpec struct {
 	// ExtraArgs are additional container arguments appended after the
 	// operator-managed flags (--webhook-server-name, --tls-cert-dir,
 	// bind addresses, and feature toggles). Use for optional webhook-server
-	// flags such as --cert-reload-interval or zap logging options. Do not
-	// override operator-managed flags; doing so can break identity, TLS, or
-	// feature wiring for this instance. Webhook-server pods are configured
+	// flags such as --cert-reload-interval or zap logging options.
+	// Admission and reconcile reject ExtraArgs that name those managed
+	// flags (--flag=value or --flag value); overriding them would break
+	// identity, TLS, or feature wiring. Webhook-server pods are configured
 	// via this CR (not Helm conversionWebhookServer.* Deployment keys).
 	// +optional
 	ExtraArgs []string `json:"extraArgs,omitempty"`

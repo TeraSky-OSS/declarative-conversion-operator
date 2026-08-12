@@ -103,6 +103,30 @@ func TestCWSReconcile_ExtraArgs_AppendedToDeployment(t *testing.T) {
 	}
 }
 
+func TestCWSReconcile_ExtraArgs_RejectsManagedFlag(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+			ExtraArgs: []string{"--tls-cert-dir", "/evil"},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{
+		Client:           c,
+		Scheme:           newScheme(),
+		DefaultNamespace: "operator-ns",
+		DefaultImage:     "test/image:v1",
+	}
+
+	if _, err := reconcileCWS(t, r, "srv"); err == nil {
+		t.Fatal("expected reconcile to fail when ExtraArgs override a managed flag")
+	}
+}
+
 func TestCWSReconcile_HappyPath_CreatesChildResources(t *testing.T) {
 	server := &teraskyv1alpha1.ConversionWebhookServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
