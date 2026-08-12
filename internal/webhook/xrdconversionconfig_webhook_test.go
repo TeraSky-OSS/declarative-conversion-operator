@@ -17,6 +17,7 @@ limitations under the License.
 package webhook
 
 import (
+	"strings"
 	"testing"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
@@ -93,5 +94,52 @@ func TestValidateStructure_AcceptsWellFormedConfig(t *testing.T) {
 	}}
 	if err := ValidateStructure(cfg); err != nil {
 		t.Fatalf("unexpected error for a well-formed config: %v", err)
+	}
+}
+
+func TestValidateStructure_WarnPolicyRequiresReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyWarn,
+		Spokes: []teraskyv1alpha1.SpokeVersionRules{{
+			Version: "v1",
+			Rules: []teraskyv1alpha1.ConversionRule{{
+				Strategy:    teraskyv1alpha1.StrategyFieldRename,
+				FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "a", SpokePath: "b"},
+			}},
+		}},
+	}}
+	err := ValidateStructure(cfg)
+	if err == nil {
+		t.Fatalf("expected error when UnmappedFieldPolicy=Warn without UnmappedFieldReason")
+	}
+	if !strings.Contains(err.Error(), "unmappedFieldReason") {
+		t.Fatalf("expected error to name unmappedFieldReason, got: %v", err)
+	}
+
+	cfg.Spec.UnmappedFieldReason = "intentionally leaving legacy fields unclaimed during migration"
+	if err := ValidateStructure(cfg); err != nil {
+		t.Fatalf("unexpected error when reason is provided: %v", err)
+	}
+}
+
+func TestValidateCRDStructure_WarnPolicyRequiresReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.CRDConversionConfig{Spec: teraskyv1alpha1.CRDConversionConfigSpec{
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyWarn,
+		Spokes: []teraskyv1alpha1.SpokeVersionRules{{
+			Version: "v1",
+			Rules: []teraskyv1alpha1.ConversionRule{{
+				Strategy:    teraskyv1alpha1.StrategyFieldRename,
+				FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "a", SpokePath: "b"},
+			}},
+		}},
+	}}
+	if err := ValidateCRDStructure(cfg); err == nil {
+		t.Fatalf("expected error when UnmappedFieldPolicy=Warn without UnmappedFieldReason")
+	}
+	cfg.Spec.UnmappedFieldReason = "migration window"
+	if err := ValidateCRDStructure(cfg); err != nil {
+		t.Fatalf("unexpected error when reason is provided: %v", err)
 	}
 }

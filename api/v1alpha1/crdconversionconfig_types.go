@@ -56,6 +56,10 @@ type CRDConversionConfigSpec struct {
 	// +optional
 	// +kubebuilder:default=Error
 	UnmappedFieldPolicy UnmappedFieldPolicy `json:"unmappedFieldPolicy,omitempty"`
+	// UnmappedFieldReason is a human-readable justification for leaving
+	// one or more hub/spoke fields unclaimed. Required (and enforced by
+	// the admission webhook and convctl validate) when UnmappedFieldPolicy
+	// is Warn; ignored when the policy is Error (the default).
 	// +optional
 	UnmappedFieldReason string `json:"unmappedFieldReason,omitempty"`
 

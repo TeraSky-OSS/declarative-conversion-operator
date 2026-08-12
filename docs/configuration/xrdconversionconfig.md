@@ -36,6 +36,7 @@ spec:
 | `webhookServerRef` | Pins this config to a specific `ConversionWebhookServer` by name. Omit to use whichever instance has `spec.default: true`. |
 | `conversionReviewVersions` | The `ConversionReview` API versions the webhook accepts, passed through to the XRD's `spec.conversion.webhook.conversionReviewVersions`. |
 | `unmappedFieldPolicy` | `Error` (default): any hub or spoke field left unclaimed by a rule and not structurally identical on both sides fails validation — "unknown means assume lossy, never silently pass." `Warn` downgrades this to a warning; requires `unmappedFieldReason`. |
+| `unmappedFieldReason` | Human-readable justification for deliberately leaving fields unclaimed. **Required** when `unmappedFieldPolicy: Warn` — enforced by the admission webhook and `convctl validate`. Ignored when the policy is `Error`. |
 | `driftPolicy` | Governs what happens when the live XRD's schema no longer matches what this config last validated against — see [Drift handling](#drift-handling). |
 
 ## Rules

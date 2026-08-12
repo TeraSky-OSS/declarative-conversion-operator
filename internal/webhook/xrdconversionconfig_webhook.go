@@ -30,6 +30,7 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -129,9 +130,13 @@ func summarizeErrors(report engine.AnalyzeReport) string {
 }
 
 // ValidateStructure catches shape problems the CRD's OpenAPI schema can't
-// express: duplicate spoke versions, a spoke equal to the hub, and
-// strategy/params mismatches (including recursively inside ForEach).
+// express: duplicate spoke versions, a spoke equal to the hub,
+// strategy/params mismatches (including recursively inside ForEach), and
+// UnmappedFieldPolicy=Warn without a justification reason.
 func ValidateStructure(cfg *teraskyv1alpha1.XRDConversionConfig) error {
+	if err := validateUnmappedFieldReason(cfg.Spec.UnmappedFieldPolicy, cfg.Spec.UnmappedFieldReason); err != nil {
+		return err
+	}
 	return validateSpokesStructure(cfg.Spec.HubVersion, cfg.Spec.Spokes)
 }
 
@@ -140,7 +145,21 @@ func ValidateStructure(cfg *teraskyv1alpha1.XRDConversionConfig) error {
 // rules a rule set must satisfy don't depend on whether it's converting an
 // XRD or a native CRD.
 func ValidateCRDStructure(cfg *teraskyv1alpha1.CRDConversionConfig) error {
+	if err := validateUnmappedFieldReason(cfg.Spec.UnmappedFieldPolicy, cfg.Spec.UnmappedFieldReason); err != nil {
+		return err
+	}
 	return validateSpokesStructure(cfg.Spec.HubVersion, cfg.Spec.Spokes)
+}
+
+// validateUnmappedFieldReason enforces the documented contract that
+// UnmappedFieldPolicy=Warn requires a non-empty UnmappedFieldReason.
+// Without this check the reason field is silent dead API surface: adopters
+// can set it (or omit it under Warn) and observe no behavior change.
+func validateUnmappedFieldReason(policy teraskyv1alpha1.UnmappedFieldPolicy, reason string) error {
+	if policy == teraskyv1alpha1.UnmappedFieldPolicyWarn && strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("spec.unmappedFieldReason is required when spec.unmappedFieldPolicy is Warn")
+	}
+	return nil
 }
 
 func validateSpokesStructure(hubVersion string, spokes []teraskyv1alpha1.SpokeVersionRules) error {
