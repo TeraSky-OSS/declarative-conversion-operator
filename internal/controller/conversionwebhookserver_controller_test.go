@@ -127,6 +127,115 @@ func TestCWSReconcile_ExtraArgs_RejectsManagedFlag(t *testing.T) {
 	}
 }
 
+func TestCWSReconcile_ImageDigest_PinsRepository(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+			Image: &teraskyv1alpha1.ImageSpec{
+				Repository: "ghcr.io/example/webhook-server",
+				Tag:        "v9.9.9", // digest must win over tag
+				Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns", DefaultImage: "test/image:v1"}
+
+	if _, err := reconcileCWS(t, r, "srv"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var dep appsv1.Deployment
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv-webhook-server", Namespace: "operator-ns"}, &dep); err != nil {
+		t.Fatalf("expected a Deployment: %v", err)
+	}
+	got := dep.Spec.Template.Spec.Containers[0].Image
+	want := "ghcr.io/example/webhook-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if got != want {
+		t.Fatalf("image=%q, want %q", got, want)
+	}
+}
+
+func TestCWSReconcile_SecurityContext_PSSRestricted(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns", DefaultImage: "test/image:v1"}
+
+	if _, err := reconcileCWS(t, r, "srv"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var dep appsv1.Deployment
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv-webhook-server", Namespace: "operator-ns"}, &dep); err != nil {
+		t.Fatalf("expected a Deployment: %v", err)
+	}
+	podSC := dep.Spec.Template.Spec.SecurityContext
+	if podSC == nil || podSC.RunAsNonRoot == nil || !*podSC.RunAsNonRoot {
+		t.Fatalf("expected pod runAsNonRoot=true, got %#v", podSC)
+	}
+	if podSC.RunAsUser != nil {
+		t.Fatalf("expected pod runAsUser unset (honor image USER), got %#v", podSC.RunAsUser)
+	}
+	if podSC.SeccompProfile == nil || podSC.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("expected pod seccomp RuntimeDefault, got %#v", podSC.SeccompProfile)
+	}
+
+	if len(dep.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(dep.Spec.Template.Spec.Containers))
+	}
+	ctr := dep.Spec.Template.Spec.Containers[0]
+	ctrSC := ctr.SecurityContext
+	if ctrSC == nil {
+		t.Fatal("expected container securityContext")
+	}
+	if ctrSC.RunAsNonRoot == nil || !*ctrSC.RunAsNonRoot {
+		t.Fatalf("expected container runAsNonRoot=true, got %#v", ctrSC.RunAsNonRoot)
+	}
+	if ctrSC.RunAsUser != nil {
+		t.Fatalf("expected container runAsUser unset (honor image USER), got %#v", ctrSC.RunAsUser)
+	}
+	if ctrSC.AllowPrivilegeEscalation == nil || *ctrSC.AllowPrivilegeEscalation {
+		t.Fatalf("expected allowPrivilegeEscalation=false")
+	}
+	if ctrSC.ReadOnlyRootFilesystem == nil || !*ctrSC.ReadOnlyRootFilesystem {
+		t.Fatalf("expected readOnlyRootFilesystem=true")
+	}
+	if ctrSC.Capabilities == nil || len(ctrSC.Capabilities.Drop) != 1 || ctrSC.Capabilities.Drop[0] != "ALL" {
+		t.Fatalf("expected capabilities.drop=[ALL], got %#v", ctrSC.Capabilities)
+	}
+
+	hasTmp := false
+	for _, m := range ctr.VolumeMounts {
+		if m.Name == "tmp" && m.MountPath == "/tmp" {
+			hasTmp = true
+		}
+	}
+	if !hasTmp {
+		t.Fatal("expected /tmp emptyDir volumeMount for read-only root FS")
+	}
+	hasTmpVol := false
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == "tmp" && v.EmptyDir != nil {
+			hasTmpVol = true
+		}
+	}
+	if !hasTmpVol {
+		t.Fatal("expected tmp emptyDir volume")
+	}
+}
+
 func TestCWSReconcile_HappyPath_CreatesChildResources(t *testing.T) {
 	server := &teraskyv1alpha1.ConversionWebhookServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "srv"},

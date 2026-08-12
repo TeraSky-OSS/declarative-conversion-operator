@@ -21,11 +21,16 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # PSS restricted — kept identical to ConversionWebhookServer pods
+      # (see docs/security/pod-security.md). runAsUser unset so custom
+      # image USER is honored; runAsNonRoot rejects root.
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: manager
-          image: "{{ .Values.image.registry }}/{{ .Values.image.manager.repository }}:{{ .Values.image.manager.tag | default .Chart.AppVersion }}"
+          image: "{{ include "declarative-conversion-operator.managerImage" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --health-probe-bind-address=:8081
@@ -33,7 +38,7 @@ spec:
             {{- if .Values.manager.leaderElection.enabled }}
             - --leader-elect
             {{- end }}
-            - --default-webhook-server-image={{ .Values.image.registry }}/{{ .Values.image.webhookServer.repository }}:{{ .Values.image.webhookServer.tag | default .Chart.AppVersion }}
+            - --default-webhook-server-image={{ include "declarative-conversion-operator.webhookServerImage" . }}
             - --enable-xrd-support={{ .Values.features.crossplane.enabled }}
             - --enable-crd-support={{ .Values.features.nativeCRD.enabled }}
             {{- with .Values.manager.extraArgs }}
@@ -64,22 +69,30 @@ spec:
             periodSeconds: 10
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           resources:
             {{- toYaml .Values.manager.resources | nindent 12 }}
-          {{- if .Values.admissionWebhook.enabled }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.admissionWebhook.enabled }}
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
-          {{- end }}
-      {{- if .Values.admissionWebhook.enabled }}
+            {{- end }}
       volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.admissionWebhook.enabled }}
         - name: webhook-certs
           secret:
             secretName: {{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
-      {{- end }}
+        {{- end }}
       {{- with .Values.manager.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

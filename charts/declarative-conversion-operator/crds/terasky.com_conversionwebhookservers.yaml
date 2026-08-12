@@ -1047,6 +1047,12 @@ spec:
                   instance's pods. Leave unset to use the operator's own default (set via
                   Helm values / manager flags).
                 properties:
+                  digest:
+                    description: |-
+                      Digest, when set, pins the image by content digest and takes
+                      precedence over Tag (rendered as repository@digest). Prefer a full
+                      digest reference such as "sha256:...".
+                    type: string
                   pullPolicy:
                     description: PullPolicy describes a policy for if/when to pull
                       a container image

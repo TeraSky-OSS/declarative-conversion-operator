@@ -30,6 +30,11 @@ type ImageSpec struct {
 	Repository string `json:"repository,omitempty"`
 	// +optional
 	Tag string `json:"tag,omitempty"`
+	// Digest, when set, pins the image by content digest and takes
+	// precedence over Tag (rendered as repository@digest). Prefer a full
+	// digest reference such as "sha256:...".
+	// +optional
+	Digest string `json:"digest,omitempty"`
 	// +optional
 	PullPolicy corev1.PullPolicy `json:"pullPolicy,omitempty"`
 }

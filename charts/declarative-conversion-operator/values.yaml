@@ -7,9 +7,13 @@ image:
   manager:
     repository: terasky-oss/declarative-conversion-operator
     tag: ""
+    # Optional content digest (e.g. sha256:...). When set, pins the image by
+    # digest instead of tag (repository@digest).
+    digest: ""
   webhookServer:
     repository: terasky-oss/declarative-conversion-webhook-server
     tag: ""
+    digest: ""
   pullPolicy: IfNotPresent
 
 # CRDs are installed from the crds/ directory (Helm's built-in convention):
@@ -145,3 +149,23 @@ metrics:
   prometheusRule:
     enabled: false
     labels: {}
+
+# Opt-in NetworkPolicies for manager + default ConversionWebhookServer pods.
+# Off by default so existing installs see no behavior change. When enabled,
+# non-webhook/non-probe ingress is denied; see docs/security/metrics.md.
+networkPolicy:
+  enabled: false
+  metrics:
+    # List of networking.k8s.io NetworkPolicyPeer objects allowed to scrape
+    # the *manager* metrics port (8080). Empty = any source may scrape.
+    # Does not apply to CWS port 8443 (probes share that port). Webhook
+    # ports remain open to the apiserver either way.
+    # Example:
+    #   allowedPeers:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: monitoring
+    #       podSelector:
+    #         matchLabels:
+    #           app.kubernetes.io/name: prometheus
+    allowedPeers: []

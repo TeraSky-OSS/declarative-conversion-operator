@@ -97,6 +97,10 @@ nav:
       - List Join / Split: strategies/list-join-split.md
   - FAQ: faq.md
   - Limitations: limitations.md
+  - Security:
+      - Pod security: security/pod-security.md
+      - Metrics trust boundary: security/metrics.md
+      - RBAC blast radius: security/rbac.md
   - Roadmap: roadmap.md
 
 extra:

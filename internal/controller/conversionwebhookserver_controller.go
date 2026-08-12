@@ -305,8 +305,13 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	}
 	var pullPolicy corev1.PullPolicy
 	if server.Spec.Image != nil {
-		if server.Spec.Image.Repository != "" && server.Spec.Image.Tag != "" {
-			image = fmt.Sprintf("%s:%s", server.Spec.Image.Repository, server.Spec.Image.Tag)
+		if server.Spec.Image.Repository != "" {
+			switch {
+			case server.Spec.Image.Digest != "":
+				image = server.Spec.Image.Repository + "@" + server.Spec.Image.Digest
+			case server.Spec.Image.Tag != "":
+				image = fmt.Sprintf("%s:%s", server.Spec.Image.Repository, server.Spec.Image.Tag)
+			}
 		}
 		pullPolicy = server.Spec.Image.PullPolicy
 	}
@@ -344,15 +349,34 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	}
 	args = append(args, server.Spec.ExtraArgs...)
 
+	// PSS restricted: non-root, no privilege escalation, drop all caps,
+	// read-only root FS, RuntimeDefault seccomp. runAsUser/runAsGroup are
+	// intentionally unset so a custom image's non-root USER is honored;
+	// runAsNonRoot still rejects root images. /tmp is an emptyDir because
+	// the root FS is read-only.
+	containerSec := applycorev1.SecurityContext().
+		WithRunAsNonRoot(true).
+		WithAllowPrivilegeEscalation(false).
+		WithReadOnlyRootFilesystem(true).
+		WithCapabilities(applycorev1.Capabilities().WithDrop(corev1.Capability("ALL"))).
+		WithSeccompProfile(applycorev1.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))
+	podSec := applycorev1.PodSecurityContext().
+		WithRunAsNonRoot(true).
+		WithSeccompProfile(applycorev1.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))
+
 	container := applycorev1.Container().
 		WithName("webhook-server").
 		WithImage(image).
 		WithArgs(args...).
+		WithSecurityContext(containerSec).
 		WithPorts(
 			applycorev1.ContainerPort().WithName("conversion").WithContainerPort(webhookServerConversionPort),
 			applycorev1.ContainerPort().WithName("metrics").WithContainerPort(webhookServerMetricsPort),
 		).
-		WithVolumeMounts(applycorev1.VolumeMount().WithName("tls").WithMountPath("/tls").WithReadOnly(true)).
+		WithVolumeMounts(
+			applycorev1.VolumeMount().WithName("tls").WithMountPath("/tls").WithReadOnly(true),
+			applycorev1.VolumeMount().WithName("tmp").WithMountPath("/tmp"),
+		).
 		WithReadinessProbe(applycorev1.Probe().
 			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/readyz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
 			WithPeriodSeconds(5).WithFailureThreshold(3)).
@@ -368,9 +392,13 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 
 	podSpec := applycorev1.PodSpec().
 		WithServiceAccountName(saName).
+		WithSecurityContext(podSec).
 		WithContainers(container).
-		WithVolumes(applycorev1.Volume().WithName("tls").
-			WithSecret(applycorev1.SecretVolumeSource().WithSecretName(cwsCertificateSecretName(server.Name))))
+		WithVolumes(
+			applycorev1.Volume().WithName("tls").
+				WithSecret(applycorev1.SecretVolumeSource().WithSecretName(cwsCertificateSecretName(server.Name))),
+			applycorev1.Volume().WithName("tmp").WithEmptyDir(applycorev1.EmptyDirVolumeSource()),
+		)
 	if len(server.Spec.NodeSelector) > 0 {
 		podSpec = podSpec.WithNodeSelector(server.Spec.NodeSelector)
 	}
