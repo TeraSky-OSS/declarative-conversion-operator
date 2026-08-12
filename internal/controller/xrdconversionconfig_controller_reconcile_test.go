@@ -274,6 +274,26 @@ func TestXRDReconcile_Drift_KeepServingStale(t *testing.T) {
 	if got.Status.Phase != teraskyv1alpha1.PhaseStale {
 		t.Fatalf("expected phase Stale under KeepServingStale drift, got %q", got.Status.Phase)
 	}
+	if !meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.ConditionStale) {
+		t.Fatalf("expected condition Stale=True alongside phase Stale, got %+v", got.Status.Conditions)
+	}
+
+	// Resolve the drift: restore a valid hub path and re-reconcile.
+	live = getXRDConfig(t, r, "cfg")
+	live.Spec.Spokes[0].Rules[0].FieldRename.HubPath = "spec.size"
+	if err := r.Update(context.Background(), live); err != nil {
+		t.Fatalf("restoring valid rule: %v", err)
+	}
+	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error after resolving drift: %v", err)
+	}
+	got = getXRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseApplied {
+		t.Fatalf("expected phase Applied after resolving drift, got %q (message: %s)", got.Status.Phase, got.Status.Message)
+	}
+	if cond := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionStale); cond != nil {
+		t.Fatalf("expected ConditionStale to be cleared after drift resolves, got %+v", cond)
+	}
 }
 
 func TestXRDReconcile_Delete_BlockedByMultipleServedVersions(t *testing.T) {
