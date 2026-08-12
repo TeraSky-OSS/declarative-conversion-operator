@@ -100,6 +100,7 @@ nav:
   - Security:
       - security/pod-security.md
       - security/metrics.md
+      - security/rbac.md
   - Roadmap: roadmap.md
 
 extra:
