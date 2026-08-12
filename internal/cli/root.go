@@ -51,7 +51,7 @@ cluster. Every command works against either resource type:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newVersionCmd())
+	root.AddCommand(newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(), newVersionCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -245,6 +245,64 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	cmd.MarkFlagsOneRequired("samples", "live")
 	cmd.MarkFlagsMutuallyExclusive("samples", "live")
+	return cmd
+}
+
+func newDiffCmd() *cobra.Command {
+	var (
+		configPaths                                       []string
+		xrdPath, crdPath, output, kubeconfig, kubeContext string
+		live                                              bool
+	)
+	cmd := &cobra.Command{
+		Use:   "diff",
+		Short: "Compare coverage, rule claims, and lossiness between two conversion configs",
+		Long: `Analyze two conversion configs against the same schema and report what changed
+between them: which hub/spoke fields go from covered to uncovered (or back),
+which rules claim which paths, which directions flip between lossless and lossy,
+and which errors and warnings appear or disappear.
+
+Pass --config twice to compare two local files. Pass it once with --live to
+compare against the cluster instead: the live XRD/CRD supplies the schema, and
+the ConversionConfig of the same name supplies the other side. If the cluster
+has no such config yet, the comparison runs against an empty rule set for the
+same spokes — "what would applying this claim?" rather than an error.
+
+Exits 0 when the two sides are equivalent and 1 when any delta is found, so it
+drops straight into a CI gate.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			}
+			out, err := RunDiff(DiffOptions{
+				ConfigPaths: configPaths, XRDPath: xrdPath, CRDPath: crdPath,
+				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
+			})
+			if err != nil {
+				return err
+			}
+			if output == "table" {
+				out.WriteTable(cmd.OutOrStdout())
+			} else if err := writeJSON(cmd, out); err != nil {
+				return err
+			}
+			if out.HasDeltas {
+				exitCode = ExitTestFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVarP(&configPaths, "config", "c", nil, "Path to a conversion config YAML file; pass twice to compare two files, or once with --live")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for two-file mode against XRDConversionConfigs)")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for two-file mode against CRDConversionConfigs)")
+	cmd.Flags().BoolVar(&live, "live", false, "Compare the single --config against the cluster's live schema and applied config")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (default: $KUBECONFIG, then ~/.kube/config); only used with --live")
+	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
+	cmd.Flags().StringVarP(&output, "output", "o", "json", "Output format: json|table")
+	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	return cmd
 }
 

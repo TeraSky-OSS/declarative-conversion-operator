@@ -6,6 +6,8 @@
 convctl validate --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
 convctl analyze   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl test      --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
+convctl diff      --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o json|table]
+convctl diff      --config config.yaml --live [-o json|table]
 ```
 
 ## `convctl validate`
@@ -84,6 +86,39 @@ convctl test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./sample
 | `0` | Every conversion path passed, or any loss found was already acknowledged (`acknowledgeLossy: true`). |
 | `1` | An unacknowledged loss or failure was found, at or above the `--fail-on` threshold. |
 | `2` | A tool/usage error (bad flags, file not found, etc.) — deliberately distinct from a test-result failure, so CI can tell "the tool broke" from "the config is bad." |
+
+## `convctl diff`
+
+Analyzes two conversion configs against the same schema and reports what changed between them — the review question "what does this config edit actually do?", answered in terms of coverage and lossiness rather than YAML lines.
+
+```console
+convctl diff --xrd xrd.yaml --config current.yaml --config proposed.yaml
+convctl diff --crd crd.yaml --config current.yaml --config proposed.yaml -o table
+convctl diff --config proposed.yaml --live
+```
+
+| Flag | Description |
+|---|---|
+| `-c, --config` | Path to a conversion config YAML file. **Required.** Pass it exactly twice to compare two files, or exactly once together with `--live`. Both files must be the same kind. |
+| `-x, --xrd` | Path to an XRD YAML file. Required in two-file mode for `XRDConversionConfig`s; mutually exclusive with `--crd`. Ignored with `--live`, which reads the schema from the cluster. |
+| `--crd` | Path to a CRD YAML file. Required in two-file mode for `CRDConversionConfig`s. |
+| `--live` | Compare the single `--config` against the cluster: the live XRD/CRD supplies the schema, and the `XRDConversionConfig`/`CRDConversionConfig` of the same name supplies the other side. |
+| `--kubeconfig` | Path to a kubeconfig file. Only used with `--live`. Resolves exactly like `kubectl`. |
+| `--context` | Kubeconfig context to use. Only used with `--live`. |
+| `-o, --output` | `json` (default) or `table`. |
+
+The report is per-spoke, listing:
+
+- hub and spoke fields that became uncovered, and ones that became covered
+- rule claims added and removed, identified by strategy plus the hub/spoke paths they claim (so reordering rules is correctly *not* a difference)
+- lossless flags that flipped, per direction
+- error and warning messages that appeared or disappeared
+
+Plus, at the top level, a hub-version change and any spoke version added or removed outright.
+
+With `--live`, the cluster is always the *from* side and the local file is the *to* side, so the diff reads as "what applying this file would change". If the cluster has no config of that name yet, the from side becomes an empty rule set over the same spoke versions — every rule in your file shows up as an addition, which is a far more useful answer than refusing to run.
+
+Exit codes are `0` when the two sides are equivalent, `1` when any delta is found, and `2` for usage or load errors — so `convctl diff` drops straight into a CI gate that fails a PR whose config change wasn't intended.
 
 ## Pre-upgrade checks: testing against everything that already exists
 

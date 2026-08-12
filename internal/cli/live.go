@@ -22,11 +22,16 @@ import (
 	"strings"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
+
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // KubeOptions configures how `test --live` reaches a cluster. It follows
@@ -137,6 +142,78 @@ func fetchLiveSamplesByGVR(ctx context.Context, dyn dynamic.Interface, gvr schem
 		}
 	}
 	return samples, nil
+}
+
+// The GroupVersionResources `convctl diff --live` addresses. Both target
+// schemas are cluster-scoped, and so are XRDConversionConfig and
+// CRDConversionConfig, so every lookup below is by name alone.
+var (
+	xrdGVR = xrdadapter.GroupVersionKind.GroupVersion().WithResource("compositeresourcedefinitions")
+	crdGVR = schema.GroupVersionResource{Group: extv1.GroupName, Version: "v1", Resource: "customresourcedefinitions"}
+
+	xrdConversionConfigGVR = teraskyv1alpha1.GroupVersion.WithResource("xrdconversionconfigs")
+	crdConversionConfigGVR = teraskyv1alpha1.GroupVersion.WithResource("crdconversionconfigs")
+)
+
+// FetchLiveXRD reads the target XRD straight from the cluster, so a diff
+// against live state uses the schema the cluster actually has rather than
+// whatever local copy happens to be lying around.
+func FetchLiveXRD(ctx context.Context, dyn dynamic.Interface, name string) (*unstructured.Unstructured, error) {
+	obj, err := dyn.Resource(xrdGVR).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting XRD %q: %w", name, err)
+	}
+	return obj, nil
+}
+
+// FetchLiveCRD is FetchLiveXRD's sibling for a native CRD, decoded into the
+// typed apiextensions.k8s.io/v1 shape pkg/crdadapter consumes.
+func FetchLiveCRD(ctx context.Context, dyn dynamic.Interface, name string) (*extv1.CustomResourceDefinition, error) {
+	obj, err := dyn.Resource(crdGVR).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting CRD %q: %w", name, err)
+	}
+	var crd extv1.CustomResourceDefinition
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &crd); err != nil {
+		return nil, fmt.Errorf("decoding CRD %q: %w", name, err)
+	}
+	return &crd, nil
+}
+
+// FetchLiveXRDConversionConfig reads the XRDConversionConfig currently
+// applied under name. A missing config is not an error — "nothing is
+// configured yet" is exactly the state a diff is most often run against —
+// so it returns (nil, nil) and lets the caller decide what to compare with.
+func FetchLiveXRDConversionConfig(ctx context.Context, dyn dynamic.Interface, name string) (*teraskyv1alpha1.XRDConversionConfig, error) {
+	obj, err := dyn.Resource(xrdConversionConfigGVR).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting XRDConversionConfig %q: %w", name, err)
+	}
+	var cfg teraskyv1alpha1.XRDConversionConfig
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &cfg); err != nil {
+		return nil, fmt.Errorf("decoding XRDConversionConfig %q: %w", name, err)
+	}
+	return &cfg, nil
+}
+
+// FetchLiveCRDConversionConfig is FetchLiveXRDConversionConfig's sibling
+// for CRDConversionConfig, with the same "missing is not an error" contract.
+func FetchLiveCRDConversionConfig(ctx context.Context, dyn dynamic.Interface, name string) (*teraskyv1alpha1.CRDConversionConfig, error) {
+	obj, err := dyn.Resource(crdConversionConfigGVR).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting CRDConversionConfig %q: %w", name, err)
+	}
+	var cfg teraskyv1alpha1.CRDConversionConfig
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &cfg); err != nil {
+		return nil, fmt.Errorf("decoding CRDConversionConfig %q: %w", name, err)
+	}
+	return &cfg, nil
 }
 
 func objectLabel(obj *unstructured.Unstructured) string {
