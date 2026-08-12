@@ -57,13 +57,54 @@ Each `ConversionWebhookServer` replica is symmetric and self-sufficient — ther
 
 | Scenario | Mitigation |
 |---|---|
-| Config deleted while the XRD still has >1 served version | Finalizer blocks deletion unless ≤1 served version remains, or the explicit unsafe-delete annotation is present. |
+| Config deleted while the XRD still has >1 served version | Finalizer blocks deletion unless ≤1 served version remains, or the explicit unsafe-delete annotation is present. See [Config delete race window](#config-delete-race-window) for the precise ordering and residual windows. |
 | `ConversionWebhookServer` deleted/scaled to 0 while configs still reference it (including as `default`) | Finalizer blocks deletion unless zero configs resolve to it, or the explicit force-delete annotation is present. |
 | A config update makes a previously-lossless conversion lossy | Full re-validation happens before any XRD patch; a regression sets `Invalid` and the old plan keeps running unpatched. |
 | The XRD's schema drifts after a config was `Applied` | Re-validated every reconcile. A clean drift self-heals silently; a failing one goes loudly `Stale` but keeps serving the last known-good plan by default (`driftPolicy: KeepServingStale`). |
 | Two configs target the same XRD/CRD name | Blocked by admission webhook uniqueness across both XRDConversionConfig and CRDConversionConfig — registry keys are the bare target name, so cross-kind collisions are rejected too. |
 | `ConversionWebhookServer` change enqueues many configs | Only configs currently assigned to that server are enqueued, paced at 50 QPS (`internal/enqueue.CWSConfigEnqueueQPS`) so a 200-config fan-out spreads over ~4s instead of an unbounded workqueue burst. |
 | The cert-manager `Certificate` rotates | The controller watches the Secret directly and refreshes `caBundle` on the XRD — cert-manager's CA injector doesn't support `CompositeResourceDefinition` as an injection target. |
+
+## Config delete race window
+
+Both `XRDConversionConfig` and `CRDConversionConfig` use a finalizer
+(`conversion.terasky.com/safe-revert` / `.../safe-revert-crd`) so deletion
+is not instantaneous. The delete reconcile does the following, in order:
+
+1. **No finalizer** → nothing to do (object already releasing).
+2. **Phase is neither `Applied` nor `Stale`** → remove the finalizer
+   immediately (never applied, or already torn down). **No target revert.**
+3. **Target XRD/CRD is gone** → remove the finalizer (nothing to revert).
+4. **Target still serves >1 version** and the live object does **not** carry
+   `conversion.terasky.com/allow-unsafe-delete=true` → set
+   `DeletionBlocked`, keep the finalizer, requeue in 30s.
+5. **Otherwise** → **revert first** (`spec.conversion.strategy=None` via
+   SSA), **then** remove the finalizer.
+
+So the common “finalizer removed while the target still has webhook
+conversion” race the roadmap flagged is **not** the successful-path
+ordering: revert completes before the finalizer drops. The residual
+windows are narrower:
+
+| Window | What can happen | Mitigation / why accepted |
+|---|---|---|
+| Crash after target SSA patch but **before** status reaches `Phase=Applied` | A subsequent delete sees a non-Applied/non-Stale phase and removes the finalizer **without** reverting, leaving webhook conversion on the target | Narrow crash window; restart without delete re-applies idempotently and persists `Applied` (covered by Phase 2.1 failure tests). Operators deleting in that exact window should clear conversion manually or re-create a config. |
+| Crash after successful revert but before finalizer removal | Finalizer remains; next delete reconcile reverts again (idempotent) then removes the finalizer | Self-heals on retry. |
+| After finalizer removal, webhook-server replicas still hold a compiled plan until their watch fires | In-memory plan may exist briefly while the apiserver already has `strategy: None` | Harmless: the apiserver will not call the conversion webhook once strategy is `None`. |
+| Break-glass annotation | Checked **live** on the delete reconcile only — must be present on the object being deleted right now | Documented on the config pages; not a sticky historical flag. |
+
+### Evaluation: is an admission-time DELETE guard warranted?
+
+An admission webhook that refused DELETE while the live target still had
+this operator’s webhook conversion would close the apply-before-status
+crash window above. It would not replace the multi-served-version
+finalizer (admission cannot hold an object open across a long-running
+revert the way a finalizer can).
+
+**Conclusion:** the current finalizer model is sufficient. The residual
+window is crash-only and already has restart recovery coverage; adding
+DELETE admission would add complexity for little operational gain. No
+follow-up hardening issue is filed from this writeup.
 
 ## Repository layout
 
