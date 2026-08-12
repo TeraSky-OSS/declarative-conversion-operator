@@ -100,6 +100,10 @@ helm upgrade declarative-conversion-operator \
   --namespace declarative-conversion-system
 ```
 
+For the full sequence — checking whether the CRDs actually changed, verifying the
+data path afterwards, and what `helm rollback` does and doesn't revert — see the
+[Upgrade runbook](operations/upgrade-runbook.md).
+
 ## Uninstalling
 
 ```console

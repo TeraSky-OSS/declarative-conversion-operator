@@ -82,4 +82,5 @@ See [Architecture](architecture.md) for the full picture.
 - Want a complete, runnable config to copy? See [Examples](examples/index.md).
 - Configuring a real XRD? See [XRDConversionConfig](configuration/xrdconversionconfig.md).
 - Looking for a specific strategy? See the [Strategy Reference](strategies/index.md).
+- Already running and something's off? See [Troubleshooting](operations/troubleshooting.md).
 - Wondering what this doesn't do (yet)? See [Limitations](limitations.md) and the [Roadmap](roadmap.md).

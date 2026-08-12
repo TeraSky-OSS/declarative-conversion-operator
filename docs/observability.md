@@ -189,6 +189,7 @@ via OTLP/gRPC (suitable for Jaeger/Tempo).
 
 ## Related
 
+- Symptom-driven use of these metrics: [operations/troubleshooting.md](operations/troubleshooting.md)
 - Custom-metric HPA example: [operations/hpa-custom-metrics.md](operations/hpa-custom-metrics.md)
 - Metrics trust boundary and NetworkPolicy: [security/metrics.md](security/metrics.md)
 - ConversionWebhookServer status fields: [configuration/conversionwebhookserver.md](configuration/conversionwebhookserver.md)
