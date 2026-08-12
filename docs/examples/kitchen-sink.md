@@ -3,7 +3,8 @@
 [`internal/cli/testdata/full/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full)
 is the one place in the repository where **all 23 built-in strategies** are
 exercised against a single schema: a three-version XRD with a hub and two
-spokes, one rule per strategy, plus sample objects at every version. It is the
+spokes, 24 rules covering all 23 strategies, plus sample objects at every
+version. It is the
 fixture the CLI's own end-to-end tests and the e2e suite run against, so it is
 correct by construction — if a strategy's YAML shape ever changed, this fixture
 would break first.
@@ -37,7 +38,7 @@ go run ./cmd/convctl test \
 With `convctl` already installed, drop the `go run ./cmd/` prefix. The run ends
 with:
 
-```
+```text
 SUMMARY: 3 samples, 9 paths — 3 PASS, 6 LOSS(acknowledged), 0 FAIL(unacknowledged loss), 0 ERROR
 ```
 

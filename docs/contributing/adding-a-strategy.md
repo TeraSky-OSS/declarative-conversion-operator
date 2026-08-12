@@ -86,10 +86,15 @@ make generate manifests helm-sync
 ## 6. Admission webhook
 
 In [`internal/webhook/xrdconversionconfig_webhook.go`](https://github.com/TeraSky-OSS/declarative-conversion-operator/blob/main/internal/webhook/xrdconversionconfig_webhook.go),
-extend structural validation so a rule with `strategy: EnumRemap` must carry
-`enumRemap:` (and must not carry unrelated param blocks). This is the cheap
-reject-at-apply check; schema-aware analysis still happens in the controller /
-`convctl analyze`.
+extend **both** stages the webhook runs at apply time:
+
+1. **Structural validation** (`ValidateStructure`) — a rule with
+   `strategy: EnumRemap` must carry `enumRemap:` (and must not carry unrelated
+   param blocks).
+2. **Live schema analysis** — when the target XRD exists, the webhook calls
+   `engine.Analyze` against it and rejects invalid configs at admission. The
+   controller and `convctl analyze`/`test` reuse that same analysis path; they
+   are not the only places schema-aware checks run.
 
 ## 7. Fixture + offline proof
 
