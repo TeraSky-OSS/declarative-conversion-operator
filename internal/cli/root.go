@@ -191,6 +191,11 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 			default:
 				return fmt.Errorf("invalid --output value %q (want table, json, or junit)", output)
 			}
+			switch failOn {
+			case failOnNone, failOnWarn, failOnLoss:
+			default:
+				return fmt.Errorf("invalid --fail-on value %q (want %s, %s, or %s)", failOn, failOnNone, failOnWarn, failOnLoss)
+			}
 			rep, err := RunTest(TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
@@ -238,7 +243,7 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write the full report to this file instead of stdout; a short summary still prints to stdout")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
-	cmd.Flags().StringVar(&failOn, "fail-on", "loss", "Exit-code threshold: none|warn|loss")
+	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
@@ -306,14 +311,31 @@ drops straight into a CI gate.`,
 	return cmd
 }
 
+// The accepted --fail-on thresholds, in increasing order of tolerance. See
+// docs/cli.md for the full threshold × outcome exit-code matrix.
+const (
+	// failOnNone reports results but never fails the process.
+	failOnNone = "none"
+	// failOnWarn fails on warnings too — today, a declared rule no sample
+	// ever exercised.
+	failOnWarn = "warn"
+	// failOnLoss (the default) fails only on an unacknowledged loss or a
+	// conversion error. An acknowledged loss is a decision the config
+	// author already made explicitly, so it never fails here.
+	failOnLoss = "loss"
+)
+
 func decideExitCode(rep *Report, failOn string, strict bool) int {
-	if failOn == "none" {
+	if failOn == failOnNone {
 		return ExitOK
 	}
 	if rep.Summary.Errors > 0 || rep.Summary.UnacknowledgedLoss > 0 {
 		return ExitTestFailure
 	}
-	if failOn == "warn" || strict {
+	// --strict escalates coverage gaps exactly the way --fail-on warn
+	// does; the two are interchangeable for this check, and either one
+	// alone is enough to trip it.
+	if failOn == failOnWarn || strict {
 		for _, rc := range rep.RuleCoverage {
 			if rc.MatchedSamples == 0 {
 				return ExitTestFailure

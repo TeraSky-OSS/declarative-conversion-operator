@@ -89,6 +89,22 @@ convctl test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./sample
 | `1` | An unacknowledged loss or failure was found, at or above the `--fail-on` threshold. |
 | `2` | A tool/usage error (bad flags, file not found, etc.) — deliberately distinct from a test-result failure, so CI can tell "the tool broke" from "the config is bad." |
 
+`--fail-on` takes exactly `none`, `warn`, or `loss`; anything else is a usage error (`2`) rather than a silently-ignored typo that would let a broken gate report success forever.
+
+Here is every threshold against every outcome:
+
+| Run outcome | `--fail-on none` | `--fail-on warn` | `--fail-on loss` (default) |
+|---|---|---|---|
+| Everything passed | `0` | `0` | `0` |
+| Acknowledged loss only | `0` | `0` | `0` |
+| Unacknowledged loss | `0` | `1` | `1` |
+| Conversion error | `0` | `1` | `1` |
+| A declared rule no sample exercised | `0` | `1` | `0` |
+
+**Acknowledged loss alone never fails, at any threshold.** `acknowledgeLossy: true` is the config author stating on the record that a field is expected to be dropped or rounded; re-litigating that decision on every CI run would just train people to pass `--fail-on none`. What the default threshold catches is loss that *nobody* declared.
+
+`--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
+
 ## `convctl diff`
 
 Analyzes two conversion configs against the same schema and reports what changed between them — the review question "what does this config edit actually do?", answered in terms of coverage and lossiness rather than YAML lines.
