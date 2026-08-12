@@ -247,24 +247,26 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			claimedSpoke[key] = true
 			continue
 		}
+		sev := SeverityError
 		if policy == UnmappedFieldPolicyWarn {
-			diags = append(diags, warnf(-1, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
+			sev = SeverityWarning
 		} else {
-			diags = append(diags, errorf(-1, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
 			verdict.HubToSpoke = false
 		}
+		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideHub, key))
 	}
 	for _, sl := range spokeLeaves {
 		key := sl.Path.String()
 		if claimedSpoke[key] {
 			continue
 		}
+		sev := SeverityError
 		if policy == UnmappedFieldPolicyWarn {
-			diags = append(diags, warnf(-1, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
+			sev = SeverityWarning
 		} else {
-			diags = append(diags, errorf(-1, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
 			verdict.SpokeToHub = false
 		}
+		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideSpoke, key))
 	}
 
 	// A field the schema never declares at all (on either side) never

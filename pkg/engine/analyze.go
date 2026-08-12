@@ -79,11 +79,16 @@ func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
 		for _, d := range diags {
 			if d.Severity == SeverityError {
 				sr.Errors = append(sr.Errors, d)
-				if d.FieldPath != "" {
-					sr.Uncovered.UncoveredHub = append(sr.Uncovered.UncoveredHub, d.FieldPath)
-				}
 			} else {
 				sr.Warnings = append(sr.Warnings, d)
+			}
+			// Uncovered leaf paths (Error or Warn policy) feed status
+			// FieldsUncoveredHub / FieldsUncoveredSpoke.
+			switch d.UncoveredSide {
+			case UncoveredSideHub:
+				sr.Uncovered.UncoveredHub = append(sr.Uncovered.UncoveredHub, d.FieldPath)
+			case UncoveredSideSpoke:
+				sr.Uncovered.UncoveredSpoke = append(sr.Uncovered.UncoveredSpoke, d.FieldPath)
 			}
 		}
 		if len(sr.Errors) == 0 {
