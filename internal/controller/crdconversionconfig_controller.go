@@ -136,14 +136,30 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 
 	if report.HasErrors() {
 		msg := "one or more spoke versions failed validation; see status.spokeStatuses for details"
-		if wasApplied && cfg.Spec.DriftPolicy == teraskyv1alpha1.DriftPolicyFailClosed {
+		var revertErr error
+		if failClosedShouldRevert(cfg.Spec.DriftPolicy, cfg.Status.Phase, cfg.Status.Conditions) {
 			if err := r.revertCRD(ctx, cfg.Spec.TargetCRD.Name); err != nil {
+				// Do not claim a successful revert: the CRD may still be
+				// serving webhook conversion. Keep Phase=Failed with an
+				// honest message, surface RevertFailed on ConditionApplied,
+				// and return the error so reconcile requeues with backoff.
+				revertErr = err
 				logger := log.FromContext(ctx)
 				logger.Error(err, "failed to revert CRD after drift under FailClosed policy")
+				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
+				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
+				msg = fmt.Sprintf("schema drift invalidated a previously-applied config; failed to revert to strategy=None per driftPolicy=FailClosed: %v", err)
+				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonRevertFailed, Message: msg,
+				})
+			} else {
+				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
+				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
+				msg = "schema drift invalidated a previously-applied config; reverted to strategy=None per driftPolicy=FailClosed"
+				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonReverted, Message: msg,
+				})
 			}
-			cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
-			meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
-			msg = "schema drift invalidated a previously-applied config; reverted to strategy=None per driftPolicy=FailClosed"
 		} else if wasApplied {
 			msg = "schema drift invalidated this config, but the previously-applied webhook configuration is left untouched (driftPolicy=KeepServingStale); fix the config or the CRD to clear this"
 			setPhaseStale(&cfg.Status.Conditions, &cfg.Status.Phase, "SchemaDrift", msg)
@@ -155,7 +171,13 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 			Type: teraskyv1alpha1.ConditionValidated, Status: metav1.ConditionFalse, Reason: "ValidationFailed", Message: msg,
 		})
 		cfg.Status.Message = msg
-		return ctrl.Result{}, r.patchStatus(ctx, orig, cfg)
+		if err := r.patchStatus(ctx, orig, cfg); err != nil {
+			return ctrl.Result{}, err
+		}
+		if revertErr != nil {
+			return ctrl.Result{}, fmt.Errorf("reverting CRD after FailClosed drift: %w", revertErr)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{

@@ -18,13 +18,18 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -151,6 +156,10 @@ func TestCRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	if got.Status.Phase != teraskyv1alpha1.PhaseFailed {
 		t.Fatalf("expected phase Failed under FailClosed drift, got %q (message: %s)", got.Status.Phase, got.Status.Message)
 	}
+	applied := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != teraskyv1alpha1.ReasonReverted {
+		t.Fatalf("expected ConditionApplied=False Reason=Reverted after successful FailClosed revert, got %+v", applied)
+	}
 
 	var patched extv1.CustomResourceDefinition
 	if err := r.Get(context.Background(), types.NamespacedName{Name: "foos.example.org"}, &patched); err != nil {
@@ -160,6 +169,82 @@ func TestCRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 		t.Fatalf("expected the CRD to be reverted to strategy=None, got %+v", patched.Spec.Conversion)
 	}
 }
+
+func TestCRDReconcile_Drift_FailClosed_RevertFailure_HonestStatus(t *testing.T) {
+	crd := establishedCRD("foos.example.org")
+	crd.Spec.Conversion = &extv1.CustomResourceConversion{
+		Strategy: extv1.WebhookConverter,
+		Webhook: &extv1.WebhookConversion{
+			ClientConfig: &extv1.WebhookClientConfig{URL: strPtr("https://example.invalid/convert")},
+		},
+	}
+	cfg := renameRuleCRDConfig("cfg", "foos.example.org")
+	cfg.Spec.DriftPolicy = teraskyv1alpha1.DriftPolicyFailClosed
+	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
+	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+		Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionTrue, Reason: "Applied", Message: "previously applied",
+	})
+	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
+	server, secret := readyServer("srv")
+
+	c := newFakeClient(crd, cfg, server, secret).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+				return fmt.Errorf("injected apply failure")
+			},
+		}).
+		Build()
+	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
+
+	live := getCRDConfig(t, r, "cfg")
+	live.Spec.Spokes[0].Rules[0].FieldRename.HubPath = "spec.doesNotExist"
+	if err := r.Update(context.Background(), live); err != nil {
+		t.Fatalf("updating config: %v", err)
+	}
+
+	_, err := reconcileCRD(t, r, "cfg")
+	if err == nil {
+		t.Fatalf("expected reconcile to return an error so the work is requeued with backoff")
+	}
+	if !strings.Contains(err.Error(), "injected apply failure") {
+		t.Fatalf("expected wrapped revert error, got: %v", err)
+	}
+
+	got := getCRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseFailed {
+		t.Fatalf("expected phase Failed after revert failure, got %q", got.Status.Phase)
+	}
+	if strings.Contains(got.Status.Message, "reverted to strategy=None") {
+		t.Fatalf("status must not claim a successful revert; message=%q", got.Status.Message)
+	}
+	if !strings.Contains(got.Status.Message, "failed to revert") {
+		t.Fatalf("expected honest failed-to-revert message, got %q", got.Status.Message)
+	}
+	applied := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != teraskyv1alpha1.ReasonRevertFailed {
+		t.Fatalf("expected ConditionApplied=False Reason=RevertFailed, got %+v", applied)
+	}
+
+	var liveCRD extv1.CustomResourceDefinition
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "foos.example.org"}, &liveCRD); err != nil {
+		t.Fatalf("getting CRD: %v", err)
+	}
+	if liveCRD.Spec.Conversion == nil || liveCRD.Spec.Conversion.Strategy != extv1.WebhookConverter {
+		t.Fatalf("expected live CRD conversion to remain Webhook after failed revert, got %+v", liveCRD.Spec.Conversion)
+	}
+
+	_, err = reconcileCRD(t, r, "cfg")
+	if err == nil {
+		t.Fatalf("expected second reconcile to keep returning revert errors for backoff requeue")
+	}
+	got = getCRDConfig(t, r, "cfg")
+	applied = meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
+	if applied == nil || applied.Reason != teraskyv1alpha1.ReasonRevertFailed {
+		t.Fatalf("expected RevertFailed to remain so FailClosed keeps retrying, got %+v", applied)
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestCRDReconcile_Drift_KeepServingStale(t *testing.T) {
 	crd := establishedCRD("foos.example.org")

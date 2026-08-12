@@ -133,14 +133,30 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 
 	if report.HasErrors() {
 		msg := "one or more spoke versions failed validation; see status.spokeStatuses for details"
-		if wasApplied && cfg.Spec.DriftPolicy == teraskyv1alpha1.DriftPolicyFailClosed {
+		var revertErr error
+		if failClosedShouldRevert(cfg.Spec.DriftPolicy, cfg.Status.Phase, cfg.Status.Conditions) {
 			if err := r.revertXRD(ctx, cfg.Spec.TargetXRD.Name); err != nil {
+				// Do not claim a successful revert: the XRD may still be
+				// serving webhook conversion. Keep Phase=Failed with an
+				// honest message, surface RevertFailed on ConditionApplied,
+				// and return the error so reconcile requeues with backoff.
+				revertErr = err
 				logger := log.FromContext(ctx)
 				logger.Error(err, "failed to revert XRD after drift under FailClosed policy")
+				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
+				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
+				msg = fmt.Sprintf("schema drift invalidated a previously-applied config; failed to revert to strategy=None per driftPolicy=FailClosed: %v", err)
+				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonRevertFailed, Message: msg,
+				})
+			} else {
+				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
+				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
+				msg = "schema drift invalidated a previously-applied config; reverted to strategy=None per driftPolicy=FailClosed"
+				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonReverted, Message: msg,
+				})
 			}
-			cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
-			meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
-			msg = "schema drift invalidated a previously-applied config; reverted to strategy=None per driftPolicy=FailClosed"
 		} else if wasApplied {
 			// Conservative default: keep serving the last known-good
 			// compiled plan (unchanged on the XRD) and mark Stale rather
@@ -155,7 +171,13 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 			Type: teraskyv1alpha1.ConditionValidated, Status: metav1.ConditionFalse, Reason: "ValidationFailed", Message: msg,
 		})
 		cfg.Status.Message = msg
-		return ctrl.Result{}, r.patchStatus(ctx, orig, cfg)
+		if err := r.patchStatus(ctx, orig, cfg); err != nil {
+			return ctrl.Result{}, err
+		}
+		if revertErr != nil {
+			return ctrl.Result{}, fmt.Errorf("reverting XRD after FailClosed drift: %w", revertErr)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
@@ -254,6 +276,25 @@ func phasePending(wasApplied bool) string {
 		return teraskyv1alpha1.PhaseStale
 	}
 	return teraskyv1alpha1.PhasePending
+}
+
+// failClosedShouldRevert reports whether FailClosed drift handling must
+// (re)attempt tearing down the live webhook conversion config. True while
+// Phase is still Applied, and also while a previous FailClosed revert failed
+// (Phase=Failed with ConditionApplied Reason=RevertFailed) so we keep
+// retrying instead of treating status as a successful tear-down.
+func failClosedShouldRevert(driftPolicy teraskyv1alpha1.DriftPolicy, phase string, conditions []metav1.Condition) bool {
+	if driftPolicy != teraskyv1alpha1.DriftPolicyFailClosed {
+		return false
+	}
+	if phase == teraskyv1alpha1.PhaseApplied {
+		return true
+	}
+	if phase == teraskyv1alpha1.PhaseFailed {
+		cond := meta.FindStatusCondition(conditions, teraskyv1alpha1.ConditionApplied)
+		return cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason == teraskyv1alpha1.ReasonRevertFailed
+	}
+	return false
 }
 
 // setPhaseStale sets Phase=Stale and ConditionStale=True so monitors that
