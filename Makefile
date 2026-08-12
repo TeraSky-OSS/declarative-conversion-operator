@@ -116,6 +116,38 @@ helm-lint: ## Lint the Helm chart.
 helm-template: ## Render the Helm chart with default values.
 	helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 
+##@ Observability
+
+PROMTOOL ?= $(LOCALBIN)/promtool
+PROMTOOL_VERSION ?= 2.54.1
+
+.PHONY: promtool
+promtool: $(LOCALBIN) ## Download promtool into bin/ if not already on PATH or in LOCALBIN.
+	@if command -v promtool >/dev/null 2>&1; then \
+		echo "Using promtool from PATH: $$(command -v promtool)"; \
+	elif [ -x "$(PROMTOOL)" ]; then \
+		echo "Using $(PROMTOOL)"; \
+	else \
+		echo "Downloading promtool $(PROMTOOL_VERSION) to $(PROMTOOL)"; \
+		OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+		ARCH=$$(uname -m); \
+		case "$$ARCH" in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; esac; \
+		TMP=$$(mktemp -d); \
+		URL="https://github.com/prometheus/prometheus/releases/download/v$(PROMTOOL_VERSION)/prometheus-$(PROMTOOL_VERSION).$${OS}-$${ARCH}.tar.gz"; \
+		curl -fsSL "$$URL" | tar -xz -C "$$TMP"; \
+		cp "$$TMP"/prometheus-$(PROMTOOL_VERSION).$${OS}-$${ARCH}/promtool "$(PROMTOOL)"; \
+		chmod +x "$(PROMTOOL)"; \
+		rm -rf "$$TMP"; \
+	fi
+
+.PHONY: test-prometheus
+test-prometheus: promtool ## Run promtool unit tests for chart PrometheusRule alerts (hack/prometheus/).
+	@if command -v promtool >/dev/null 2>&1; then \
+		promtool test rules hack/prometheus/rules.test.yml; \
+	else \
+		$(PROMTOOL) test rules hack/prometheus/rules.test.yml; \
+	fi
+
 ##@ Local Dev Environment
 
 # Same shape as hack/e2e-common.sh's setup (kind + cert-manager + Crossplane

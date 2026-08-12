@@ -1,0 +1,321 @@
+# promtool unit tests for hack/prometheus/rules.yaml
+# Run: make test-prometheus
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # --- ConversionWebhookRegistryCompileErrors ---
+  - name: compile errors fires when increase sustained
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_registry_compile_errors_total{target="xfoos.example.org",reason="InvalidRules"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConversionWebhookRegistryCompileErrors
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ConversionWebhookRegistryCompileErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+              reason: InvalidRules
+            exp_annotations:
+              summary: "ConversionWebhookServer replica failing to (re)compile plan for xfoos.example.org"
+              description: "Check the corresponding XRDConversionConfig/CRDConversionConfig status and the replica's /debug/registry endpoint."
+
+  - name: compile errors stays silent when flat
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_registry_compile_errors_total{target="xfoos.example.org",reason="InvalidRules"}'
+        values: "0+0x40"
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: ConversionWebhookRegistryCompileErrors
+        exp_alerts: []
+
+  # --- ConversionWebhookNotReady (fleet) ---
+  - name: fleet not ready fires when all replicas report 0
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_ready{pod="a"}'
+        values: "0+0x20"
+      - series: 'xrdconv_webhook_ready{pod="b"}'
+        values: "0+0x20"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ConversionWebhookNotReady
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ConversionWebhookNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "No ConversionWebhookServer replica is ready"
+              description: "Every scraped webhook-server replica reports xrdconv_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
+
+  - name: fleet not ready stays silent when any replica is ready
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_ready{pod="a"}'
+        values: "0+0x20"
+      - series: 'xrdconv_webhook_ready{pod="b"}'
+        values: "1+0x20"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ConversionWebhookNotReady
+        exp_alerts: []
+
+  # --- ConversionWebhookReplicaNotReady ---
+  - name: replica not ready fires on ready==0
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_ready{pod="a"}'
+        values: "0+0x20"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ConversionWebhookReplicaNotReady
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ConversionWebhookReplicaNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              pod: a
+            exp_annotations:
+              summary: "A conversion webhook server replica has not become ready"
+              description: "This replica's registry never completed its initial sync; it is not serving conversion traffic."
+
+  - name: replica not ready stays silent when ready
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_ready{pod="a"}'
+        values: "1+0x20"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ConversionWebhookReplicaNotReady
+        exp_alerts: []
+
+  # --- ConversionWebhookHighLatency ---
+  - name: high latency fires when p99 > 1s
+    interval: 1m
+    input_series:
+      # All observations land in le="5" / +Inf only (values between 1 and 5) → p99 > 1
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0001"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0005"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.001"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.005"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.01"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.05"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.1"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.5"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="1"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="5"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="+Inf"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConversionWebhookHighLatency
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ConversionWebhookHighLatency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "p99 ConversionReview latency exceeds 1s for xfoos.example.org"
+              description: "The conversion webhook is on the API admission critical path; sustained high latency slows apiserver requests for the affected target."
+
+  - name: high latency stays silent when p99 is low
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0001"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0005"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.001"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.005"}'
+        values: "0+0x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.01"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.05"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.1"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.5"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="1"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="5"}'
+        values: "0+10x30"
+      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="+Inf"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: ConversionWebhookHighLatency
+        exp_alerts: []
+
+  # --- ConversionWebhookLossyRate ---
+  - name: lossy rate fires above threshold
+    interval: 1m
+    input_series:
+      # +1/min ≈ 0.0167/s > 0.01
+      - series: 'xrdconv_webhook_lossy_conversion_total{target="xfoos.example.org",direction="hub_to_spoke"}'
+        values: "0+1x30"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConversionWebhookLossyRate
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ConversionWebhookLossyRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+              direction: hub_to_spoke
+            exp_annotations:
+              summary: "Acknowledged-lossy conversion rate elevated for xfoos.example.org"
+              description: "Known-lossy conversion paths are firing above threshold (direction=hub_to_spoke). Unexpected if clients are not intentionally converting in a lossy direction."
+
+  - name: lossy rate stays silent when flat
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_webhook_lossy_conversion_total{target="xfoos.example.org",direction="hub_to_spoke"}'
+        values: "0+0x30"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: ConversionWebhookLossyRate
+        exp_alerts: []
+
+  # --- ConversionWebhookErrorRatio ---
+  - name: error ratio fires above 5%
+    interval: 1m
+    input_series:
+      # 2 errors / (2+10) ≈ 16.7% per step
+      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="error"}'
+        values: "0+2x30"
+      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="success"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConversionWebhookErrorRatio
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ConversionWebhookErrorRatio
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "Conversion error ratio >5% for xfoos.example.org"
+              description: "More than 5% of ConversionReview requests for this target are failing with result=error."
+
+  - name: error ratio stays silent when errors are rare
+    interval: 1m
+    input_series:
+      # 1 error / (1+100) ≈ 1%
+      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="error"}'
+        values: "0+1x30"
+      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="success"}'
+        values: "0+100x30"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: ConversionWebhookErrorRatio
+        exp_alerts: []
+
+  # --- ManagerReconcileAnalyzeFailures ---
+  - name: analyze failures fires on increase
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_manager_analyze_failures_total{config_kind="xrd",target="xfoos.example.org",reason="AnalyzeFailed"}'
+        values: "0+1x30"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ManagerReconcileAnalyzeFailures
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: ManagerReconcileAnalyzeFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              config_kind: xrd
+              target: xfoos.example.org
+              reason: AnalyzeFailed
+            exp_annotations:
+              summary: "Manager analyze/compile failures for xfoos.example.org"
+              description: "config_kind=xrd reason=AnalyzeFailed. Check the config status conditions and recent manager logs."
+
+  - name: analyze failures stays silent when flat
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_manager_analyze_failures_total{config_kind="xrd",target="xfoos.example.org",reason="AnalyzeFailed"}'
+        values: "0+0x30"
+    alert_rule_test:
+      - eval_time: 21m
+        alertname: ManagerReconcileAnalyzeFailures
+        exp_alerts: []
+
+  # --- ManagerPhaseStaleOrFailClosed ---
+  - name: phase stale fires on Stale transition
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",from_phase="Applied",to_phase="Stale",reason="SchemaDrift"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ManagerPhaseStaleOrFailClosed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              config_kind: xrd
+              from_phase: Applied
+              to_phase: Stale
+              reason: SchemaDrift
+            exp_annotations:
+              summary: "Config phase transitioned to Stale"
+              description: "config_kind=xrd from=Applied reason=SchemaDrift. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
+
+  - name: phase failed fires on Failed transition
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_manager_phase_transitions_total{config_kind="crd",from_phase="Applied",to_phase="Failed",reason="Reverted"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ManagerPhaseStaleOrFailClosed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              config_kind: crd
+              from_phase: Applied
+              to_phase: Failed
+              reason: Reverted
+            exp_annotations:
+              summary: "Config phase transitioned to Failed"
+              description: "config_kind=crd from=Applied reason=Reverted. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
+
+  - name: phase stays silent for Applied transitions
+    interval: 1m
+    input_series:
+      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",from_phase="Pending",to_phase="Applied",reason="Applied"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ManagerPhaseStaleOrFailClosed
+        exp_alerts: []
