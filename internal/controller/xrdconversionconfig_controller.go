@@ -39,6 +39,7 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/conversionpatch"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
@@ -441,56 +442,18 @@ func (r *XRDConversionConfigReconciler) readCABundle(ctx context.Context, server
 // manager scoped to exactly those fields so this operator never fights any
 // other owner of the XRD's spec.
 func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, serviceNamespace, serviceName, path string, port int32, caBundle string, reviewVersions []string) error {
-	patch := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": xrdadapter.GroupVersionKind.GroupVersion().String(),
-		"kind":       xrdadapter.GroupVersionKind.Kind,
-		"metadata": map[string]any{
-			"name": cfg.Spec.TargetXRD.Name,
-			"annotations": map[string]any{
-				"conversion.terasky.com/managed-by": cfg.Name,
-				"conversion.terasky.com/plan-hash":  cfg.Status.SchemaHash,
-			},
-		},
-		"spec": map[string]any{
-			"conversion": map[string]any{
-				"strategy": "Webhook",
-				"webhook": map[string]any{
-					"clientConfig": map[string]any{
-						"service": map[string]any{
-							"name":      serviceName,
-							"namespace": serviceNamespace,
-							"path":      path,
-							"port":      int64(port),
-						},
-						"caBundle": caBundle,
-					},
-					"conversionReviewVersions": toAnySlice(reviewVersions),
-				},
-			},
-		},
-	}}
+	patch := conversionpatch.BuildXRDConversionPatch(conversionpatch.Params{
+		TargetName: cfg.Spec.TargetXRD.Name, ConfigName: cfg.Name, PlanHash: cfg.Status.SchemaHash,
+		ServiceName: serviceName, ServiceNamespace: serviceNamespace, Path: path, Port: port,
+		CABundle: caBundle, ReviewVersions: reviewVersions,
+	})
 	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
-}
-
-func toAnySlice(ss []string) []any {
-	out := make([]any, len(ss))
-	for i, s := range ss {
-		out[i] = s
-	}
-	return out
 }
 
 // revertXRD resets spec.conversion to strategy=None, relinquishing this
 // operator's ownership of the field.
 func (r *XRDConversionConfigReconciler) revertXRD(ctx context.Context, xrdName string) error {
-	patch := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": xrdadapter.GroupVersionKind.GroupVersion().String(),
-		"kind":       xrdadapter.GroupVersionKind.Kind,
-		"metadata":   map[string]any{"name": xrdName},
-		"spec": map[string]any{
-			"conversion": map[string]any{"strategy": "None"},
-		},
-	}}
+	patch := conversionpatch.BuildXRDRevertPatch(xrdName)
 	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 

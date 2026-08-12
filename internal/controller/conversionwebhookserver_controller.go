@@ -187,6 +187,17 @@ func (r *ConversionWebhookServerReconciler) checkDefaultConflict(ctx context.Con
 	return nil
 }
 
+// toAnySlice widens a []string for embedding in an unstructured object,
+// whose contents must stay JSON-typed all the way down or its deep-copy
+// panics.
+func toAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
 func (r *ConversionWebhookServerReconciler) reconcileCertificate(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer, namespace string) error {
 	dnsNames := server.Spec.Certificate.DNSNames
 	if len(dnsNames) == 0 {

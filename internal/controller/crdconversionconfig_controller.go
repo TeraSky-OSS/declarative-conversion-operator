@@ -25,7 +25,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	applyextv1 "k8s.io/apiextensions-apiserver/pkg/client/applyconfiguration/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +39,7 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/conversionpatch"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/crdadapter"
@@ -361,34 +361,21 @@ func (r *CRDConversionConfigReconciler) readCABundle(ctx context.Context, server
 // is a vendored core Kubernetes type, unlike the Crossplane XRD this
 // mirrors) with a field manager scoped to exactly that field.
 func (r *CRDConversionConfigReconciler) applyConversionPatch(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig, serviceNamespace, serviceName, path string, port int32, caBundle string, reviewVersions []string) error {
-	caBundleBytes, err := base64.StdEncoding.DecodeString(caBundle)
+	patch, err := conversionpatch.BuildCRDConversionPatch(conversionpatch.Params{
+		TargetName: cfg.Spec.TargetCRD.Name, ConfigName: cfg.Name, PlanHash: cfg.Status.SchemaHash,
+		ServiceName: serviceName, ServiceNamespace: serviceNamespace, Path: path, Port: port,
+		CABundle: caBundle, ReviewVersions: reviewVersions,
+	})
 	if err != nil {
-		return fmt.Errorf("decoding CA bundle: %w", err)
+		return err
 	}
-	patch := applyextv1.CustomResourceDefinition(cfg.Spec.TargetCRD.Name).
-		WithAnnotations(map[string]string{
-			"conversion.terasky.com/managed-by": cfg.Name,
-			"conversion.terasky.com/plan-hash":  cfg.Status.SchemaHash,
-		}).
-		WithSpec(applyextv1.CustomResourceDefinitionSpec().
-			WithConversion(applyextv1.CustomResourceConversion().
-				WithStrategy(extv1.WebhookConverter).
-				WithWebhook(applyextv1.WebhookConversion().
-					WithClientConfig(applyextv1.WebhookClientConfig().
-						WithService(applyextv1.ServiceReference().
-							WithName(serviceName).WithNamespace(serviceNamespace).WithPath(path).WithPort(port)).
-						WithCABundle(caBundleBytes...)).
-					WithConversionReviewVersions(reviewVersions...))))
 	return r.Apply(ctx, patch, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 // revertCRD resets spec.conversion to strategy=None, relinquishing this
 // operator's ownership of the field.
 func (r *CRDConversionConfigReconciler) revertCRD(ctx context.Context, crdName string) error {
-	patch := applyextv1.CustomResourceDefinition(crdName).
-		WithSpec(applyextv1.CustomResourceDefinitionSpec().
-			WithConversion(applyextv1.CustomResourceConversion().WithStrategy(extv1.NoneConverter)))
-	return r.Apply(ctx, patch, client.ForceOwnership, client.FieldOwner(FieldOwner))
+	return r.Apply(ctx, conversionpatch.BuildCRDRevertPatch(crdName), client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
 // reconcileDelete implements the same safe-revert flow as

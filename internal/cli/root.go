@@ -51,7 +51,10 @@ cluster. Every command works against either resource type:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(), newConvertCmd(), newSuggestCmd(), newVersionCmd())
+	root.AddCommand(
+		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
+		newConvertCmd(), newSuggestCmd(), newPatchPreviewCmd(), newVersionCmd(),
+	)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

@@ -3,14 +3,17 @@
 `convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Every command works identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch.
 
 ```console
-convctl validate --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
-convctl analyze   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
-convctl test      --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
-convctl diff      --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o json|table]
-convctl diff      --config config.yaml --live [-o json|table]
-convctl convert   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
-convctl suggest   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
+convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
+convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
+convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
+convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o json|table]
+convctl diff          --config config.yaml --live [-o json|table]
+convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
+convctl suggest       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
+convctl patch-preview --config config.yaml --service-name NAME --service-namespace NS --ca-bundle B64 [flags]
 ```
+
+Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit.
 
 ## `convctl validate`
 
@@ -220,6 +223,54 @@ spokes:
 The output is shaped exactly like a config's `spec.spokes` stanza, so accepted suggestions paste straight in.
 
 **These are heuristics, not conclusions.** Nothing can prove two differently-named fields were meant to be the same one, and name similarity will occasionally pair the wrong two. Read every suggestion, delete the wrong ones, and let `convctl validate` and `convctl test` grade what's left — a suggestion that survives both is a rule you can trust, and one that doesn't cost you a deleted line.
+
+## `convctl patch-preview`
+
+Prints the exact server-side-apply object the operator would send to the target XRD or CRD to point its `spec.conversion` at a webhook server. Useful for reviewing a change before granting the operator write access to a production XRD, and for understanding what "the operator patches your XRD" actually means in concrete YAML.
+
+```console
+convctl patch-preview --config xrdconversionconfig.yaml --xrd xrd.yaml \
+  --service-name prod-webhook-server --service-namespace conversion-system \
+  --ca-bundle "$(kubectl get secret prod-webhook-server-tls -n conversion-system -o jsonpath='{.data.ca\.crt}')"
+```
+
+| Flag | Description |
+|---|---|
+| `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig` YAML file. **Required.** Supplies the target name, the config name for the `managed-by` annotation, and `conversionReviewVersions`. |
+| `--service-name` | Name of the webhook server `Service`. **Required.** |
+| `--service-namespace` | Namespace of the webhook server `Service`. **Required.** |
+| `--ca-bundle` | CA bundle, either base64-encoded (as it appears in a CRD's YAML) or raw PEM, which is detected and encoded for you. **Required.** |
+| `--path` | Webhook path. Defaults to `/convert/<target name>`, which is what the operator derives. |
+| `--port` | Webhook `Service` port. Defaults to `443`. |
+| `--plan-hash` | Value for the `conversion.terasky.com/plan-hash` annotation. Defaults to empty, which is what it is before the config's first successful validation. |
+| `-x, --xrd` / `--crd` | Optional. Supplying the schema validates the config against it first, so a config the operator would refuse to apply doesn't get a preview of being applied. |
+
+```console
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  annotations:
+    conversion.terasky.com/managed-by: xfoos-conversion
+    conversion.terasky.com/plan-hash: sha256:abc
+  name: xfoos.example.org
+spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        caBundle: UEVN
+        service:
+          name: prod-webhook-server
+          namespace: conversion-system
+          path: /convert/xfoos.example.org
+          port: 443
+      conversionReviewVersions:
+      - v1
+```
+
+The patch is built by `internal/conversionpatch`, the same package the controllers call — so what you see here cannot drift from what the operator applies. That is also why the service coordinates and CA bundle are flags rather than cluster lookups: `patch-preview` never constructs a Kubernetes client at all, so it cannot touch a cluster even by accident.
+
+Note that this is the *patch*, not the resulting object. It is applied with `ForceOwnership` under the `declarative-conversion-operator` field manager, so it claims exactly the fields shown and leaves every other field on the XRD or CRD to whoever owns it.
 
 ## Pre-upgrade checks: testing against everything that already exists
 
