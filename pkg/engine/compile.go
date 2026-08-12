@@ -791,11 +791,33 @@ func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps,
 	nestedH2S, nestedS2H, _, nestedDiags, nestedVerdict := resolveAndBuildOps(p.Rules, hubArray.Items.Schema, spokeArray.Items.Schema, policy, depth+1)
 	for _, d := range nestedDiags {
 		d.Message = fmt.Sprintf("rule %d (ForEach) item: %s", idx, d.Message)
+		// Nested analysis uses item-relative FieldPaths; qualify uncovered
+		// paths with the ForEach items path so status FieldsUncovered*
+		// reports the full hub/spoke location (e.g. "readReplicas.name").
+		switch d.UncoveredSide {
+		case UncoveredSideHub:
+			d.FieldPath = qualifyUnderItemsPath(p.HubItemsPath, d.FieldPath)
+		case UncoveredSideSpoke:
+			d.FieldPath = qualifyUnderItemsPath(p.SpokeItemsPath, d.FieldPath)
+		}
 		diags = append(diags, d)
 	}
 	h2s := forEachOp{srcItemsPath: p.HubItemsPath, dstItemsPath: p.SpokeItemsPath, nested: nestedH2S}
 	s2h := forEachOp{srcItemsPath: p.SpokeItemsPath, dstItemsPath: p.HubItemsPath, nested: nestedS2H}
 	return h2s, s2h, nestedVerdict, diags
+}
+
+// qualifyUnderItemsPath prefixes an item-relative uncovered FieldPath with
+// the ForEach items path. Nested ForEach calls qualify at each level so
+// deeply nested paths accumulate the full hub/spoke location.
+func qualifyUnderItemsPath(itemsPath FieldPath, relative string) string {
+	if relative == "" {
+		return itemsPath.String()
+	}
+	if len(itemsPath) == 0 {
+		return relative
+	}
+	return itemsPath.String() + "." + relative
 }
 
 func resolveTypeCoerce(idx int, p TypeCoerceParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {

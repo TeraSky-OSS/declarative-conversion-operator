@@ -1001,6 +1001,53 @@ func TestAnalyze_PopulatesUncoveredHubAndSpoke(t *testing.T) {
 	}
 }
 
+func TestAnalyze_ForEachUncoveredUsesFullPath(t *testing.T) {
+	hubSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"readReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{
+			"region":  strSchema(),
+			"hubOnly": strSchema(),
+		}), nil),
+	})
+	spokeSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"readReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{
+			"zone":      strSchema(),
+			"spokeOnly": strSchema(),
+		}), nil),
+	})
+	src := fakeSource{gen: 1, versions: []VersionSchema{
+		{Name: "v2", Schema: &hubSchema, Served: true, Storage: true},
+		{Name: "v1", Schema: &spokeSchema, Served: true},
+	}}
+
+	report, err := Analyze(AnalyzeInput{
+		Source:     src,
+		HubVersion: "v2",
+		Spokes: []RuleSet{{
+			SpokeVersion: "v1",
+			Rules: []Rule{{
+				Strategy: StrategyForEach,
+				Params: ForEachParams{
+					HubItemsPath: ParsePath("readReplicas"), SpokeItemsPath: ParsePath("readReplicas"),
+					Rules: []Rule{{
+						Strategy: StrategyFieldRename,
+						Params:   FieldRenameParams{HubPath: ParsePath("region"), SpokePath: ParsePath("zone")},
+					}},
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sr := report.SpokeReports[0]
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredHub, []string{"readReplicas.hubOnly"}) {
+		t.Fatalf("UncoveredHub = %#v, want [readReplicas.hubOnly]", sr.Uncovered.UncoveredHub)
+	}
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredSpoke, []string{"readReplicas.spokeOnly"}) {
+		t.Fatalf("UncoveredSpoke = %#v, want [readReplicas.spokeOnly]", sr.Uncovered.UncoveredSpoke)
+	}
+}
+
 func TestAnalyze_UncoveredUnderWarnPolicy(t *testing.T) {
 	hubSchema := objSchema(map[string]extv1.JSONSchemaProps{
 		"shared":  strSchema(),
