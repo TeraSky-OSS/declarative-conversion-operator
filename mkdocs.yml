@@ -97,6 +97,8 @@ nav:
       - List Join / Split: strategies/list-join-split.md
   - FAQ: faq.md
   - Limitations: limitations.md
+  - Security:
+      - security/pod-security.md
   - Roadmap: roadmap.md
 
 extra:

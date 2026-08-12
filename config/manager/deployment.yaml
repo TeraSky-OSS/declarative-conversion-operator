@@ -19,6 +19,10 @@ spec:
       serviceAccountName: manager
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: manager
           image: controller:latest
@@ -55,13 +59,23 @@ spec:
               memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
             capabilities:
               drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: webhook-certs
           secret:
             secretName: webhook-server-cert
