@@ -119,13 +119,18 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	source := xrdadapter.New(xrd)
 	ruleSets, err := cfg.ToRuleSets()
 	if err != nil {
+		fromPhase := cfg.Status.Phase
+		GetManagerMetrics().AnalyzeFailures.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "InvalidConfig").Inc()
 		r.setInvalid(cfg, wasApplied, fmt.Sprintf("invalid rule configuration: %v", err))
+		recordPhaseTransition("xrd", cfg.Spec.TargetXRD.Name, fromPhase, cfg.Status.Phase, "InvalidConfig")
 		return ctrl.Result{}, r.patchStatus(ctx, orig, cfg)
 	}
 	report, err := engine.Analyze(engine.AnalyzeInput{Source: source, HubVersion: cfg.Spec.HubVersion, Spokes: ruleSets})
 	if err != nil {
+		fromPhase := cfg.Status.Phase
 		GetManagerMetrics().AnalyzeFailures.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "AnalyzeFailed").Inc()
 		r.setInvalid(cfg, wasApplied, fmt.Sprintf("analysis failed: %v", err))
+		recordPhaseTransition("xrd", cfg.Spec.TargetXRD.Name, fromPhase, cfg.Status.Phase, "AnalyzeFailed")
 		return ctrl.Result{}, r.patchStatus(ctx, orig, cfg)
 	}
 

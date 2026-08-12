@@ -97,7 +97,13 @@ func main() {
 		logger.Error(err, "unable to initialize OpenTelemetry tracing")
 		os.Exit(1)
 	}
-	defer func() { _ = shutdownTracing(context.Background()) }()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			logger.Error(err, "unable to shut down OpenTelemetry tracing")
+		}
+	}()
 
 	// This manager exists purely to run the registry reconciler's
 	// informers/cache — it serves no admission webhooks and no default
