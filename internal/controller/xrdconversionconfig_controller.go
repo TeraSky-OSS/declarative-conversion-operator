@@ -147,14 +147,14 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 				msg = fmt.Sprintf("schema drift invalidated a previously-applied config; failed to revert to strategy=None per driftPolicy=FailClosed: %v", err)
 				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
-					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: "RevertFailed", Message: msg,
+					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonRevertFailed, Message: msg,
 				})
 			} else {
 				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
 				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 				msg = "schema drift invalidated a previously-applied config; reverted to strategy=None per driftPolicy=FailClosed"
 				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
-					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: "Reverted", Message: msg,
+					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonReverted, Message: msg,
 				})
 			}
 		} else if wasApplied {
@@ -292,7 +292,7 @@ func failClosedShouldRevert(driftPolicy teraskyv1alpha1.DriftPolicy, phase strin
 	}
 	if phase == teraskyv1alpha1.PhaseFailed {
 		cond := meta.FindStatusCondition(conditions, teraskyv1alpha1.ConditionApplied)
-		return cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason == "RevertFailed"
+		return cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason == teraskyv1alpha1.ReasonRevertFailed
 	}
 	return false
 }

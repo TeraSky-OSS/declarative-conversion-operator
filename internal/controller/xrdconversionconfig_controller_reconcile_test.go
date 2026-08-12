@@ -241,7 +241,7 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 		t.Fatalf("expected phase Failed under FailClosed drift, got %q (message: %s)", got.Status.Phase, got.Status.Message)
 	}
 	applied := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
-	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != "Reverted" {
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != teraskyv1alpha1.ReasonReverted {
 		t.Fatalf("expected ConditionApplied=False Reason=Reverted after successful FailClosed revert, got %+v", applied)
 	}
 
@@ -259,10 +259,12 @@ func TestXRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 func TestXRDReconcile_Drift_FailClosed_RevertFailure_HonestStatus(t *testing.T) {
 	xrd := establishedXRD("xfoos.example.org")
 	// Pretend the live XRD still has webhook conversion wired.
-	_ = unstructured.SetNestedMap(xrd.Object, map[string]any{
+	if err := unstructured.SetNestedMap(xrd.Object, map[string]any{
 		"strategy": "Webhook",
 		"webhook":  map[string]any{"clientConfig": map[string]any{"url": "https://example.invalid/convert"}},
-	}, "spec", "conversion")
+	}, "spec", "conversion"); err != nil {
+		t.Fatalf("seeding webhook conversion on the XRD fixture: %v", err)
+	}
 	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
 	cfg.Spec.DriftPolicy = teraskyv1alpha1.DriftPolicyFailClosed
 	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
@@ -309,7 +311,7 @@ func TestXRDReconcile_Drift_FailClosed_RevertFailure_HonestStatus(t *testing.T) 
 		t.Fatalf("expected honest failed-to-revert message, got %q", got.Status.Message)
 	}
 	applied := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
-	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != "RevertFailed" {
+	if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != teraskyv1alpha1.ReasonRevertFailed {
 		t.Fatalf("expected ConditionApplied=False Reason=RevertFailed, got %+v", applied)
 	}
 
@@ -331,7 +333,7 @@ func TestXRDReconcile_Drift_FailClosed_RevertFailure_HonestStatus(t *testing.T) 
 	}
 	got = getXRDConfig(t, r, "cfg")
 	applied = meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionApplied)
-	if applied == nil || applied.Reason != "RevertFailed" {
+	if applied == nil || applied.Reason != teraskyv1alpha1.ReasonRevertFailed {
 		t.Fatalf("expected RevertFailed to remain so FailClosed keeps retrying, got %+v", applied)
 	}
 }

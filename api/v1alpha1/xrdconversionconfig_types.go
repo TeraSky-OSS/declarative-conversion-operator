@@ -545,6 +545,10 @@ const (
 	ConditionApplied            = "Applied"
 	ConditionStale              = "Stale"
 	ConditionDeletionBlocked    = "DeletionBlocked"
+
+	// ConditionApplied reasons used by FailClosed drift handling.
+	ReasonReverted     = "Reverted"
+	ReasonRevertFailed = "RevertFailed"
 )
 
 // Phase constants for XRDConversionConfigStatus.Phase.
