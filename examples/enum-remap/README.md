@@ -33,8 +33,6 @@ discards unmapped values and therefore makes that direction lossy.
 
 ## Run it
 
-## Run it
-
 ```console
 convctl validate --config xrdconversionconfig.yaml --xrd xrd.yaml
 convctl test     --config xrdconversionconfig.yaml --xrd xrd.yaml --samples ./samples/

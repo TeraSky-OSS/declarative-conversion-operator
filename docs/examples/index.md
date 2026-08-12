@@ -25,8 +25,8 @@ For a single fixture that exercises *every* built-in strategy at once, see the
 
 ## Running one
 
-Every example takes the same two commands, with `--crd` in place of `--xrd` for
-the native-CRD one:
+XRD-backed examples take `--xrd`; the native-CRD example takes `--crd` instead
+(same flags `convctl` uses everywhere else):
 
 ```console
 git clone https://github.com/terasky-oss/declarative-conversion-operator
@@ -35,6 +35,9 @@ cd declarative-conversion-operator/examples/field-rename
 convctl validate --config xrdconversionconfig.yaml --xrd xrd.yaml
 convctl test     --config xrdconversionconfig.yaml --xrd xrd.yaml --samples ./samples/
 ```
+
+For `examples/native-crd/`, swap in `--crd crd.yaml` and
+`crdconversionconfig.yaml`.
 
 From a checkout, `go run ./cmd/convctl` works in place of an installed
 `convctl` binary:

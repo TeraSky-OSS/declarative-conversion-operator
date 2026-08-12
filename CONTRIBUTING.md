@@ -31,8 +31,8 @@ make test-prometheus    # promtool unit tests for shipped alerts
 Offline CLI checks against fixtures (no cluster required):
 
 ```console
-go run ./cmd/convctl validate --config examples/field-rename/config.yaml --xrd examples/field-rename/xrd.yaml
-go run ./cmd/convctl test --config examples/field-rename/config.yaml --xrd examples/field-rename/xrd.yaml --samples examples/field-rename/samples
+go run ./cmd/convctl validate --config examples/field-rename/xrdconversionconfig.yaml --xrd examples/field-rename/xrd.yaml
+go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yaml --xrd examples/field-rename/xrd.yaml --samples examples/field-rename/samples
 ```
 
 ## Pull requests

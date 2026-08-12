@@ -56,9 +56,9 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement via a private
-GitHub Security Advisory (for security-related reports) or by contacting the
-maintainers listed in [CODEOWNERS](CODEOWNERS) through a private channel.
+reported privately to the project maintainers at **scott@terasky.com**.
+Security vulnerabilities are **not** Code of Conduct reports — follow
+[SECURITY.md](SECURITY.md) (GitHub Security Advisories) instead.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

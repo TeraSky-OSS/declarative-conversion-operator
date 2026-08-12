@@ -28,7 +28,7 @@ Most version migrations are not exotic: they're field renames, reshaping a scala
 You create one **`XRDConversionConfig`** per Crossplane XRD you want to version-convert, or one **`CRDConversionConfig`** per plain native CRD — both share the identical spec shape and rule vocabulary. Each names:
 
 - the resource's **hub version** (the one Kubernetes/Crossplane already stores objects as),
-- for each other served (**spoke**) version, a list of **conversion rules** — one of 16 built-in strategies like `fieldRename`, `scalarToObject`, `enumRemap`, or `jsonPatch` as an escape hatch.
+- for each other served (**spoke**) version, a list of **conversion rules** — one of the built-in strategies like `fieldRename`, `scalarToObject`, `enumRemap`, or `jsonPatch` as an escape hatch (see the [Strategy Reference](strategies/index.md) for the full set).
 
 The operator then:
 

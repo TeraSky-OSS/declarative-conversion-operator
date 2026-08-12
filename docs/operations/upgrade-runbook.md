@@ -64,19 +64,28 @@ otherwise the new manager runs against the old schema and any new field is
 silently dropped by the apiserver.
 
 ```console
+# Fetch once; fail here if Helm cannot retrieve the chart version.
 helm show crds oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
-  --version <new-version> | kubectl diff -f - || true
-```
+  --version <new-version> > /tmp/dco-crds.yaml
 
-An empty diff means nothing to do. Otherwise apply them first:
-
-```console
-helm show crds oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
-  --version <new-version> | kubectl apply -f -
+# kubectl diff exits 0 (identical), 1 (diff), or >1 (tooling error).
+set +e
+kubectl diff -f /tmp/dco-crds.yaml
+diff_rc=$?
+set -e
+if [ "$diff_rc" -gt 1 ]; then
+  echo "kubectl diff failed (exit $diff_rc); not applying CRDs" >&2
+  exit "$diff_rc"
+fi
+if [ "$diff_rc" -eq 1 ]; then
+  kubectl apply -f /tmp/dco-crds.yaml
+fi
 ```
 
 CRD updates are additive in practice (new optional fields, widened enums), but
-`kubectl diff` is what tells you that rather than an assumption.
+`kubectl diff` is what tells you that rather than an assumption. Do not pipe
+`helm show crds` straight into `kubectl apply` without checking retrieval
+succeeded — a Helm pull failure would otherwise look like an empty apply.
 
 ### 3. Upgrade the release
 
