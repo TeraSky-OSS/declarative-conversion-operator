@@ -54,7 +54,7 @@ See `values.yaml` for the full set.
 
 ## Multiple ConversionWebhookServer instances
 
-Create additional instances directly as `ConversionWebhookServer` custom resources (not via this chart) for scale-out or tenancy — each gets its own Deployment/Service/Certificate/HPA/PDB, reconciled by the operator:
+Create additional instances directly as `ConversionWebhookServer` custom resources (not via this chart) for scale-out or tenancy — each gets its own Deployment/Service/Certificate/HPA/PDB, reconciled by the operator. Pod-level settings such as `spec.extraArgs` are configured on the CR (the chart does not template a Deployment for webhook-server pods):
 
 ```yaml
 apiVersion: terasky.com/v1alpha1
@@ -64,6 +64,8 @@ metadata:
 spec:
   certificate:
     issuerRef: {name: my-ca-issuer, kind: ClusterIssuer}
+  extraArgs:
+    - --cert-reload-interval=1m
 ```
 
 Then reference it from an `XRDConversionConfig` via `spec.webhookServerRef.name: tenant-a`.

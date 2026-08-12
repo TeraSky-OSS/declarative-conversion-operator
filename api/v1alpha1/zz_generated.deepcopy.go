@@ -483,6 +483,11 @@ func (in *ConversionWebhookServerSpec) DeepCopyInto(out *ConversionWebhookServer
 		*out = new(corev1.Affinity)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.ExtraArgs != nil {
+		in, out := &in.ExtraArgs, &out.ExtraArgs
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Certificate.DeepCopyInto(&out.Certificate)
 	in.Service.DeepCopyInto(&out.Service)
 	if in.PodDisruptionBudget != nil {
