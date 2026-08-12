@@ -63,7 +63,10 @@ func TestRunConvert_HubToSpokeDropsLossyField(t *testing.T) {
 	if out["apiVersion"] != "example.org/v1" {
 		t.Fatalf("expected apiVersion example.org/v1, got %#v", out["apiVersion"])
 	}
-	spec := out["spec"].(map[string]any)
+	spec, ok := out["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a spec in the output, got %#v", out["spec"])
+	}
 	if spec["storageSize"] != "200" {
 		t.Fatalf("expected spec.storageGB renamed to spec.storageSize, got %#v", spec)
 	}
@@ -86,9 +89,10 @@ func TestRunConvert_FromOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	spec, _ := out["spec"].(map[string]any)
-	if _, renamed := spec["storageSize"]; renamed {
-		t.Fatalf("expected no spec.storageSize: the input had no spec.storageGB to rename, got %#v", spec)
+	if spec, ok := out["spec"].(map[string]any); ok {
+		if _, renamed := spec["storageSize"]; renamed {
+			t.Fatalf("expected no spec.storageSize: the input had no spec.storageGB to rename, got %#v", spec)
+		}
 	}
 	if out["apiVersion"] != "example.org/v1" {
 		t.Fatalf("expected apiVersion example.org/v1, got %#v", out["apiVersion"])

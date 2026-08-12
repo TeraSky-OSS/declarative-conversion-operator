@@ -19,6 +19,7 @@ package cli
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -144,8 +145,12 @@ func marshalPatch(v any) ([]byte, error) {
 // so a successful decode is a reliable signal the input was already
 // encoded.
 func normalizeCABundle(v string) string {
-	if _, err := base64.StdEncoding.DecodeString(v); err == nil {
-		return v
+	if strings.Contains(v, "-----BEGIN") {
+		return base64.StdEncoding.EncodeToString([]byte(v))
+	}
+	compact := strings.Join(strings.Fields(v), "")
+	if _, err := base64.StdEncoding.DecodeString(compact); err == nil {
+		return compact
 	}
 	return base64.StdEncoding.EncodeToString([]byte(v))
 }
