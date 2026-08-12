@@ -99,7 +99,11 @@ func (r *CRDConversionConfigReconciler) Reconcile(ctx context.Context, req recon
 }
 
 func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig) (ctrl.Result, error) {
-	wasApplied := cfg.Status.Phase == teraskyv1alpha1.PhaseApplied
+	// PhaseStale means a prior apply still stands (KeepServingStale /
+	// health-gate hold). Treat it like Applied so a later reconcile does
+	// not demote persistent drift to Invalid or drop ConditionStale.
+	wasApplied := cfg.Status.Phase == teraskyv1alpha1.PhaseApplied ||
+		cfg.Status.Phase == teraskyv1alpha1.PhaseStale
 	orig := cfg.DeepCopy()
 
 	// Step 1: fetch the target CRD.

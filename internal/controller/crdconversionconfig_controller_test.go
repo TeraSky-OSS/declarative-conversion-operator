@@ -189,6 +189,19 @@ func TestCRDReconcile_Drift_KeepServingStale(t *testing.T) {
 		t.Fatalf("expected condition Stale=True alongside phase Stale, got %+v", got.Status.Conditions)
 	}
 
+	// Reconcile again while drift remains: PhaseStale must keep wasApplied
+	// semantics so we stay Stale instead of demoting to Invalid.
+	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error on second drift reconcile: %v", err)
+	}
+	got = getCRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseStale {
+		t.Fatalf("expected phase to remain Stale on second reconcile, got %q", got.Status.Phase)
+	}
+	if !meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.ConditionStale) {
+		t.Fatalf("expected ConditionStale=True to remain on second reconcile, got %+v", got.Status.Conditions)
+	}
+
 	live = getCRDConfig(t, r, "cfg")
 	live.Spec.Spokes[0].Rules[0].FieldRename.HubPath = "spec.size"
 	if err := r.Update(context.Background(), live); err != nil {
