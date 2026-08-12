@@ -51,3 +51,11 @@ access.
 
 - Metrics trust boundary and NetworkPolicy: [security/metrics.md](security/metrics.md)
 - ConversionWebhookServer status fields: [configuration/conversionwebhookserver.md](configuration/conversionwebhookserver.md)
+
+## Controller watch-mapping errors
+
+When a secondary watch map function fails to `List` related configs (API
+timeout, etc.), the failure is logged and counted as
+`xrdconv_watch_map_list_errors_total{map_func=...}` instead of looking like
+a legitimate empty result. Configs still periodically self-reconcile
+(`RequeueAfter`), so a transient List miss recovers without pod restart.

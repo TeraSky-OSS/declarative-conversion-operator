@@ -41,6 +41,7 @@ import (
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/crdadapter"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
@@ -457,7 +458,7 @@ func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 func (r *CRDConversionConfigReconciler) mapCRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.CRDConversionConfigList
 	if err := r.List(ctx, &list, client.MatchingFields{TargetCRDNameIndex: obj.GetName()}); err != nil {
-		return nil
+		return watchmap.ListError(ctx, "crdconversionconfig.mapCRDToConfigs", err)
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for _, c := range list.Items {
@@ -469,7 +470,7 @@ func (r *CRDConversionConfigReconciler) mapCRDToConfigs(ctx context.Context, obj
 func (r *CRDConversionConfigReconciler) mapServerToAssignedConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	reqs, err := mapServerToAssignedCRDConfigs(ctx, r.Client, obj)
 	if err != nil {
-		return nil
+		return watchmap.ListError(ctx, "crdconversionconfig.mapServerToAssignedConfigs", err)
 	}
 	return reqs
 }
