@@ -563,7 +563,7 @@ func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teraskyv1alpha1.XRDConversionConfig{}).
 		Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
-		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFunc(r.mapServerToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
+		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
 		Named("xrdconversionconfig").
 		Complete(r)
 }
@@ -584,6 +584,14 @@ func (r *XRDConversionConfigReconciler) mapServerToAssignedConfigs(ctx context.C
 	reqs, err := mapServerToAssignedXRDConfigs(ctx, r.Client, obj)
 	if err != nil {
 		return watchmap.ListError(ctx, "xrdconversionconfig.mapServerToAssignedConfigs", err)
+	}
+	return reqs
+}
+
+func (r *XRDConversionConfigReconciler) mapServerTransitionToAssignedConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	reqs, err := mapServerTransitionToAssignedXRDConfigs(ctx, r.Client, oldObj, newObj)
+	if err != nil {
+		return watchmap.ListError(ctx, "xrdconversionconfig.mapServerTransitionToAssignedConfigs", err)
 	}
 	return reqs
 }

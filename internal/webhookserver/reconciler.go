@@ -356,7 +356,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if err := ctrl.NewControllerManagedBy(mgr).
 			For(&teraskyv1alpha1.XRDConversionConfig{}).
 			Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
-			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFunc(r.mapServerToAssignedXRDConfigs, enqueue.CWSConfigEnqueueQPS)).
+			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedXRDConfigs, r.mapServerTransitionToAssignedXRDConfigs, enqueue.CWSConfigEnqueueQPS)).
 			Named("webhookserver-registry-xrd").
 			Complete(reconcile.Func(r.reconcileXRD)); err != nil {
 			return fmt.Errorf("setting up XRD registry controller: %w", err)
@@ -377,7 +377,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if err := ctrl.NewControllerManagedBy(mgr).
 			For(&teraskyv1alpha1.CRDConversionConfig{}).
 			Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapCRDToConfigs)).
-			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFunc(r.mapServerToAssignedCRDConfigs, enqueue.CWSConfigEnqueueQPS)).
+			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedCRDConfigs, r.mapServerTransitionToAssignedCRDConfigs, enqueue.CWSConfigEnqueueQPS)).
 			Named("webhookserver-registry-crd").
 			Complete(reconcile.Func(r.reconcileCRD)); err != nil {
 			return fmt.Errorf("setting up CRD registry controller: %w", err)
@@ -412,35 +412,129 @@ func (r *Reconciler) mapCRDToConfigs(ctx context.Context, obj client.Object) []r
 }
 
 func (r *Reconciler) mapServerToAssignedXRDConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
-	var list teraskyv1alpha1.XRDConversionConfigList
-	if err := r.List(ctx, &list); err != nil {
+	reqs, err := mapAssignedXRD(ctx, r.Client, obj.GetName(), asCWS(obj))
+	if err != nil {
 		return watchmap.ListError(ctx, "webhookserver.mapServerToAssignedXRDConfigs", err)
 	}
-	var servers teraskyv1alpha1.ConversionWebhookServerList
-	if err := r.List(ctx, &servers); err != nil {
-		return watchmap.ListError(ctx, "webhookserver.mapServerToAssignedXRDConfigs", err)
-	}
-	assigned := assign.ConfigsAssignedTo(list.Items, servers.Items, obj.GetName())
-	reqs := make([]reconcile.Request, 0, len(assigned))
-	for _, cfg := range assigned {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
+	return reqs
+}
+
+func (r *Reconciler) mapServerTransitionToAssignedXRDConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	name := objectName(oldObj, newObj)
+	reqs, err := mapAssignedXRD(ctx, r.Client, name, asCWS(oldObj), asCWS(newObj))
+	if err != nil {
+		return watchmap.ListError(ctx, "webhookserver.mapServerTransitionToAssignedXRDConfigs", err)
 	}
 	return reqs
 }
 
 func (r *Reconciler) mapServerToAssignedCRDConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
-	var list teraskyv1alpha1.CRDConversionConfigList
-	if err := r.List(ctx, &list); err != nil {
+	reqs, err := mapAssignedCRD(ctx, r.Client, obj.GetName(), asCWS(obj))
+	if err != nil {
 		return watchmap.ListError(ctx, "webhookserver.mapServerToAssignedCRDConfigs", err)
-	}
-	var servers teraskyv1alpha1.ConversionWebhookServerList
-	if err := r.List(ctx, &servers); err != nil {
-		return watchmap.ListError(ctx, "webhookserver.mapServerToAssignedCRDConfigs", err)
-	}
-	assigned := assign.ConfigsAssignedTo(list.Items, servers.Items, obj.GetName())
-	reqs := make([]reconcile.Request, 0, len(assigned))
-	for _, cfg := range assigned {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
 	}
 	return reqs
+}
+
+func (r *Reconciler) mapServerTransitionToAssignedCRDConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	name := objectName(oldObj, newObj)
+	reqs, err := mapAssignedCRD(ctx, r.Client, name, asCWS(oldObj), asCWS(newObj))
+	if err != nil {
+		return watchmap.ListError(ctx, "webhookserver.mapServerTransitionToAssignedCRDConfigs", err)
+	}
+	return reqs
+}
+
+func objectName(oldObj, newObj client.Object) string {
+	if newObj != nil {
+		return newObj.GetName()
+	}
+	if oldObj != nil {
+		return oldObj.GetName()
+	}
+	return ""
+}
+
+func asCWS(obj client.Object) *teraskyv1alpha1.ConversionWebhookServer {
+	if obj == nil {
+		return nil
+	}
+	s, ok := obj.(*teraskyv1alpha1.ConversionWebhookServer)
+	if !ok {
+		return nil
+	}
+	return s
+}
+
+func mapAssignedXRD(ctx context.Context, c client.Client, serverName string, views ...*teraskyv1alpha1.ConversionWebhookServer) ([]reconcile.Request, error) {
+	var list teraskyv1alpha1.XRDConversionConfigList
+	if err := c.List(ctx, &list); err != nil {
+		return nil, err
+	}
+	var servers teraskyv1alpha1.ConversionWebhookServerList
+	if err := c.List(ctx, &servers); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	var reqs []reconcile.Request
+	for _, view := range views {
+		if view == nil {
+			continue
+		}
+		for _, cfg := range assign.ConfigsAssignedTo(list.Items, serversWithView(servers.Items, view), serverName) {
+			if _, ok := seen[cfg.Name]; ok {
+				continue
+			}
+			seen[cfg.Name] = struct{}{}
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
+		}
+	}
+	return reqs, nil
+}
+
+func mapAssignedCRD(ctx context.Context, c client.Client, serverName string, views ...*teraskyv1alpha1.ConversionWebhookServer) ([]reconcile.Request, error) {
+	var list teraskyv1alpha1.CRDConversionConfigList
+	if err := c.List(ctx, &list); err != nil {
+		return nil, err
+	}
+	var servers teraskyv1alpha1.ConversionWebhookServerList
+	if err := c.List(ctx, &servers); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	var reqs []reconcile.Request
+	for _, view := range views {
+		if view == nil {
+			continue
+		}
+		for _, cfg := range assign.ConfigsAssignedTo(list.Items, serversWithView(servers.Items, view), serverName) {
+			if _, ok := seen[cfg.Name]; ok {
+				continue
+			}
+			seen[cfg.Name] = struct{}{}
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
+		}
+	}
+	return reqs, nil
+}
+
+func serversWithView(live []teraskyv1alpha1.ConversionWebhookServer, view *teraskyv1alpha1.ConversionWebhookServer) []teraskyv1alpha1.ConversionWebhookServer {
+	out := make([]teraskyv1alpha1.ConversionWebhookServer, 0, len(live)+1)
+	found := false
+	for _, s := range live {
+		if s.Name == view.Name {
+			out = append(out, *view)
+			found = true
+			continue
+		}
+		cp := s
+		if view.Spec.Default {
+			cp.Spec.Default = false
+		}
+		out = append(out, cp)
+	}
+	if !found {
+		out = append(out, *view)
+	}
+	return out
 }

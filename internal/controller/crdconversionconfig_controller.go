@@ -450,7 +450,7 @@ func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teraskyv1alpha1.CRDConversionConfig{}).
 		Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapCRDToConfigs)).
-		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFunc(r.mapServerToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
+		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
 		Named("crdconversionconfig").
 		Complete(r)
 }
@@ -471,6 +471,14 @@ func (r *CRDConversionConfigReconciler) mapServerToAssignedConfigs(ctx context.C
 	reqs, err := mapServerToAssignedCRDConfigs(ctx, r.Client, obj)
 	if err != nil {
 		return watchmap.ListError(ctx, "crdconversionconfig.mapServerToAssignedConfigs", err)
+	}
+	return reqs
+}
+
+func (r *CRDConversionConfigReconciler) mapServerTransitionToAssignedConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	reqs, err := mapServerTransitionToAssignedCRDConfigs(ctx, r.Client, oldObj, newObj)
+	if err != nil {
+		return watchmap.ListError(ctx, "crdconversionconfig.mapServerTransitionToAssignedConfigs", err)
 	}
 	return reqs
 }

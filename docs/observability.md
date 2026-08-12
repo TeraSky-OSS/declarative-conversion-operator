@@ -21,13 +21,18 @@ path `/metrics`) are the supported signal:
 | `xrdconv_webhook_registry_last_reload_timestamp_seconds{xrd=...}` | Last successful compile time |
 | `xrdconv_webhook_registry_compile_errors_total{xrd=...,reason=...}` | Compile failures that left stale-or-absent plans in place |
 
-Replica identity comes from the Prometheus scrape target (pod label /
-instance). Example: confirm target `xfoos.example.org` is loaded on every
-ready webhook-server pod:
+Replica identity comes from the Prometheus scrape target (pod / instance
+label). Example: confirm every **ready** webhook-server pod has loaded
+target `xfoos.example.org` (empty result = healthy):
 
 ```promql
-xrdconv_webhook_registry_entry_loaded{xrd="xfoos.example.org"} == 1
+(xrdconv_webhook_ready == 1)
+  unless on (pod)
+(xrdconv_webhook_registry_entry_loaded{xrd="xfoos.example.org"} == 1)
 ```
+
+Use `instance` instead of `pod` if that is the stable scrape identity in
+your Prometheus config.
 
 Compare desired assignment count on the CWS status with live load:
 

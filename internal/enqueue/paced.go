@@ -36,15 +36,20 @@ import (
 // 50 QPS instead of an immediate workqueue burst. Feeds Phase 9 load e2e.
 const CWSConfigEnqueueQPS = 50.0
 
-// MapFunc is the same signature as controller-runtime's handler.MapFunc.
+// MapFunc maps a single object (Create / Generic) to reconcile requests.
 type MapFunc func(context.Context, client.Object) []reconcile.Request
 
-// PacedMapFunc returns an EventHandler that runs fn then enqueues the
-// resulting requests with staggered AddAfter delays at the given QPS.
+// UpdateMapFunc maps an Update event using both old and new objects so
+// callers can enqueue the union of prior and current assignments.
+type UpdateMapFunc func(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request
+
+// PacedMapFuncs returns an EventHandler that paces enqueue of mapped
+// requests at the given QPS. Update events use updateFn (old+new);
+// Create/Delete/Generic use mapFn on the single available object.
 // qps <= 0 disables pacing (immediate Add for every request).
-func PacedMapFunc(fn MapFunc, qps float64) handler.EventHandler {
-	enqueue := func(ctx context.Context, obj client.Object, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-		reqs := fn(ctx, obj)
+func PacedMapFuncs(mapFn MapFunc, updateFn UpdateMapFunc, qps float64) handler.EventHandler {
+	enqueue := func(reqs []reconcile.Request, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+		reqs = dedupeRequests(reqs)
 		if qps <= 0 {
 			for _, req := range reqs {
 				q.Add(req)
@@ -62,16 +67,16 @@ func PacedMapFunc(fn MapFunc, qps float64) handler.EventHandler {
 	}
 	return handler.Funcs{
 		CreateFunc: func(ctx context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-			enqueue(ctx, e.Object, q)
+			enqueue(mapFn(ctx, e.Object), q)
 		},
 		UpdateFunc: func(ctx context.Context, e event.UpdateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-			enqueue(ctx, e.ObjectNew, q)
+			enqueue(updateFn(ctx, e.ObjectOld, e.ObjectNew), q)
 		},
 		DeleteFunc: func(ctx context.Context, e event.DeleteEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-			enqueue(ctx, e.Object, q)
+			enqueue(mapFn(ctx, e.Object), q)
 		},
 		GenericFunc: func(ctx context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-			enqueue(ctx, e.Object, q)
+			enqueue(mapFn(ctx, e.Object), q)
 		},
 	}
 }
@@ -83,4 +88,21 @@ func FanoutSpread(n int, qps float64) time.Duration {
 		return 0
 	}
 	return time.Duration(float64(n-1) / qps * float64(time.Second))
+}
+
+func dedupeRequests(reqs []reconcile.Request) []reconcile.Request {
+	if len(reqs) < 2 {
+		return reqs
+	}
+	seen := make(map[string]struct{}, len(reqs))
+	out := make([]reconcile.Request, 0, len(reqs))
+	for _, req := range reqs {
+		key := req.Namespace + "/" + req.Name
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, req)
+	}
+	return out
 }
