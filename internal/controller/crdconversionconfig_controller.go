@@ -99,7 +99,11 @@ func (r *CRDConversionConfigReconciler) Reconcile(ctx context.Context, req recon
 }
 
 func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig) (ctrl.Result, error) {
-	wasApplied := cfg.Status.Phase == teraskyv1alpha1.PhaseApplied
+	// PhaseStale means a prior apply still stands (KeepServingStale /
+	// health-gate hold). Treat it like Applied so a later reconcile does
+	// not demote persistent drift to Invalid or drop ConditionStale.
+	wasApplied := cfg.Status.Phase == teraskyv1alpha1.PhaseApplied ||
+		cfg.Status.Phase == teraskyv1alpha1.PhaseStale
 	orig := cfg.DeepCopy()
 
 	// Step 1: fetch the target CRD.
@@ -138,12 +142,14 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 				logger.Error(err, "failed to revert CRD after drift under FailClosed policy")
 			}
 			cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
+			meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 			msg = "schema drift invalidated a previously-applied config; reverted to strategy=None per driftPolicy=FailClosed"
 		} else if wasApplied {
-			cfg.Status.Phase = teraskyv1alpha1.PhaseStale
 			msg = "schema drift invalidated this config, but the previously-applied webhook configuration is left untouched (driftPolicy=KeepServingStale); fix the config or the CRD to clear this"
+			setPhaseStale(&cfg.Status.Conditions, &cfg.Status.Phase, "SchemaDrift", msg)
 		} else {
 			cfg.Status.Phase = teraskyv1alpha1.PhaseInvalid
+			meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 		}
 		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 			Type: teraskyv1alpha1.ConditionValidated, Status: metav1.ConditionFalse, Reason: "ValidationFailed", Message: msg,
@@ -170,10 +176,11 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 
 	// Step 5: CRD health gate.
 	if !crdadapter.Established(&crd) {
+		msg := "target CustomResourceDefinition is not yet Established"
 		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
-			Type: teraskyv1alpha1.ConditionCRDHealthy, Status: metav1.ConditionFalse, Reason: "NotEstablished", Message: "target CustomResourceDefinition is not yet Established",
+			Type: teraskyv1alpha1.ConditionCRDHealthy, Status: metav1.ConditionFalse, Reason: "NotEstablished", Message: msg,
 		})
-		cfg.Status.Phase = phasePending(wasApplied)
+		setPhasePendingOrStale(&cfg.Status.Conditions, &cfg.Status.Phase, wasApplied, "NotEstablished", msg)
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, r.patchStatus(ctx, orig, cfg)
 	}
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
@@ -186,10 +193,11 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 		return ctrl.Result{}, fmt.Errorf("getting assigned ConversionWebhookServer %q: %w", serverName, err)
 	}
 	if !isServerReady(&server) {
+		msg := fmt.Sprintf("ConversionWebhookServer %q is not yet Available", serverName)
 		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
-			Type: teraskyv1alpha1.ConditionWebhookServerReady, Status: metav1.ConditionFalse, Reason: "ServerNotReady", Message: fmt.Sprintf("ConversionWebhookServer %q is not yet Available", serverName),
+			Type: teraskyv1alpha1.ConditionWebhookServerReady, Status: metav1.ConditionFalse, Reason: "ServerNotReady", Message: msg,
 		})
-		cfg.Status.Phase = phasePending(wasApplied)
+		setPhasePendingOrStale(&cfg.Status.Conditions, &cfg.Status.Phase, wasApplied, "ServerNotReady", msg)
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, r.patchStatus(ctx, orig, cfg)
 	}
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
@@ -237,9 +245,10 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 
 func (r *CRDConversionConfigReconciler) setInvalid(cfg *teraskyv1alpha1.CRDConversionConfig, wasApplied bool, msg string) {
 	if wasApplied {
-		cfg.Status.Phase = teraskyv1alpha1.PhaseStale
+		setPhaseStale(&cfg.Status.Conditions, &cfg.Status.Phase, "PostApplyInvalid", msg)
 	} else {
 		cfg.Status.Phase = teraskyv1alpha1.PhaseInvalid
+		meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 	}
 	cfg.Status.Message = msg
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{

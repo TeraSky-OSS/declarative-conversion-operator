@@ -161,6 +161,64 @@ func TestCRDReconcile_Drift_FailClosed_RevertsAndFails(t *testing.T) {
 	}
 }
 
+func TestCRDReconcile_Drift_KeepServingStale(t *testing.T) {
+	crd := establishedCRD("foos.example.org")
+	cfg := renameRuleCRDConfig("cfg", "foos.example.org")
+	cfg.Spec.DriftPolicy = teraskyv1alpha1.DriftPolicyKeepServingStale
+	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
+	controllerutil.AddFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
+	server, secret := readyServer("srv")
+
+	c := newFakeClient(crd, cfg, server, secret).Build()
+	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
+
+	live := getCRDConfig(t, r, "cfg")
+	live.Spec.Spokes[0].Rules[0].FieldRename.HubPath = "spec.doesNotExist"
+	if err := r.Update(context.Background(), live); err != nil {
+		t.Fatalf("updating config: %v", err)
+	}
+
+	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := getCRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseStale {
+		t.Fatalf("expected phase Stale under KeepServingStale drift, got %q", got.Status.Phase)
+	}
+	if !meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.ConditionStale) {
+		t.Fatalf("expected condition Stale=True alongside phase Stale, got %+v", got.Status.Conditions)
+	}
+
+	// Reconcile again while drift remains: PhaseStale must keep wasApplied
+	// semantics so we stay Stale instead of demoting to Invalid.
+	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error on second drift reconcile: %v", err)
+	}
+	got = getCRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseStale {
+		t.Fatalf("expected phase to remain Stale on second reconcile, got %q", got.Status.Phase)
+	}
+	if !meta.IsStatusConditionTrue(got.Status.Conditions, teraskyv1alpha1.ConditionStale) {
+		t.Fatalf("expected ConditionStale=True to remain on second reconcile, got %+v", got.Status.Conditions)
+	}
+
+	live = getCRDConfig(t, r, "cfg")
+	live.Spec.Spokes[0].Rules[0].FieldRename.HubPath = "spec.size"
+	if err := r.Update(context.Background(), live); err != nil {
+		t.Fatalf("restoring valid rule: %v", err)
+	}
+	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error after resolving drift: %v", err)
+	}
+	got = getCRDConfig(t, r, "cfg")
+	if got.Status.Phase != teraskyv1alpha1.PhaseApplied {
+		t.Fatalf("expected phase Applied after resolving drift, got %q (message: %s)", got.Status.Phase, got.Status.Message)
+	}
+	if cond := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionStale); cond != nil {
+		t.Fatalf("expected ConditionStale to be cleared after drift resolves, got %+v", cond)
+	}
+}
+
 func TestCRDReconcile_Delete_BlockedByMultipleServedVersions(t *testing.T) {
 	crd := establishedCRD("foos.example.org") // v1 and v2, both served
 	cfg := renameRuleCRDConfig("cfg", "foos.example.org")
