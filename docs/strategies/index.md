@@ -42,4 +42,4 @@ Every strategy page follows the same shape:
 4. The **`XRDConversionConfig` rule** that maps between them.
 5. **Example objects** at both versions, so you can see the exact before/after shape.
 
-All examples are self-contained and runnable through `convctl test` — see [Getting Started](../getting-started.md) and the [CLI Reference](../cli.md). For complete configs combining several strategies against a whole schema, see [Examples](../examples/index.md); for a single fixture exercising every strategy in this reference at once, see [`internal/cli/testdata/full`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full) in the repository.
+All examples are self-contained and runnable through `convctl test` — see [Getting Started](../getting-started.md) and the [CLI Reference](../cli.md). For complete configs combining several strategies against a whole schema, see [Examples](../examples/index.md); for a single fixture exercising every strategy in this reference at once — with a rule-by-rule index of where each one lives — see [Kitchen sink](../examples/kitchen-sink.md).

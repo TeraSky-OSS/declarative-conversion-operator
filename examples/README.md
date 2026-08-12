@@ -30,4 +30,5 @@ go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yam
 ```
 
 For a single fixture that exercises *every* built-in strategy at once, see
-[`internal/cli/testdata/full/`](../internal/cli/testdata/full/).
+[`internal/cli/testdata/full/`](../internal/cli/testdata/full/) and its
+[walkthrough](https://terasky-oss.github.io/declarative-conversion-operator/examples/kitchen-sink/).

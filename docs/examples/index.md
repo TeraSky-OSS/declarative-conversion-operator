@@ -20,8 +20,8 @@ isolation, these show a complete, runnable config you can copy and adapt.
 | [`crossplane-xr-multiversion/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion) | A three-version XRD: one hub, two spokes that drifted differently, `status` mapping, and one acknowledged lossy field. | [`FieldRename`](../strategies/field-rename.md), [`ScalarToObject`](../strategies/scalar-object.md), [`EnumRemap`](../strategies/enum-remap.md), [`SingletonArrayToObject`](../strategies/singleton-array-object.md), [`ToAnnotation`](../strategies/metadata-stash.md), [`Delete`](../strategies/delete.md) |
 | [`native-crd/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/native-crd) | The same model against a plain Kubernetes CRD, with no Crossplane anywhere. | [`FieldRename`](../strategies/field-rename.md), [`Delete`](../strategies/delete.md) |
 
-For a single fixture that exercises *every* built-in strategy at once, see
-[`internal/cli/testdata/full/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full).
+For a single fixture that exercises *every* built-in strategy at once, see the
+[kitchen-sink walkthrough](kitchen-sink.md).
 
 ## Running one
 
