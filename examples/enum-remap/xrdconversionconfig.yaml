@@ -1,0 +1,24 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xcaches-conversion
+spec:
+  targetXRD:
+    name: xcaches.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        # Every hub value must appear exactly once, and every spoke value
+        # exactly once, or the config is rejected — that total, unambiguous
+        # mapping is what makes the strategy lossless in both directions.
+        - strategy: EnumRemap
+          enumRemap:
+            path: spec.size
+            mapping:
+              - hub: Small
+                spoke: S
+              - hub: Medium
+                spoke: M
+              - hub: Large
+                spoke: L

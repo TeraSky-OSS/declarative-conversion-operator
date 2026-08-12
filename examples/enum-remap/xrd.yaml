@@ -1,0 +1,43 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xcaches.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XCache
+    plural: xcaches
+  versions:
+    # Hub. The field keeps its path (spec.size) on both versions — only the
+    # set of allowed values changed.
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                size:
+                  type: string
+                  enum: ["Small", "Medium", "Large"]
+                engine:
+                  type: string
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                size:
+                  type: string
+                  enum: ["S", "M", "L"]
+                engine:
+                  type: string

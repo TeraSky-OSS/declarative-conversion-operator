@@ -1,0 +1,7 @@
+apiVersion: example.org/v2
+kind: XCache
+metadata:
+  name: cache-hub
+spec:
+  size: Large
+  engine: redis

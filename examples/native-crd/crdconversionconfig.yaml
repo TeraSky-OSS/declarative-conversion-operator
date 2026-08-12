@@ -1,0 +1,24 @@
+apiVersion: terasky.com/v1alpha1
+kind: CRDConversionConfig
+metadata:
+  name: widgets-conversion
+spec:
+  targetCRD:
+    name: widgets.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+        # legacyDebugFlag exists only on the hub. Dropping it on the way down
+        # to v1 is a deliberate decision, so the rule has to say so — without
+        # acknowledgeLossy the whole config is rejected.
+        - strategy: Delete
+          delete:
+            path: spec.legacyDebugFlag
+            existsOn: Hub
+          acknowledgeLossy: true
+          reason: "legacyDebugFlag is a v2-only debugging switch with no v1 equivalent; a v2 object read at v1 and written back loses it"

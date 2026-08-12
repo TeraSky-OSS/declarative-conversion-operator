@@ -79,6 +79,15 @@ kubectl apply -f config/samples/terasky_v1alpha1_xrdconversionconfig.yaml
 kubectl get xrdconversionconfig xpostgresqlinstances-conversion -o yaml
 ```
 
+## Examples
+
+[`examples/`](examples/) holds five self-contained conversion stories, smallest first — a field rename, an enum remap, a `forEach` array reshape, a three-version Crossplane XR migration, and the same model against a plain native CRD. Each directory has a schema, a config, sample objects at every served version, and a README explaining the scenario, and each is independently runnable offline:
+
+```console
+go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yaml \
+  --xrd examples/field-rename/xrd.yaml --samples examples/field-rename/samples/
+```
+
 ## Conversion strategies
 
 `fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, one level of nesting), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`. Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.

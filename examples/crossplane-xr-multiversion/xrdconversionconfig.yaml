@@ -1,0 +1,61 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v3
+  spokes:
+    - version: v2
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+
+        - strategy: ScalarToObject
+          scalarToObject:
+            hubPath: spec.replicaCount
+            spokePath: spec.replicas
+            key: count
+
+        - strategy: EnumRemap
+          enumRemap:
+            path: spec.size
+            mapping:
+              - hub: Small
+                spoke: S
+              - hub: Medium
+                spoke: M
+              - hub: Large
+                spoke: L
+
+        # Rules apply to status.* exactly as they do to spec.*.
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: status.phase
+            spokePath: status.state
+
+    - version: v1
+      rules:
+        - strategy: SingletonArrayToObject
+          singletonArrayToObject:
+            hubPath: spec.zones
+            spokePath: spec.zone
+
+        # v1 has nowhere to put the hub's description, so it is stashed in an
+        # annotation and read back out on the way up. restoreOnReverse is what
+        # keeps this lossless in both directions.
+        - strategy: ToAnnotation
+          toAnnotation:
+            hubPath: spec.description
+            key: xrd.example.org/description
+            restoreOnReverse: true
+
+        - strategy: Delete
+          delete:
+            path: spec.debugMode
+            existsOn: Spoke
+          acknowledgeLossy: true
+          reason: "debugMode is a v1-only escape hatch with no hub equivalent; a v1 object converted up to the hub loses it"

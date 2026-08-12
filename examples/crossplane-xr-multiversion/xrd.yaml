@@ -1,0 +1,115 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xwidgets.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XWidget
+    plural: xwidgets
+  versions:
+    # v3 is the hub: the storage version every conversion routes through.
+    - name: v3
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                replicaCount:
+                  type: integer
+                size:
+                  type: string
+                  enum: ["Small", "Medium", "Large"]
+                description:
+                  type: string
+                zones:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+
+    # v2 renamed and reshaped several hub fields, and renamed status.phase.
+    - name: v2
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string
+                replicas:
+                  type: object
+                  properties:
+                    count:
+                      type: integer
+                size:
+                  type: string
+                  enum: ["S", "M", "L"]
+                # identical to the hub, so no rule is needed
+                description:
+                  type: string
+                zones:
+                  type: array
+                  maxItems: 1
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+
+    # v1 is the oldest served version: it predates multi-zone support, has no
+    # description field at all, and carries a v1-only debug switch.
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                zone:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                debugMode:
+                  type: boolean
+                # identical to the hub, so no rule is needed
+                storageGB:
+                  type: string
+                replicaCount:
+                  type: integer
+                size:
+                  type: string
+                  enum: ["Small", "Medium", "Large"]
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string

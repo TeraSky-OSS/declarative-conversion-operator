@@ -1,0 +1,18 @@
+apiVersion: example.org/v1
+kind: XWidget
+metadata:
+  name: widget-v1
+  annotations:
+    # A v1 object that has already been through the hub carries the stashed
+    # description; a JSON-serialized string, which is the default for
+    # toAnnotation. A v1-native object simply wouldn't have this annotation.
+    xrd.example.org/description: '"Developer sandbox widget"'
+spec:
+  zone:
+    name: eu-central-1a
+  debugMode: true
+  storageGB: "64"
+  replicaCount: 1
+  size: Small
+status:
+  phase: Pending

@@ -1,0 +1,26 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xclusters-conversion
+spec:
+  targetXRD:
+    name: xclusters.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: ForEach
+          forEach:
+            hubItemsPath: spec.nodePools
+            spokeItemsPath: spec.nodePools
+            # Nested paths are relative to a single array element — not
+            # prefixed with spec.nodePools[].
+            rules:
+              - strategy: FieldRename
+                fieldRename:
+                  hubPath: instanceType
+                  spokePath: machineType
+              - strategy: FieldRename
+                fieldRename:
+                  hubPath: nodeCount
+                  spokePath: replicas

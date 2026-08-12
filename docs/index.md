@@ -79,6 +79,7 @@ See [Architecture](architecture.md) for the full picture.
 
 - New to the operator? Start with [Getting Started](getting-started.md).
 - Ready to install? See [Installation](installation.md).
+- Want a complete, runnable config to copy? See [Examples](examples/index.md).
 - Configuring a real XRD? See [XRDConversionConfig](configuration/xrdconversionconfig.md).
 - Looking for a specific strategy? See the [Strategy Reference](strategies/index.md).
 - Wondering what this doesn't do (yet)? See [Limitations](limitations.md) and the [Roadmap](roadmap.md).

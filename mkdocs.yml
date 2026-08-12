@@ -75,6 +75,8 @@ nav:
       - XRDConversionConfig: configuration/xrdconversionconfig.md
       - CRDConversionConfig: configuration/crdconversionconfig.md
       - ConversionWebhookServer: configuration/conversionwebhookserver.md
+  - Examples:
+      - examples/index.md
   - Architecture: architecture.md
   - Observability: observability.md
   - Operations:
