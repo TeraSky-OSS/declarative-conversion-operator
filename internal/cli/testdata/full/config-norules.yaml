@@ -1,0 +1,14 @@
+# testdata/full/config.yaml with every rule stripped: the "I have a new
+# spoke version and no mapping yet" starting point `convctl suggest` exists
+# to bootstrap.
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v3
+  spokes:
+    - version: v2
+    - version: v1

@@ -9,6 +9,7 @@ convctl test      --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samp
 convctl diff      --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o json|table]
 convctl diff      --config config.yaml --live [-o json|table]
 convctl convert   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
+convctl suggest   --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
 ```
 
 ## `convctl validate`
@@ -151,6 +152,48 @@ metadata:
 spec:
   storageGB: "100"
 ```
+
+## `convctl suggest`
+
+Proposes rule stubs for the fields a config leaves uncovered — the tedious half of authoring a mapping between two versions. Point it at a config with no rules at all and it bootstraps a first draft; point it at a half-finished one and it fills in what's still missing.
+
+```console
+convctl suggest --xrd xrd.yaml --config xrdconversionconfig.yaml
+convctl suggest --crd crd.yaml --config crdconversionconfig.yaml -o json
+```
+
+| Flag | Description |
+|---|---|
+| `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig` YAML file. **Required.** |
+| `-x, --xrd` | Path to an XRD YAML file. Required for an `XRDConversionConfig`; mutually exclusive with `--crd`. |
+| `--crd` | Path to a CRD YAML file. Required for a `CRDConversionConfig`. |
+| `-o, --output` | `yaml` (default) or `json`. |
+
+Two kinds of suggestion are made, per spoke:
+
+- **`FieldRename`**, when an uncovered hub field and an uncovered spoke field sit under the same parent path, declare the same type, and have similar enough names after normalizing away casing and punctuation (`storageGB` ↔ `storage_size`).
+- **`TypeCoerce`**, when a field keeps its exact path but changes scalar type between the two versions.
+
+Nothing else is guessed at. A `ScalarToFields` split or an `ArrayToMapByKey` restructure is a design decision, not a pattern to infer from two schemas.
+
+```console
+$ convctl suggest --xrd xrd.yaml --config config-with-no-rules.yaml
+# suggested rules — review every one before merging into spec.spokes
+spokes:
+- rules:
+  - strategy: TypeCoerce
+    typeCoerce:
+      path: spec.priority
+  - fieldRename:
+      hubPath: spec.storageGB
+      spokePath: spec.storageSize
+    strategy: FieldRename
+  version: v2
+```
+
+The output is shaped exactly like a config's `spec.spokes` stanza, so accepted suggestions paste straight in.
+
+**These are heuristics, not conclusions.** Nothing can prove two differently-named fields were meant to be the same one, and name similarity will occasionally pair the wrong two. Read every suggestion, delete the wrong ones, and let `convctl validate` and `convctl test` grade what's left — a suggestion that survives both is a rule you can trust, and one that doesn't cost you a deleted line.
 
 ## Pre-upgrade checks: testing against everything that already exists
 
