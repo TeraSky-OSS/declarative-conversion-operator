@@ -33,6 +33,7 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/crdadapter"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
@@ -354,7 +355,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if err := ctrl.NewControllerManagedBy(mgr).
 			For(&teraskyv1alpha1.XRDConversionConfig{}).
 			Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
-			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, handler.EnqueueRequestsFromMapFunc(r.mapAnyServerToAllXRDConfigs)).
+			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFunc(r.mapServerToAssignedXRDConfigs, enqueue.CWSConfigEnqueueQPS)).
 			Named("webhookserver-registry-xrd").
 			Complete(reconcile.Func(r.reconcileXRD)); err != nil {
 			return fmt.Errorf("setting up XRD registry controller: %w", err)
@@ -375,7 +376,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if err := ctrl.NewControllerManagedBy(mgr).
 			For(&teraskyv1alpha1.CRDConversionConfig{}).
 			Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapCRDToConfigs)).
-			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, handler.EnqueueRequestsFromMapFunc(r.mapAnyServerToAllCRDConfigs)).
+			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFunc(r.mapServerToAssignedCRDConfigs, enqueue.CWSConfigEnqueueQPS)).
 			Named("webhookserver-registry-crd").
 			Complete(reconcile.Func(r.reconcileCRD)); err != nil {
 			return fmt.Errorf("setting up CRD registry controller: %w", err)
@@ -409,26 +410,36 @@ func (r *Reconciler) mapCRDToConfigs(ctx context.Context, obj client.Object) []r
 	return reqs
 }
 
-func (r *Reconciler) mapAnyServerToAllXRDConfigs(ctx context.Context, _ client.Object) []reconcile.Request {
+func (r *Reconciler) mapServerToAssignedXRDConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.XRDConversionConfigList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}
-	reqs := make([]reconcile.Request, 0, len(list.Items))
-	for _, c := range list.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+	var servers teraskyv1alpha1.ConversionWebhookServerList
+	if err := r.List(ctx, &servers); err != nil {
+		return nil
+	}
+	assigned := assign.ConfigsAssignedTo(list.Items, servers.Items, obj.GetName())
+	reqs := make([]reconcile.Request, 0, len(assigned))
+	for _, cfg := range assigned {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
 	}
 	return reqs
 }
 
-func (r *Reconciler) mapAnyServerToAllCRDConfigs(ctx context.Context, _ client.Object) []reconcile.Request {
+func (r *Reconciler) mapServerToAssignedCRDConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.CRDConversionConfigList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}
-	reqs := make([]reconcile.Request, 0, len(list.Items))
-	for _, c := range list.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+	var servers teraskyv1alpha1.ConversionWebhookServerList
+	if err := r.List(ctx, &servers); err != nil {
+		return nil
+	}
+	assigned := assign.ConfigsAssignedTo(list.Items, servers.Items, obj.GetName())
+	reqs := make([]reconcile.Request, 0, len(assigned))
+	for _, cfg := range assigned {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
 	}
 	return reqs
 }
