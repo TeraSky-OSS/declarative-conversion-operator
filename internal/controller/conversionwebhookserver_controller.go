@@ -305,8 +305,13 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	}
 	var pullPolicy corev1.PullPolicy
 	if server.Spec.Image != nil {
-		if server.Spec.Image.Repository != "" && server.Spec.Image.Tag != "" {
-			image = fmt.Sprintf("%s:%s", server.Spec.Image.Repository, server.Spec.Image.Tag)
+		if server.Spec.Image.Repository != "" {
+			switch {
+			case server.Spec.Image.Digest != "":
+				image = server.Spec.Image.Repository + "@" + server.Spec.Image.Digest
+			case server.Spec.Image.Tag != "":
+				image = fmt.Sprintf("%s:%s", server.Spec.Image.Repository, server.Spec.Image.Tag)
+			}
 		}
 		pullPolicy = server.Spec.Image.PullPolicy
 	}

@@ -23,7 +23,11 @@ spec:
   {{- end }}
   image:
     repository: {{ .Values.image.registry }}/{{ .Values.image.webhookServer.repository }}
+    {{- if .Values.image.webhookServer.digest }}
+    digest: {{ .Values.image.webhookServer.digest | quote }}
+    {{- else }}
     tag: {{ .Values.image.webhookServer.tag | default .Chart.AppVersion | quote }}
+    {{- end }}
     pullPolicy: {{ .Values.image.pullPolicy }}
   resources:
     {{- toYaml .Values.conversionWebhookServer.resources | nindent 4 }}

@@ -7,9 +7,13 @@ image:
   manager:
     repository: terasky-oss/declarative-conversion-operator
     tag: ""
+    # Optional content digest (e.g. sha256:...). When set, pins the image by
+    # digest instead of tag (repository@digest).
+    digest: ""
   webhookServer:
     repository: terasky-oss/declarative-conversion-webhook-server
     tag: ""
+    digest: ""
   pullPolicy: IfNotPresent
 
 # CRDs are installed from the crds/ directory (Helm's built-in convention):

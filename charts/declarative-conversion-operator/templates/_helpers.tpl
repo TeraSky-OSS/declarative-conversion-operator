@@ -68,6 +68,31 @@ spec.namespace is left unset — defaults to the release namespace.
 {{- end }}
 
 {{/*
+Manager container image. Prefer digest pinning when image.manager.digest is set.
+*/}}
+{{- define "declarative-conversion-operator.managerImage" -}}
+{{- $repo := printf "%s/%s" .Values.image.registry .Values.image.manager.repository -}}
+{{- if .Values.image.manager.digest -}}
+{{- printf "%s@%s" $repo .Values.image.manager.digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repo (.Values.image.manager.tag | default .Chart.AppVersion) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Webhook-server container image (also passed to the manager as --default-webhook-server-image).
+Prefer digest pinning when image.webhookServer.digest is set.
+*/}}
+{{- define "declarative-conversion-operator.webhookServerImage" -}}
+{{- $repo := printf "%s/%s" .Values.image.registry .Values.image.webhookServer.repository -}}
+{{- if .Values.image.webhookServer.digest -}}
+{{- printf "%s@%s" $repo .Values.image.webhookServer.digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repo (.Values.image.webhookServer.tag | default .Chart.AppVersion) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 The manager's own admission-webhook Service name (referenced by both the
 Certificate and the ValidatingWebhookConfiguration).
 */}}

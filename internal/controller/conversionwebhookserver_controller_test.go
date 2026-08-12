@@ -127,6 +127,39 @@ func TestCWSReconcile_ExtraArgs_RejectsManagedFlag(t *testing.T) {
 	}
 }
 
+func TestCWSReconcile_ImageDigest_PinsRepository(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+			Image: &teraskyv1alpha1.ImageSpec{
+				Repository: "ghcr.io/example/webhook-server",
+				Tag:        "v9.9.9", // digest must win over tag
+				Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns", DefaultImage: "test/image:v1"}
+
+	if _, err := reconcileCWS(t, r, "srv"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var dep appsv1.Deployment
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv-webhook-server", Namespace: "operator-ns"}, &dep); err != nil {
+		t.Fatalf("expected a Deployment: %v", err)
+	}
+	got := dep.Spec.Template.Spec.Containers[0].Image
+	want := "ghcr.io/example/webhook-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if got != want {
+		t.Fatalf("image=%q, want %q", got, want)
+	}
+}
+
 func TestCWSReconcile_SecurityContext_PSSRestricted(t *testing.T) {
 	server := &teraskyv1alpha1.ConversionWebhookServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
