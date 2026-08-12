@@ -69,8 +69,18 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 | `--fail-on` | Exit-code threshold: `none`, `warn`, or `loss` (default). |
 | `--version-pair` | Restrict testing to specific version(s). Repeatable. |
 | `--skip-identity` | Skip trivial same-version passthrough checks. |
+| `--concurrency` | How many samples to test in parallel. Defaults to one worker per available CPU. |
+| `--quiet` | Suppress the progress line written to stderr. |
 
 Each sample's asserted starting version is inferred from its own `apiVersion` — no separate index file needed.
+
+### Parallelism and progress
+
+Samples are tested in parallel, one worker per available CPU by default. This matters most for `--live`, where the sample set is every object of the target type in the cluster rather than a handful of fixtures. Set `--concurrency N` to pin the worker count (`--concurrency 1` to go fully sequential).
+
+Parallelism never changes the result. Every sample is independent, and results are collected by sample index rather than by completion order, so the report — including the order samples appear in — is byte-for-byte what a single worker would have produced. The paths *within* one sample stay sequential.
+
+While more than one sample is in flight, a `tested N/M samples` progress line is rewritten on stderr, leaving stdout clean for `--output json`/`junit` pipes. Pass `--quiet` to suppress it.
 
 ### Output formats
 

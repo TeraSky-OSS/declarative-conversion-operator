@@ -159,9 +159,10 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		skipIdentity, strict, live                                           bool
+		skipIdentity, strict, live, quiet                                    bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext                                              string
+		concurrency                                                          int
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
@@ -184,7 +185,11 @@ target resource — no write access, and no access to the operator's own CRDs.
 
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
-pass/loss/fail/error summary still prints to stdout either way.`,
+pass/loss/fail/error summary still prints to stdout either way.
+
+Samples are tested in parallel (--concurrency, default one worker per CPU) with
+progress on stderr (--quiet to silence it). The report is identical either way:
+results are collected by sample index, never by completion order.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch output {
 			case "table", "json", "junit":
@@ -200,6 +205,7 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
+				Concurrency: concurrency, Quiet: quiet,
 			})
 			if err != nil {
 				return err
@@ -245,6 +251,8 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
 	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
