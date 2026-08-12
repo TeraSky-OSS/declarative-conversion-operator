@@ -17,12 +17,14 @@ limitations under the License.
 package controller
 
 import (
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 func xrdWithServedVersions(served ...bool) *unstructured.Unstructured {
@@ -82,5 +84,34 @@ func TestPhasePending_ReportsStaleOnceApplied(t *testing.T) {
 	}
 	if got := phasePending(true); got != teraskyv1alpha1.PhaseStale {
 		t.Fatalf("expected Stale once a config has been Applied before, got %s", got)
+	}
+}
+
+func TestPopulateSpokeStatuses_CopiesUncoveredFields(t *testing.T) {
+	cfg := &teraskyv1alpha1.XRDConversionConfig{}
+	report := engine.AnalyzeReport{
+		SpokeReports: []engine.SpokeReport{{
+			Version:  "v1",
+			Lossless: engine.LosslessVerdict{HubToSpoke: false, SpokeToHub: false},
+			Uncovered: engine.FieldCoverage{
+				UncoveredHub:   []string{"hubOnly"},
+				UncoveredSpoke: []string{"spokeOnly"},
+			},
+			Errors: []engine.Diagnostic{{
+				Severity: engine.SeverityError,
+				Message:  `hub field "hubOnly" is not covered by any rule and has no identical counterpart in the spoke schema`,
+			}},
+		}},
+	}
+	populateSpokeStatuses(cfg, report)
+	if len(cfg.Status.SpokeStatuses) != 1 {
+		t.Fatalf("expected 1 spoke status, got %d", len(cfg.Status.SpokeStatuses))
+	}
+	s := cfg.Status.SpokeStatuses[0]
+	if !reflect.DeepEqual(s.FieldsUncoveredHub, []string{"hubOnly"}) {
+		t.Fatalf("FieldsUncoveredHub = %#v, want [hubOnly]", s.FieldsUncoveredHub)
+	}
+	if !reflect.DeepEqual(s.FieldsUncoveredSpoke, []string{"spokeOnly"}) {
+		t.Fatalf("FieldsUncoveredSpoke = %#v, want [spokeOnly]", s.FieldsUncoveredSpoke)
 	}
 }

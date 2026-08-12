@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -28,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 func reconcileCRD(t *testing.T, r *CRDConversionConfigReconciler, name string) (reconcile.Result, error) {
@@ -212,5 +214,34 @@ func TestCRDReconcile_NotFound_IsIgnored(t *testing.T) {
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
 	if _, err := reconcileCRD(t, r, "does-not-exist"); err != nil {
 		t.Fatalf("expected a NotFound Get to be swallowed, got %v", err)
+	}
+}
+
+func TestPopulateCRDSpokeStatuses_CopiesUncoveredFields(t *testing.T) {
+	cfg := &teraskyv1alpha1.CRDConversionConfig{}
+	report := engine.AnalyzeReport{
+		SpokeReports: []engine.SpokeReport{{
+			Version:  "v1beta1",
+			Lossless: engine.LosslessVerdict{HubToSpoke: true, SpokeToHub: true},
+			Uncovered: engine.FieldCoverage{
+				UncoveredHub:   []string{"spec.hubOnly"},
+				UncoveredSpoke: []string{"spec.spokeOnly"},
+			},
+			Warnings: []engine.Diagnostic{{
+				Severity: engine.SeverityWarning,
+				Message:  `hub field "spec.hubOnly" is not covered by any rule and has no identical counterpart in the spoke schema`,
+			}},
+		}},
+	}
+	populateCRDSpokeStatuses(cfg, report)
+	if len(cfg.Status.SpokeStatuses) != 1 {
+		t.Fatalf("expected 1 spoke status, got %d", len(cfg.Status.SpokeStatuses))
+	}
+	s := cfg.Status.SpokeStatuses[0]
+	if !reflect.DeepEqual(s.FieldsUncoveredHub, []string{"spec.hubOnly"}) {
+		t.Fatalf("FieldsUncoveredHub = %#v, want [spec.hubOnly]", s.FieldsUncoveredHub)
+	}
+	if !reflect.DeepEqual(s.FieldsUncoveredSpoke, []string{"spec.spokeOnly"}) {
+		t.Fatalf("FieldsUncoveredSpoke = %#v, want [spec.spokeOnly]", s.FieldsUncoveredSpoke)
 	}
 }

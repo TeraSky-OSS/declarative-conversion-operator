@@ -26,12 +26,25 @@ const (
 	SeverityWarning Severity = "Warning"
 )
 
+// UncoveredSide tags leftover uncovered-field diagnostics so Analyze can
+// populate FieldCoverage without parsing message text. Empty for every
+// other diagnostic.
+type UncoveredSide string
+
+const (
+	UncoveredSideHub   UncoveredSide = "hub"
+	UncoveredSideSpoke UncoveredSide = "spoke"
+)
+
 // Diagnostic is one issue found while analyzing or compiling a RuleSet.
 type Diagnostic struct {
 	Severity  Severity
 	Message   string
 	RuleIndex int    // -1 if not associated with a specific rule
 	FieldPath string // empty if not associated with a specific field
+	// UncoveredSide is set only for leftover uncovered-leaf diagnostics
+	// (hub or spoke); empty otherwise.
+	UncoveredSide UncoveredSide
 }
 
 func errorf(ruleIndex int, format string, args ...any) Diagnostic {
@@ -40,6 +53,29 @@ func errorf(ruleIndex int, format string, args ...any) Diagnostic {
 
 func warnf(ruleIndex int, format string, args ...any) Diagnostic {
 	return Diagnostic{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...), RuleIndex: ruleIndex}
+}
+
+// uncoveredFieldDiag reports a leaf path left unclaimed by any rule (and
+// without an identical counterpart on the other side). FieldPath and
+// UncoveredSide are always set so Analyze can populate FieldCoverage for
+// both Error and Warn unmapped-field policies.
+func uncoveredFieldDiag(severity Severity, side UncoveredSide, path string) Diagnostic {
+	var msg string
+	switch side {
+	case UncoveredSideHub:
+		msg = fmt.Sprintf("hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", path)
+	case UncoveredSideSpoke:
+		msg = fmt.Sprintf("spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", path)
+	default:
+		msg = fmt.Sprintf("field %q is not covered by any rule", path)
+	}
+	return Diagnostic{
+		Severity:      severity,
+		Message:       msg,
+		RuleIndex:     -1,
+		FieldPath:     path,
+		UncoveredSide: side,
+	}
 }
 
 // LosslessVerdict records whether a mapping is lossless in each direction

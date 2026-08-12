@@ -970,3 +970,123 @@ func TestAnalyze_KeepsLastGoodPlanShape(t *testing.T) {
 		t.Fatalf("expected HasErrors() to be true")
 	}
 }
+
+func TestAnalyze_PopulatesUncoveredHubAndSpoke(t *testing.T) {
+	hubSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"shared":  strSchema(),
+		"hubOnly": strSchema(),
+	})
+	spokeSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"shared":    strSchema(),
+		"spokeOnly": strSchema(),
+	})
+	src := fakeSource{gen: 1, versions: []VersionSchema{
+		{Name: "v2", Schema: &hubSchema, Served: true, Storage: true},
+		{Name: "v1", Schema: &spokeSchema, Served: true},
+	}}
+
+	report, err := Analyze(AnalyzeInput{Source: src, HubVersion: "v2", Spokes: []RuleSet{{SpokeVersion: "v1"}}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sr := report.SpokeReports[0]
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredHub, []string{"hubOnly"}) {
+		t.Fatalf("UncoveredHub = %#v, want [hubOnly]", sr.Uncovered.UncoveredHub)
+	}
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredSpoke, []string{"spokeOnly"}) {
+		t.Fatalf("UncoveredSpoke = %#v, want [spokeOnly]", sr.Uncovered.UncoveredSpoke)
+	}
+	if len(sr.Errors) == 0 {
+		t.Fatalf("expected uncovered-field errors under default Error policy")
+	}
+}
+
+func TestAnalyze_ForEachUncoveredUsesFullPath(t *testing.T) {
+	hubSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"readReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{
+			"region":  strSchema(),
+			"hubOnly": strSchema(),
+		}), nil),
+	})
+	spokeSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"readReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{
+			"zone":      strSchema(),
+			"spokeOnly": strSchema(),
+		}), nil),
+	})
+	src := fakeSource{gen: 1, versions: []VersionSchema{
+		{Name: "v2", Schema: &hubSchema, Served: true, Storage: true},
+		{Name: "v1", Schema: &spokeSchema, Served: true},
+	}}
+
+	report, err := Analyze(AnalyzeInput{
+		Source:     src,
+		HubVersion: "v2",
+		Spokes: []RuleSet{{
+			SpokeVersion: "v1",
+			Rules: []Rule{{
+				Strategy: StrategyForEach,
+				Params: ForEachParams{
+					HubItemsPath: ParsePath("readReplicas"), SpokeItemsPath: ParsePath("readReplicas"),
+					Rules: []Rule{{
+						Strategy: StrategyFieldRename,
+						Params:   FieldRenameParams{HubPath: ParsePath("region"), SpokePath: ParsePath("zone")},
+					}},
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sr := report.SpokeReports[0]
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredHub, []string{"readReplicas.hubOnly"}) {
+		t.Fatalf("UncoveredHub = %#v, want [readReplicas.hubOnly]", sr.Uncovered.UncoveredHub)
+	}
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredSpoke, []string{"readReplicas.spokeOnly"}) {
+		t.Fatalf("UncoveredSpoke = %#v, want [readReplicas.spokeOnly]", sr.Uncovered.UncoveredSpoke)
+	}
+}
+
+func TestAnalyze_UncoveredUnderWarnPolicy(t *testing.T) {
+	hubSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"shared":  strSchema(),
+		"hubOnly": strSchema(),
+	})
+	spokeSchema := objSchema(map[string]extv1.JSONSchemaProps{
+		"shared":    strSchema(),
+		"spokeOnly": strSchema(),
+	})
+	src := fakeSource{gen: 1, versions: []VersionSchema{
+		{Name: "v2", Schema: &hubSchema, Served: true, Storage: true},
+		{Name: "v1", Schema: &spokeSchema, Served: true},
+	}}
+
+	report, err := Analyze(AnalyzeInput{
+		Source:     src,
+		HubVersion: "v2",
+		Spokes: []RuleSet{{
+			SpokeVersion:        "v1",
+			UnmappedFieldPolicy: UnmappedFieldPolicyWarn,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sr := report.SpokeReports[0]
+	if len(sr.Errors) != 0 {
+		t.Fatalf("expected no errors under Warn policy, got: %v", sr.Errors)
+	}
+	if len(sr.Warnings) == 0 {
+		t.Fatalf("expected uncovered-field warnings under Warn policy")
+	}
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredHub, []string{"hubOnly"}) {
+		t.Fatalf("UncoveredHub = %#v, want [hubOnly] (Warn policy must still populate coverage)", sr.Uncovered.UncoveredHub)
+	}
+	if !reflect.DeepEqual(sr.Uncovered.UncoveredSpoke, []string{"spokeOnly"}) {
+		t.Fatalf("UncoveredSpoke = %#v, want [spokeOnly] (Warn policy must still populate coverage)", sr.Uncovered.UncoveredSpoke)
+	}
+	if sr.CompiledPlan == nil {
+		t.Fatalf("expected a compiled plan under Warn policy (warnings only)")
+	}
+}
