@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Review PRs targeting any base branch (not just the repo default).
+# Needed for gh-stack layered PRs whose base is the branch below them.
+reviews:
+  auto_review:
+    base_branches:
+      - ".*"
