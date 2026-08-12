@@ -352,6 +352,83 @@ func TestXRDReconcile_Delete_NeverAppliedSkipsRevert(t *testing.T) {
 	}
 }
 
+// uncoveredFieldXRD is establishedXRD's counterpart with one extra
+// hub-only field ("spec.extraHub") and one extra spoke-only field
+// ("spec.extraSpoke"), neither of which any rule covers.
+func uncoveredFieldXRD(name string) *unstructured.Unstructured {
+	xrd := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": name, "generation": int64(1)},
+		"spec": map[string]any{
+			"scope": "Namespaced",
+			"versions": []any{
+				map[string]any{
+					"name": "v2", "served": true, "referenceable": true,
+					"schema": map[string]any{"openAPIV3Schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"spec": map[string]any{"type": "object", "properties": map[string]any{
+								"size":     map[string]any{"type": "string"},
+								"extraHub": map[string]any{"type": "string"},
+							}},
+						},
+					}},
+				},
+				map[string]any{
+					"name": "v1", "served": true, "referenceable": false,
+					"schema": map[string]any{"openAPIV3Schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"spec": map[string]any{"type": "object", "properties": map[string]any{
+								"storageSize": map[string]any{"type": "string"},
+								"extraSpoke":  map[string]any{"type": "string"},
+							}},
+						},
+					}},
+				},
+			},
+		},
+		"status": map[string]any{
+			"conditions": []any{map[string]any{"type": "Established", "status": "True"}},
+		},
+	}}
+	xrd.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+	return xrd
+}
+
+func TestXRDReconcile_UncoveredFields_PopulateStatus(t *testing.T) {
+	xrd := uncoveredFieldXRD("xfoos.example.org")
+	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org") // only maps spec.size<->spec.storageSize
+	server, secret := readyServer("srv")
+
+	c := newFakeClient(cfg, server, secret).Build()
+	if err := c.Create(context.Background(), xrd); err != nil {
+		t.Fatalf("creating XRD fixture: %v", err)
+	}
+	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
+
+	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := getXRDConfig(t, r, "cfg")
+
+	// Uncovered fields under the default Error policy fail validation, so
+	// the config never reaches Applied — but status.spokeStatuses must
+	// still be populated with exactly which leaf paths are uncovered.
+	if got.Status.Phase != teraskyv1alpha1.PhaseInvalid {
+		t.Fatalf("expected phase Invalid, got %q (message: %s)", got.Status.Phase, got.Status.Message)
+	}
+	if len(got.Status.SpokeStatuses) != 1 {
+		t.Fatalf("expected 1 spoke status, got %d", len(got.Status.SpokeStatuses))
+	}
+	ss := got.Status.SpokeStatuses[0]
+	if len(ss.FieldsUncoveredHub) != 1 || ss.FieldsUncoveredHub[0] != "spec.extraHub" {
+		t.Fatalf("expected FieldsUncoveredHub = [%q], got %v", "spec.extraHub", ss.FieldsUncoveredHub)
+	}
+	if len(ss.FieldsUncoveredSpoke) != 1 || ss.FieldsUncoveredSpoke[0] != "spec.extraSpoke" {
+		t.Fatalf("expected FieldsUncoveredSpoke = [%q], got %v", "spec.extraSpoke", ss.FieldsUncoveredSpoke)
+	}
+}
+
 func TestXRDReconcile_NotFound_IsIgnored(t *testing.T) {
 	c := newFakeClient().Build()
 	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}

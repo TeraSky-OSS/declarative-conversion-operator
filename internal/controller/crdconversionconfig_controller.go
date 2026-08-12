@@ -251,8 +251,10 @@ func populateCRDSpokeStatuses(cfg *teraskyv1alpha1.CRDConversionConfig, report e
 	statuses := make([]teraskyv1alpha1.SpokeConversionStatus, 0, len(report.SpokeReports))
 	for _, sr := range report.SpokeReports {
 		s := teraskyv1alpha1.SpokeConversionStatus{
-			Version:  sr.Version,
-			Lossless: teraskyv1alpha1.LosslessVerdict{HubToSpoke: sr.Lossless.HubToSpoke, SpokeToHub: sr.Lossless.SpokeToHub},
+			Version:              sr.Version,
+			Lossless:             teraskyv1alpha1.LosslessVerdict{HubToSpoke: sr.Lossless.HubToSpoke, SpokeToHub: sr.Lossless.SpokeToHub},
+			FieldsUncoveredHub:   sr.Uncovered.UncoveredHub,
+			FieldsUncoveredSpoke: sr.Uncovered.UncoveredSpoke,
 		}
 		for _, d := range sr.Errors {
 			s.Errors = append(s.Errors, d.Message)

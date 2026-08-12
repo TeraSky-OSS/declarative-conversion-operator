@@ -26,12 +26,22 @@ const (
 	SeverityWarning Severity = "Warning"
 )
 
+// FieldSide identifies which side of a hub<->spoke conversion a Diagnostic's
+// FieldPath refers to, when it refers to one at all.
+type FieldSide string
+
+const (
+	FieldSideHub   FieldSide = "hub"
+	FieldSideSpoke FieldSide = "spoke"
+)
+
 // Diagnostic is one issue found while analyzing or compiling a RuleSet.
 type Diagnostic struct {
 	Severity  Severity
 	Message   string
-	RuleIndex int    // -1 if not associated with a specific rule
-	FieldPath string // empty if not associated with a specific field
+	RuleIndex int       // -1 if not associated with a specific rule
+	FieldPath string    // empty if not associated with a specific field
+	Side      FieldSide // which side FieldPath belongs to; empty if FieldPath is empty
 }
 
 func errorf(ruleIndex int, format string, args ...any) Diagnostic {
@@ -40,6 +50,18 @@ func errorf(ruleIndex int, format string, args ...any) Diagnostic {
 
 func warnf(ruleIndex int, format string, args ...any) Diagnostic {
 	return Diagnostic{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...), RuleIndex: ruleIndex}
+}
+
+// errorfField is like errorf but also records which field/side the
+// diagnostic is about, so callers (e.g. Analyze) can route it into the
+// appropriate FieldCoverage bucket without parsing the message string.
+func errorfField(ruleIndex int, side FieldSide, fieldPath, format string, args ...any) Diagnostic {
+	return Diagnostic{Severity: SeverityError, Message: fmt.Sprintf(format, args...), RuleIndex: ruleIndex, FieldPath: fieldPath, Side: side}
+}
+
+// warnfField is the Warning counterpart to errorfField.
+func warnfField(ruleIndex int, side FieldSide, fieldPath, format string, args ...any) Diagnostic {
+	return Diagnostic{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...), RuleIndex: ruleIndex, FieldPath: fieldPath, Side: side}
 }
 
 // LosslessVerdict records whether a mapping is lossless in each direction

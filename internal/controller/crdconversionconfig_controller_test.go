@@ -207,6 +207,82 @@ func TestCRDReconcile_Delete_UnsafeOverrideRemovesFinalizer(t *testing.T) {
 	}
 }
 
+// uncoveredFieldCRD is establishedCRD's counterpart with one extra
+// hub-only field ("spec.extraHub") and one extra spoke-only field
+// ("spec.extraSpoke"), neither of which any rule covers.
+func uncoveredFieldCRD(name string) *extv1.CustomResourceDefinition {
+	return &extv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
+		Spec: extv1.CustomResourceDefinitionSpec{
+			Group: "example.org",
+			Names: extv1.CustomResourceDefinitionNames{Plural: "foos", Kind: "Foo"},
+			Scope: extv1.NamespaceScoped,
+			Versions: []extv1.CustomResourceDefinitionVersion{
+				{
+					Name: "v2", Served: true, Storage: true,
+					Schema: &extv1.CustomResourceValidation{OpenAPIV3Schema: &extv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]extv1.JSONSchemaProps{
+							"spec": {Type: "object", Properties: map[string]extv1.JSONSchemaProps{
+								"size":     {Type: "string"},
+								"extraHub": {Type: "string"},
+							}},
+						},
+					}},
+				},
+				{
+					Name: "v1", Served: true, Storage: false,
+					Schema: &extv1.CustomResourceValidation{OpenAPIV3Schema: &extv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]extv1.JSONSchemaProps{
+							"spec": {Type: "object", Properties: map[string]extv1.JSONSchemaProps{
+								"storageSize": {Type: "string"},
+								"extraSpoke":  {Type: "string"},
+							}},
+						},
+					}},
+				},
+			},
+		},
+		Status: extv1.CustomResourceDefinitionStatus{
+			Conditions: []extv1.CustomResourceDefinitionCondition{
+				{Type: extv1.Established, Status: extv1.ConditionTrue},
+			},
+		},
+	}
+}
+
+func TestCRDReconcile_UncoveredFields_PopulateStatus(t *testing.T) {
+	crd := uncoveredFieldCRD("foos.example.org")
+	cfg := renameRuleCRDConfig("cfg", "foos.example.org") // only maps spec.size<->spec.storageSize
+	server, secret := readyServer("srv")
+
+	c := newFakeClient(crd, cfg, server, secret).Build()
+	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
+
+	if _, err := reconcileCRD(t, r, "cfg"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := getCRDConfig(t, r, "cfg")
+
+	// Uncovered fields under the default Error policy fail validation, so
+	// the config never reaches Applied — but status.spokeStatuses must
+	// still be populated with exactly which leaf paths are uncovered.
+	if got.Status.Phase != teraskyv1alpha1.PhaseInvalid {
+		t.Fatalf("expected phase Invalid, got %q (message: %s)", got.Status.Phase, got.Status.Message)
+	}
+	if len(got.Status.SpokeStatuses) != 1 {
+		t.Fatalf("expected 1 spoke status, got %d", len(got.Status.SpokeStatuses))
+	}
+	ss := got.Status.SpokeStatuses[0]
+	if len(ss.FieldsUncoveredHub) != 1 || ss.FieldsUncoveredHub[0] != "spec.extraHub" {
+		t.Fatalf("expected FieldsUncoveredHub = [%q], got %v", "spec.extraHub", ss.FieldsUncoveredHub)
+	}
+	if len(ss.FieldsUncoveredSpoke) != 1 || ss.FieldsUncoveredSpoke[0] != "spec.extraSpoke" {
+		t.Fatalf("expected FieldsUncoveredSpoke = [%q], got %v", "spec.extraSpoke", ss.FieldsUncoveredSpoke)
+	}
+}
+
 func TestCRDReconcile_NotFound_IsIgnored(t *testing.T) {
 	c := newFakeClient().Build()
 	r := &CRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}

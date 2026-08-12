@@ -252,9 +252,9 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			continue
 		}
 		if suppressUncovered {
-			diags = append(diags, warnf(-1, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
+			diags = append(diags, warnfField(-1, FieldSideHub, key, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
 		} else {
-			diags = append(diags, errorf(-1, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
+			diags = append(diags, errorfField(-1, FieldSideHub, key, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
 			verdict.HubToSpoke = false
 		}
 	}
@@ -264,9 +264,9 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			continue
 		}
 		if suppressUncovered {
-			diags = append(diags, warnf(-1, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
+			diags = append(diags, warnfField(-1, FieldSideSpoke, key, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
 		} else {
-			diags = append(diags, errorf(-1, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
+			diags = append(diags, errorfField(-1, FieldSideSpoke, key, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
 			verdict.SpokeToHub = false
 		}
 	}

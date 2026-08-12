@@ -80,7 +80,12 @@ func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
 			if d.Severity == SeverityError {
 				sr.Errors = append(sr.Errors, d)
 				if d.FieldPath != "" {
-					sr.Uncovered.UncoveredHub = append(sr.Uncovered.UncoveredHub, d.FieldPath)
+					switch d.Side {
+					case FieldSideHub:
+						sr.Uncovered.UncoveredHub = append(sr.Uncovered.UncoveredHub, d.FieldPath)
+					case FieldSideSpoke:
+						sr.Uncovered.UncoveredSpoke = append(sr.Uncovered.UncoveredSpoke, d.FieldPath)
+					}
 				}
 			} else {
 				sr.Warnings = append(sr.Warnings, d)
