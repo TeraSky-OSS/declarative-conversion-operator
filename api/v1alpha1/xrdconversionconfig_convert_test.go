@@ -356,6 +356,7 @@ func TestToRuleSets_XRDConversionConfig(t *testing.T) {
 	}
 
 	cfg.Spec.UnmappedFieldPolicy = UnmappedFieldPolicyWarn
+	cfg.Spec.UnmappedFieldReason = "legacy field retained for backwards compatibility"
 	ruleSets, err = cfg.ToRuleSets()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -363,6 +364,9 @@ func TestToRuleSets_XRDConversionConfig(t *testing.T) {
 	for _, rs := range ruleSets {
 		if rs.UnmappedFieldPolicy != engine.UnmappedFieldPolicy(UnmappedFieldPolicyWarn) {
 			t.Fatalf("expected the explicitly set UnmappedFieldPolicy (Warn) to apply to every spoke, got %q for spoke %q", rs.UnmappedFieldPolicy, rs.SpokeVersion)
+		}
+		if rs.UnmappedFieldReason != cfg.Spec.UnmappedFieldReason {
+			t.Fatalf("expected UnmappedFieldReason to propagate to every spoke, got %q for spoke %q", rs.UnmappedFieldReason, rs.SpokeVersion)
 		}
 	}
 }

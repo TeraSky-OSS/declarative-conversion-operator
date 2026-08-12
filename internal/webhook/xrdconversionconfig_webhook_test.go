@@ -106,8 +106,9 @@ func TestValidateStructure_AcceptsWarnPolicyWithReason(t *testing.T) {
 
 func TestValidateStructure_AcceptsDefaultErrorPolicyWithoutReason(t *testing.T) {
 	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
-		HubVersion: "v2",
-		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyError,
+		Spokes:              []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
 	}}
 	if err := ValidateStructure(cfg); err != nil {
 		t.Fatalf("unexpected error: unmappedFieldReason is only required when unmappedFieldPolicy is Warn: %v", err)

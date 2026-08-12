@@ -63,8 +63,9 @@ func TestValidateCRDStructure_AcceptsWarnPolicyWithReason(t *testing.T) {
 
 func TestValidateCRDStructure_AcceptsDefaultErrorPolicyWithoutReason(t *testing.T) {
 	cfg := &teraskyv1alpha1.CRDConversionConfig{Spec: teraskyv1alpha1.CRDConversionConfigSpec{
-		HubVersion: "v2",
-		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyError,
+		Spokes:              []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
 	}}
 	if err := ValidateCRDStructure(cfg); err != nil {
 		t.Fatalf("unexpected error: unmappedFieldReason is only required when unmappedFieldPolicy is Warn: %v", err)

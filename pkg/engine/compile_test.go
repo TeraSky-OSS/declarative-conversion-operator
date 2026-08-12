@@ -121,6 +121,31 @@ func TestUncoveredField_WarnPolicyDowngrades(t *testing.T) {
 	}
 }
 
+func TestUncoveredField_ReasonAloneDowngradesUnderDefaultPolicy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema(), "b": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})
+	// UnmappedFieldPolicy left at its default (Error) -- UnmappedFieldReason
+	// alone should still downgrade the uncovered-field error to a warning.
+	rs := RuleSet{HubVersion: "v2", SpokeVersion: "v1", UnmappedFieldReason: "b is intentionally dropped on v1"}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("expected no errors when UnmappedFieldReason is set, got: %v", errs)
+	}
+	if warns := diagMessages(diags, SeverityWarning); len(warns) == 0 {
+		t.Fatalf("expected a warning when UnmappedFieldReason is set, got none")
+	}
+}
+
+func TestUncoveredField_EmptyReasonDoesNotDowngrade(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema(), "b": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})
+	rs := RuleSet{HubVersion: "v2", SpokeVersion: "v1", UnmappedFieldPolicy: UnmappedFieldPolicyError}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatalf("expected an uncovered-field error with no reason and no Warn policy, got none")
+	}
+}
+
 func TestScalarToObject_LosslessAndLossy(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"version": strSchema()})
 

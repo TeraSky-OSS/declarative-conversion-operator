@@ -69,7 +69,7 @@ func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
 		}
 
 		rs.HubVersion = in.HubVersion
-		h2s, s2h, results, diags, verdict := resolveAndBuildOps(rs.Rules, hub.Schema, spoke.Schema, effectivePolicy(rs.UnmappedFieldPolicy), 0)
+		h2s, s2h, results, diags, verdict := resolveAndBuildOps(rs.Rules, hub.Schema, spoke.Schema, effectivePolicy(rs.UnmappedFieldPolicy), rs.UnmappedFieldReason, 0)
 
 		sr := SpokeReport{
 			Version:     rs.SpokeVersion,

@@ -41,7 +41,7 @@ func Compile(rules RuleSet, hub, spoke *extv1.JSONSchemaProps) (*Plan, []Diagnos
 	if hub == nil || spoke == nil {
 		return nil, nil, fmt.Errorf("compile: hub and spoke schemas must both be non-nil")
 	}
-	h2s, s2h, _, diags, _ := resolveAndBuildOps(rules.Rules, hub, spoke, effectivePolicy(rules.UnmappedFieldPolicy), 0)
+	h2s, s2h, _, diags, _ := resolveAndBuildOps(rules.Rules, hub, spoke, effectivePolicy(rules.UnmappedFieldPolicy), rules.UnmappedFieldReason, 0)
 	return &Plan{HubVersion: rules.HubVersion, SpokeVersion: rules.SpokeVersion, HubToSpoke: h2s, SpokeToHub: s2h}, diags, nil
 }
 
@@ -57,7 +57,7 @@ const maxForEachDepth = 1
 // resolveAndBuildOps is the shared core used both at the top level and
 // recursively for ForEach's nested rule list. depth tracks ForEach nesting
 // to enforce the depth-1 cap.
-func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy UnmappedFieldPolicy, depth int) (h2sOps, s2hOps []Op, results []RuleResult, diags []Diagnostic, verdict LosslessVerdict) {
+func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy UnmappedFieldPolicy, unmappedReason string, depth int) (h2sOps, s2hOps []Op, results []RuleResult, diags []Diagnostic, verdict LosslessVerdict) {
 	claimedHub := map[string]bool{}
 	claimedSpoke := map[string]bool{}
 	verdict = LosslessVerdict{HubToSpoke: true, SpokeToHub: true}
@@ -144,7 +144,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			h2sOp, s2hOp, lossless, ruleDiags = resolveJSONPatch(idx, p, claimedHub, claimedSpoke)
 
 		case ForEachParams:
-			h2sOp, s2hOp, lossless, ruleDiags = resolveForEach(idx, p, hub, spoke, claimedHub, claimedSpoke, policy, depth)
+			h2sOp, s2hOp, lossless, ruleDiags = resolveForEach(idx, p, hub, spoke, claimedHub, claimedSpoke, policy, unmappedReason, depth)
 			rr.HubPaths = []string{p.HubItemsPath.String()}
 			rr.SpokePaths = []string{p.SpokeItemsPath.String()}
 
@@ -225,7 +225,11 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 
 	// Leftover-field scan: anything not claimed by a rule and not
 	// structurally identical on both sides is an uncovered field —
-	// "unknown means assume lossy, never silently pass."
+	// "unknown means assume lossy, never silently pass." An explicit,
+	// non-empty UnmappedFieldReason downgrades this to a warning exactly
+	// like UnmappedFieldPolicy: Warn does, independent of and in addition
+	// to it — a documented acknowledgment of the gap, not a silent pass.
+	suppressUncovered := policy == UnmappedFieldPolicyWarn || unmappedReason != ""
 	hubLeaves := flattenSchema(hub)
 	spokeLeaves := flattenSchema(spoke)
 	spokeByPath := map[string]LeafField{}
@@ -247,7 +251,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			claimedSpoke[key] = true
 			continue
 		}
-		if policy == UnmappedFieldPolicyWarn {
+		if suppressUncovered {
 			diags = append(diags, warnf(-1, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
 		} else {
 			diags = append(diags, errorf(-1, "hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", key))
@@ -259,7 +263,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		if claimedSpoke[key] {
 			continue
 		}
-		if policy == UnmappedFieldPolicyWarn {
+		if suppressUncovered {
 			diags = append(diags, warnf(-1, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
 		} else {
 			diags = append(diags, errorf(-1, "spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", key))
@@ -762,7 +766,7 @@ func parsePatch(ops []JSONPatchOp) (patch jsonpatch.Patch, destPaths, allPaths [
 	return patch, destPaths, allPaths, err
 }
 
-func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, policy UnmappedFieldPolicy, depth int) (Op, Op, LosslessVerdict, []Diagnostic) {
+func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, policy UnmappedFieldPolicy, unmappedReason string, depth int) (Op, Op, LosslessVerdict, []Diagnostic) {
 	var diags []Diagnostic
 	if depth >= maxForEachDepth {
 		diags = append(diags, errorf(idx, "rule %d (ForEach): nesting depth exceeds the supported maximum of %d", idx, maxForEachDepth))
@@ -786,7 +790,7 @@ func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps,
 		diags = append(diags, errorf(idx, "rule %d (ForEach): both items paths must resolve to arrays with a known item schema", idx))
 		return nil, nil, LosslessVerdict{true, true}, diags
 	}
-	nestedH2S, nestedS2H, _, nestedDiags, nestedVerdict := resolveAndBuildOps(p.Rules, hubArray.Items.Schema, spokeArray.Items.Schema, policy, depth+1)
+	nestedH2S, nestedS2H, _, nestedDiags, nestedVerdict := resolveAndBuildOps(p.Rules, hubArray.Items.Schema, spokeArray.Items.Schema, policy, unmappedReason, depth+1)
 	for _, d := range nestedDiags {
 		d.Message = fmt.Sprintf("rule %d (ForEach) item: %s", idx, d.Message)
 		diags = append(diags, d)

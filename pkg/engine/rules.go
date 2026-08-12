@@ -368,4 +368,10 @@ type RuleSet struct {
 	HubVersion, SpokeVersion string
 	Rules                    []Rule
 	UnmappedFieldPolicy      UnmappedFieldPolicy
+	// UnmappedFieldReason, when non-empty, downgrades an uncovered-field
+	// error to a warning for this spoke regardless of UnmappedFieldPolicy
+	// — an explicit, documented acknowledgment that some fields are
+	// deliberately left unmapped, independent of (and in addition to)
+	// UnmappedFieldPolicy: Warn.
+	UnmappedFieldReason string
 }

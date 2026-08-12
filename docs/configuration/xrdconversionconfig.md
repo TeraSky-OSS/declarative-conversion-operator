@@ -35,7 +35,8 @@ spec:
 | `spokes[].version` / `spokes[].rules` | One entry per served spoke version, each with its own rule list. A version not listed here — including the hub itself — needs no rules only if every one of its fields is structurally identical to the hub; otherwise it must appear with an explicit `Delete`/`DefaultValue`/etc. rule for the differing fields. |
 | `webhookServerRef` | Pins this config to a specific `ConversionWebhookServer` by name. Omit to use whichever instance has `spec.default: true`. |
 | `conversionReviewVersions` | The `ConversionReview` API versions the webhook accepts, passed through to the XRD's `spec.conversion.webhook.conversionReviewVersions`. |
-| `unmappedFieldPolicy` | `Error` (default): any hub or spoke field left unclaimed by a rule and not structurally identical on both sides fails validation — "unknown means assume lossy, never silently pass." `Warn` downgrades this to a warning; requires `unmappedFieldReason`. |
+| `unmappedFieldPolicy` | `Error` (default): any hub or spoke field left unclaimed by a rule and not structurally identical on both sides fails validation — "unknown means assume lossy, never silently pass." `Warn` downgrades this to a warning for every uncovered field; requires `unmappedFieldReason`. |
+| `unmappedFieldReason` | Documents why this config is expected to leave fields unmapped. Required whenever `unmappedFieldPolicy: Warn` is set (the admission webhook rejects `Warn` with an empty reason). Setting it alone — even under the default `Error` policy — also downgrades uncovered-field failures to warnings for this config, so it's a second, independent way to accept the same risk with a recorded justification, without switching the whole config to `Warn`. |
 | `driftPolicy` | Governs what happens when the live XRD's schema no longer matches what this config last validated against — see [Drift handling](#drift-handling). |
 
 ## Rules
