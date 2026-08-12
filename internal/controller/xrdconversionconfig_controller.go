@@ -124,6 +124,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	}
 	report, err := engine.Analyze(engine.AnalyzeInput{Source: source, HubVersion: cfg.Spec.HubVersion, Spokes: ruleSets})
 	if err != nil {
+		GetManagerMetrics().AnalyzeFailures.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "AnalyzeFailed").Inc()
 		r.setInvalid(cfg, wasApplied, fmt.Sprintf("analysis failed: %v", err))
 		return ctrl.Result{}, r.patchStatus(ctx, orig, cfg)
 	}
@@ -133,6 +134,8 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	cfg.Status.SchemaHash = computeSchemaHash(cfg, report)
 
 	if report.HasErrors() {
+		GetManagerMetrics().AnalyzeFailures.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "ValidationErrors").Inc()
+		fromPhase := cfg.Status.Phase
 		msg := "one or more spoke versions failed validation; see status.spokeStatuses for details"
 		var revertErr error
 		if failClosedShouldRevert(cfg.Spec.DriftPolicy, cfg.Status.Phase, cfg.Status.Conditions) {
@@ -150,6 +153,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonRevertFailed, Message: msg,
 				})
+				recordPhaseTransition("xrd", fromPhase, teraskyv1alpha1.PhaseFailed, teraskyv1alpha1.ReasonRevertFailed)
 			} else {
 				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
 				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
@@ -157,6 +161,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonReverted, Message: msg,
 				})
+				recordPhaseTransition("xrd", fromPhase, teraskyv1alpha1.PhaseFailed, teraskyv1alpha1.ReasonReverted)
 			}
 		} else if wasApplied {
 			// Conservative default: keep serving the last known-good
@@ -164,9 +169,11 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 			// than risk an outage by touching a working conversion setup.
 			msg = "schema drift invalidated this config, but the previously-applied webhook configuration is left untouched (driftPolicy=KeepServingStale); fix the config or the XRD to clear this"
 			setPhaseStale(&cfg.Status.Conditions, &cfg.Status.Phase, "SchemaDrift", msg)
+			recordPhaseTransition("xrd", fromPhase, teraskyv1alpha1.PhaseStale, "SchemaDrift")
 		} else {
 			cfg.Status.Phase = teraskyv1alpha1.PhaseInvalid
 			meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
+			recordPhaseTransition("xrd", fromPhase, teraskyv1alpha1.PhaseInvalid, "ValidationFailed")
 		}
 		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 			Type: teraskyv1alpha1.ConditionValidated, Status: metav1.ConditionFalse, Reason: "ValidationFailed", Message: msg,
@@ -246,8 +253,14 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 		reviewVersions = []string{"v1"}
 	}
 
+	applyStart := time.Now()
 	if err := r.applyConversionPatch(ctx, cfg, serverNamespace, cwsServiceName(serverName), path, port, caBundle, reviewVersions); err != nil {
+		GetManagerMetrics().ApplyDuration.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "error").Observe(time.Since(applyStart).Seconds())
 		return ctrl.Result{}, fmt.Errorf("patching XRD conversion webhook config: %w", err)
+	}
+	GetManagerMetrics().ApplyDuration.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "success").Observe(time.Since(applyStart).Seconds())
+	if cfg.Status.Phase != teraskyv1alpha1.PhaseApplied {
+		recordPhaseTransition("xrd", cfg.Status.Phase, teraskyv1alpha1.PhaseApplied, "Applied")
 	}
 
 	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
@@ -296,6 +309,16 @@ func failClosedShouldRevert(driftPolicy teraskyv1alpha1.DriftPolicy, phase strin
 		return cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason == teraskyv1alpha1.ReasonRevertFailed
 	}
 	return false
+}
+
+func recordPhaseTransition(configKind, fromPhase, toPhase, reason string) {
+	if fromPhase == toPhase || toPhase == "" {
+		return
+	}
+	if fromPhase == "" {
+		fromPhase = "None"
+	}
+	GetManagerMetrics().PhaseTransitions.WithLabelValues(configKind, fromPhase, toPhase, reason).Inc()
 }
 
 // setPhaseStale sets Phase=Stale and ConditionStale=True so monitors that
