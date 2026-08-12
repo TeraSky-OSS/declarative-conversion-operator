@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +39,8 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
@@ -543,9 +544,8 @@ func (r *XRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, c
 
 // SetupWithManager wires up watches: the primary XRDConversionConfig
 // resource, plus the target XRD (via a field index mapping XRD name back
-// to referencing configs) and ConversionWebhookServer (any change
-// re-evaluates every config, since server readiness/assignment affects all
-// of them and this is a low-QPS, admin-frequency object).
+// to referencing configs) and ConversionWebhookServer (changes enqueue
+// only configs assigned to that server, paced at enqueue.CWSConfigEnqueueQPS).
 func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &teraskyv1alpha1.XRDConversionConfig{}, TargetXRDNameIndex, func(obj client.Object) []string {
 		cfg := obj.(*teraskyv1alpha1.XRDConversionConfig)
@@ -563,7 +563,7 @@ func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teraskyv1alpha1.XRDConversionConfig{}).
 		Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
-		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, handler.EnqueueRequestsFromMapFunc(r.mapAnyServerToAllConfigs)).
+		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
 		Named("xrdconversionconfig").
 		Complete(r)
 }
@@ -571,7 +571,7 @@ func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 func (r *XRDConversionConfigReconciler) mapXRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.XRDConversionConfigList
 	if err := r.List(ctx, &list, client.MatchingFields{TargetXRDNameIndex: obj.GetName()}); err != nil {
-		return nil
+		return watchmap.ListError(ctx, "xrdconversionconfig.mapXRDToConfigs", err)
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for _, c := range list.Items {
@@ -580,15 +580,18 @@ func (r *XRDConversionConfigReconciler) mapXRDToConfigs(ctx context.Context, obj
 	return reqs
 }
 
-func (r *XRDConversionConfigReconciler) mapAnyServerToAllConfigs(ctx context.Context, _ client.Object) []reconcile.Request {
-	var list teraskyv1alpha1.XRDConversionConfigList
-	if err := r.List(ctx, &list); err != nil {
-		return nil
+func (r *XRDConversionConfigReconciler) mapServerToAssignedConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	reqs, err := mapServerToAssignedXRDConfigs(ctx, r.Client, obj)
+	if err != nil {
+		return watchmap.ListError(ctx, "xrdconversionconfig.mapServerToAssignedConfigs", err)
 	}
-	reqs := make([]reconcile.Request, 0, len(list.Items))
-	for _, c := range list.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+	return reqs
+}
+
+func (r *XRDConversionConfigReconciler) mapServerTransitionToAssignedConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	reqs, err := mapServerTransitionToAssignedXRDConfigs(ctx, r.Client, oldObj, newObj)
+	if err != nil {
+		return watchmap.ListError(ctx, "xrdconversionconfig.mapServerTransitionToAssignedConfigs", err)
 	}
-	sort.Slice(reqs, func(i, j int) bool { return reqs[i].Name < reqs[j].Name })
 	return reqs
 }

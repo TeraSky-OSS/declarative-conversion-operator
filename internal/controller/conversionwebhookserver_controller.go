@@ -47,6 +47,7 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 )
 
 // CertificateGroupVersionKind identifies a cert-manager Certificate.
@@ -665,7 +666,7 @@ func enqueueAllServers(c client.Client) func(ctx context.Context, obj client.Obj
 	return func(ctx context.Context, _ client.Object) []reconcile.Request {
 		var list teraskyv1alpha1.ConversionWebhookServerList
 		if err := c.List(ctx, &list); err != nil {
-			return nil
+			return watchmap.ListError(ctx, "conversionwebhookserver.enqueueAllServers", err)
 		}
 		reqs := make([]reconcile.Request, 0, len(list.Items))
 		for _, s := range list.Items {

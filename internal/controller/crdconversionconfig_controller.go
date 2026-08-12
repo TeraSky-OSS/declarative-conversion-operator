@@ -40,6 +40,8 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/crdadapter"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
@@ -448,7 +450,7 @@ func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teraskyv1alpha1.CRDConversionConfig{}).
 		Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapCRDToConfigs)).
-		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, handler.EnqueueRequestsFromMapFunc(r.mapAnyServerToAllConfigs)).
+		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
 		Named("crdconversionconfig").
 		Complete(r)
 }
@@ -456,7 +458,7 @@ func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 func (r *CRDConversionConfigReconciler) mapCRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.CRDConversionConfigList
 	if err := r.List(ctx, &list, client.MatchingFields{TargetCRDNameIndex: obj.GetName()}); err != nil {
-		return nil
+		return watchmap.ListError(ctx, "crdconversionconfig.mapCRDToConfigs", err)
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for _, c := range list.Items {
@@ -465,14 +467,18 @@ func (r *CRDConversionConfigReconciler) mapCRDToConfigs(ctx context.Context, obj
 	return reqs
 }
 
-func (r *CRDConversionConfigReconciler) mapAnyServerToAllConfigs(ctx context.Context, _ client.Object) []reconcile.Request {
-	var list teraskyv1alpha1.CRDConversionConfigList
-	if err := r.List(ctx, &list); err != nil {
-		return nil
+func (r *CRDConversionConfigReconciler) mapServerToAssignedConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	reqs, err := mapServerToAssignedCRDConfigs(ctx, r.Client, obj)
+	if err != nil {
+		return watchmap.ListError(ctx, "crdconversionconfig.mapServerToAssignedConfigs", err)
 	}
-	reqs := make([]reconcile.Request, 0, len(list.Items))
-	for _, c := range list.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+	return reqs
+}
+
+func (r *CRDConversionConfigReconciler) mapServerTransitionToAssignedConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	reqs, err := mapServerTransitionToAssignedCRDConfigs(ctx, r.Client, oldObj, newObj)
+	if err != nil {
+		return watchmap.ListError(ctx, "crdconversionconfig.mapServerTransitionToAssignedConfigs", err)
 	}
 	return reqs
 }

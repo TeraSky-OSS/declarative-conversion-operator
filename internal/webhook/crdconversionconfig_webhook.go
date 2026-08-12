@@ -100,17 +100,5 @@ func (v *CRDConversionConfigValidator) validate(ctx context.Context, cfg *terask
 }
 
 func (v *CRDConversionConfigValidator) validateUniqueTarget(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig) error {
-	var list teraskyv1alpha1.CRDConversionConfigList
-	if err := v.Client.List(ctx, &list); err != nil {
-		return fmt.Errorf("listing existing CRDConversionConfigs: %w", err)
-	}
-	for _, other := range list.Items {
-		if other.Name == cfg.Name {
-			continue
-		}
-		if other.Spec.TargetCRD.Name == cfg.Spec.TargetCRD.Name {
-			return fmt.Errorf("CRDConversionConfig %q already targets CRD %q; only one config per CRD is supported", other.Name, cfg.Spec.TargetCRD.Name)
-		}
-	}
-	return nil
+	return validateRegistryKeyAvailable(ctx, v.Client, cfg.Spec.TargetCRD.Name, cfg.Name, "crd")
 }

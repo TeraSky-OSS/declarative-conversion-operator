@@ -33,6 +33,8 @@ import (
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/enqueue"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/crdadapter"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
@@ -68,11 +70,9 @@ const (
 // controller-runtime's normal backoff-and-retry applies.
 //
 // Note: registry keys are the bare target-resource name, shared between
-// the XRD and CRD paths. A CRDConversionConfig deliberately targeting the
-// native CustomResourceDefinition Crossplane generates for some XRD's
-// composite type (same name, by construction) would collide with that
-// XRD's own registry entry — an already-redundant, self-inflicted
-// configuration this package doesn't attempt to detect or prevent.
+// the XRD and CRD paths. Cross-kind collisions (an XRDConversionConfig and
+// a CRDConversionConfig targeting the same name) are rejected at admission
+// by internal/webhook.validateRegistryKeyAvailable.
 type Reconciler struct {
 	client.Client
 	ServerName string
@@ -154,6 +154,9 @@ func (r *Reconciler) reconcileOneXRD(ctx context.Context, name string) error {
 	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
 	if err != nil || assigned != r.ServerName {
 		r.Registry.Remove(cfg.Spec.TargetXRD.Name)
+		if r.Metrics != nil {
+			r.Metrics.SyncRegistryMetrics(r.Registry)
+		}
 		return nil
 	}
 
@@ -213,6 +216,9 @@ func (r *Reconciler) reconcileOneCRD(ctx context.Context, name string) error {
 	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
 	if err != nil || assigned != r.ServerName {
 		r.Registry.Remove(cfg.Spec.TargetCRD.Name)
+		if r.Metrics != nil {
+			r.Metrics.SyncRegistryMetrics(r.Registry)
+		}
 		return nil
 	}
 
@@ -269,6 +275,7 @@ func (r *Reconciler) compileAndRegister(targetName, hubVersion string, reviewVer
 	if r.Metrics != nil {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "success").Inc()
 		r.Metrics.RegistryLastReload.WithLabelValues(targetName).Set(float64(time.Now().Unix()))
+		r.Metrics.SyncRegistryMetrics(r.Registry)
 	}
 }
 
@@ -285,6 +292,9 @@ func (r *Reconciler) forgetConfig(key string) {
 	r.mu.Unlock()
 	if ok {
 		r.Registry.Remove(targetName)
+		if r.Metrics != nil {
+			r.Metrics.SyncRegistryMetrics(r.Registry)
+		}
 	}
 }
 
@@ -293,6 +303,7 @@ func (r *Reconciler) recordFailure(targetName, reason, msg string) {
 	if r.Metrics != nil {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "error").Inc()
 		r.Metrics.RegistryCompileErr.WithLabelValues(targetName, reason).Inc()
+		r.Metrics.SyncRegistryMetrics(r.Registry)
 	}
 }
 
@@ -345,7 +356,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if err := ctrl.NewControllerManagedBy(mgr).
 			For(&teraskyv1alpha1.XRDConversionConfig{}).
 			Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
-			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, handler.EnqueueRequestsFromMapFunc(r.mapAnyServerToAllXRDConfigs)).
+			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedXRDConfigs, r.mapServerTransitionToAssignedXRDConfigs, enqueue.CWSConfigEnqueueQPS)).
 			Named("webhookserver-registry-xrd").
 			Complete(reconcile.Func(r.reconcileXRD)); err != nil {
 			return fmt.Errorf("setting up XRD registry controller: %w", err)
@@ -366,7 +377,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if err := ctrl.NewControllerManagedBy(mgr).
 			For(&teraskyv1alpha1.CRDConversionConfig{}).
 			Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapCRDToConfigs)).
-			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, handler.EnqueueRequestsFromMapFunc(r.mapAnyServerToAllCRDConfigs)).
+			Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedCRDConfigs, r.mapServerTransitionToAssignedCRDConfigs, enqueue.CWSConfigEnqueueQPS)).
 			Named("webhookserver-registry-crd").
 			Complete(reconcile.Func(r.reconcileCRD)); err != nil {
 			return fmt.Errorf("setting up CRD registry controller: %w", err)
@@ -379,7 +390,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *Reconciler) mapXRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.XRDConversionConfigList
 	if err := r.List(ctx, &list, client.MatchingFields{TargetXRDNameIndex: obj.GetName()}); err != nil {
-		return nil
+		return watchmap.ListError(ctx, "webhookserver.mapXRDToConfigs", err)
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for _, c := range list.Items {
@@ -391,7 +402,7 @@ func (r *Reconciler) mapXRDToConfigs(ctx context.Context, obj client.Object) []r
 func (r *Reconciler) mapCRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
 	var list teraskyv1alpha1.CRDConversionConfigList
 	if err := r.List(ctx, &list, client.MatchingFields{TargetCRDNameIndex: obj.GetName()}); err != nil {
-		return nil
+		return watchmap.ListError(ctx, "webhookserver.mapCRDToConfigs", err)
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for _, c := range list.Items {
@@ -400,26 +411,130 @@ func (r *Reconciler) mapCRDToConfigs(ctx context.Context, obj client.Object) []r
 	return reqs
 }
 
-func (r *Reconciler) mapAnyServerToAllXRDConfigs(ctx context.Context, _ client.Object) []reconcile.Request {
+func (r *Reconciler) mapServerToAssignedXRDConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	reqs, err := mapAssignedXRD(ctx, r.Client, obj.GetName(), asCWS(obj))
+	if err != nil {
+		return watchmap.ListError(ctx, "webhookserver.mapServerToAssignedXRDConfigs", err)
+	}
+	return reqs
+}
+
+func (r *Reconciler) mapServerTransitionToAssignedXRDConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	name := objectName(oldObj, newObj)
+	reqs, err := mapAssignedXRD(ctx, r.Client, name, asCWS(oldObj), asCWS(newObj))
+	if err != nil {
+		return watchmap.ListError(ctx, "webhookserver.mapServerTransitionToAssignedXRDConfigs", err)
+	}
+	return reqs
+}
+
+func (r *Reconciler) mapServerToAssignedCRDConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	reqs, err := mapAssignedCRD(ctx, r.Client, obj.GetName(), asCWS(obj))
+	if err != nil {
+		return watchmap.ListError(ctx, "webhookserver.mapServerToAssignedCRDConfigs", err)
+	}
+	return reqs
+}
+
+func (r *Reconciler) mapServerTransitionToAssignedCRDConfigs(ctx context.Context, oldObj, newObj client.Object) []reconcile.Request {
+	name := objectName(oldObj, newObj)
+	reqs, err := mapAssignedCRD(ctx, r.Client, name, asCWS(oldObj), asCWS(newObj))
+	if err != nil {
+		return watchmap.ListError(ctx, "webhookserver.mapServerTransitionToAssignedCRDConfigs", err)
+	}
+	return reqs
+}
+
+func objectName(oldObj, newObj client.Object) string {
+	if newObj != nil {
+		return newObj.GetName()
+	}
+	if oldObj != nil {
+		return oldObj.GetName()
+	}
+	return ""
+}
+
+func asCWS(obj client.Object) *teraskyv1alpha1.ConversionWebhookServer {
+	if obj == nil {
+		return nil
+	}
+	s, ok := obj.(*teraskyv1alpha1.ConversionWebhookServer)
+	if !ok {
+		return nil
+	}
+	return s
+}
+
+func mapAssignedXRD(ctx context.Context, c client.Client, serverName string, views ...*teraskyv1alpha1.ConversionWebhookServer) ([]reconcile.Request, error) {
 	var list teraskyv1alpha1.XRDConversionConfigList
-	if err := r.List(ctx, &list); err != nil {
-		return nil
+	if err := c.List(ctx, &list); err != nil {
+		return nil, err
 	}
-	reqs := make([]reconcile.Request, 0, len(list.Items))
-	for _, c := range list.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+	var servers teraskyv1alpha1.ConversionWebhookServerList
+	if err := c.List(ctx, &servers); err != nil {
+		return nil, err
 	}
-	return reqs
+	seen := map[string]struct{}{}
+	var reqs []reconcile.Request
+	for _, view := range views {
+		if view == nil {
+			continue
+		}
+		for _, cfg := range assign.ConfigsAssignedTo(list.Items, serversWithView(servers.Items, view), serverName) {
+			if _, ok := seen[cfg.Name]; ok {
+				continue
+			}
+			seen[cfg.Name] = struct{}{}
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
+		}
+	}
+	return reqs, nil
 }
 
-func (r *Reconciler) mapAnyServerToAllCRDConfigs(ctx context.Context, _ client.Object) []reconcile.Request {
+func mapAssignedCRD(ctx context.Context, c client.Client, serverName string, views ...*teraskyv1alpha1.ConversionWebhookServer) ([]reconcile.Request, error) {
 	var list teraskyv1alpha1.CRDConversionConfigList
-	if err := r.List(ctx, &list); err != nil {
-		return nil
+	if err := c.List(ctx, &list); err != nil {
+		return nil, err
 	}
-	reqs := make([]reconcile.Request, 0, len(list.Items))
-	for _, c := range list.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+	var servers teraskyv1alpha1.ConversionWebhookServerList
+	if err := c.List(ctx, &servers); err != nil {
+		return nil, err
 	}
-	return reqs
+	seen := map[string]struct{}{}
+	var reqs []reconcile.Request
+	for _, view := range views {
+		if view == nil {
+			continue
+		}
+		for _, cfg := range assign.ConfigsAssignedTo(list.Items, serversWithView(servers.Items, view), serverName) {
+			if _, ok := seen[cfg.Name]; ok {
+				continue
+			}
+			seen[cfg.Name] = struct{}{}
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: cfg.Name}})
+		}
+	}
+	return reqs, nil
+}
+
+func serversWithView(live []teraskyv1alpha1.ConversionWebhookServer, view *teraskyv1alpha1.ConversionWebhookServer) []teraskyv1alpha1.ConversionWebhookServer {
+	out := make([]teraskyv1alpha1.ConversionWebhookServer, 0, len(live)+1)
+	found := false
+	for _, s := range live {
+		if s.Name == view.Name {
+			out = append(out, *view)
+			found = true
+			continue
+		}
+		cp := s
+		if view.Spec.Default {
+			cp.Spec.Default = false
+		}
+		out = append(out, cp)
+	}
+	if !found {
+		out = append(out, *view)
+	}
+	return out
 }

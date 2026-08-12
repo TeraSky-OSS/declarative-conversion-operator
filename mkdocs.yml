@@ -76,6 +76,7 @@ nav:
       - CRDConversionConfig: configuration/crdconversionconfig.md
       - ConversionWebhookServer: configuration/conversionwebhookserver.md
   - Architecture: architecture.md
+  - Observability: observability.md
   - CLI Reference: cli.md
   - Strategy Reference:
       - strategies/index.md
