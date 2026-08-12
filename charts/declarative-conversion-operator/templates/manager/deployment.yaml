@@ -22,11 +22,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       # PSS restricted — kept identical to ConversionWebhookServer pods
-      # (see docs/security/pod-security.md). Distroless nonroot USER 65532.
+      # (see docs/security/pod-security.md). runAsUser unset so custom
+      # image USER is honored; runAsNonRoot rejects root.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -72,8 +71,6 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
             capabilities:
               drop: ["ALL"]
             seccompProfile:

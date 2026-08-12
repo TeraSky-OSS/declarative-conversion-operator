@@ -185,8 +185,8 @@ func TestCWSReconcile_SecurityContext_PSSRestricted(t *testing.T) {
 	if podSC == nil || podSC.RunAsNonRoot == nil || !*podSC.RunAsNonRoot {
 		t.Fatalf("expected pod runAsNonRoot=true, got %#v", podSC)
 	}
-	if podSC.RunAsUser == nil || *podSC.RunAsUser != 65532 {
-		t.Fatalf("expected pod runAsUser=65532, got %#v", podSC.RunAsUser)
+	if podSC.RunAsUser != nil {
+		t.Fatalf("expected pod runAsUser unset (honor image USER), got %#v", podSC.RunAsUser)
 	}
 	if podSC.SeccompProfile == nil || podSC.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 		t.Fatalf("expected pod seccomp RuntimeDefault, got %#v", podSC.SeccompProfile)
@@ -199,6 +199,12 @@ func TestCWSReconcile_SecurityContext_PSSRestricted(t *testing.T) {
 	ctrSC := ctr.SecurityContext
 	if ctrSC == nil {
 		t.Fatal("expected container securityContext")
+	}
+	if ctrSC.RunAsNonRoot == nil || !*ctrSC.RunAsNonRoot {
+		t.Fatalf("expected container runAsNonRoot=true, got %#v", ctrSC.RunAsNonRoot)
+	}
+	if ctrSC.RunAsUser != nil {
+		t.Fatalf("expected container runAsUser unset (honor image USER), got %#v", ctrSC.RunAsUser)
 	}
 	if ctrSC.AllowPrivilegeEscalation == nil || *ctrSC.AllowPrivilegeEscalation {
 		t.Fatalf("expected allowPrivilegeEscalation=false")

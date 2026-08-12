@@ -11,10 +11,12 @@ HTTP metrics port in-cluster:
 | Webhook-server | `8443` | `*-webhook-server` (`metrics` port) |
 
 With no NetworkPolicy (the chart default), any pod that can reach the
-install namespace can scrape these endpoints. That is fine for many
-clusters, but it is **not** a documented trust boundary — it only happens
-to be true when your CNI/default-deny posture already blocks cross-pod
-traffic.
+component's namespace can scrape these endpoints. The manager uses the
+Helm release namespace; a ConversionWebhookServer may use a different
+namespace via `conversionWebhookServer.namespace` /
+`spec.namespace`. That is fine for many clusters, but it is **not** a
+documented trust boundary — it only happens to be true when your
+CNI/default-deny posture already blocks cross-pod traffic.
 
 ## Locking metrics down (NetworkPolicy)
 

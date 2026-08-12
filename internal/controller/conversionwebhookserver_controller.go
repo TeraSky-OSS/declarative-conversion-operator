@@ -350,22 +350,18 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	args = append(args, server.Spec.ExtraArgs...)
 
 	// PSS restricted: non-root, no privilege escalation, drop all caps,
-	// read-only root FS, RuntimeDefault seccomp. Matches the distroless
-	// nonroot image USER 65532:65532. /tmp is an emptyDir because the
-	// root FS is read-only.
-	const nonRootUID int64 = 65532
+	// read-only root FS, RuntimeDefault seccomp. runAsUser/runAsGroup are
+	// intentionally unset so a custom image's non-root USER is honored;
+	// runAsNonRoot still rejects root images. /tmp is an emptyDir because
+	// the root FS is read-only.
 	containerSec := applycorev1.SecurityContext().
 		WithRunAsNonRoot(true).
-		WithRunAsUser(nonRootUID).
-		WithRunAsGroup(nonRootUID).
 		WithAllowPrivilegeEscalation(false).
 		WithReadOnlyRootFilesystem(true).
 		WithCapabilities(applycorev1.Capabilities().WithDrop(corev1.Capability("ALL"))).
 		WithSeccompProfile(applycorev1.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))
 	podSec := applycorev1.PodSecurityContext().
 		WithRunAsNonRoot(true).
-		WithRunAsUser(nonRootUID).
-		WithRunAsGroup(nonRootUID).
 		WithSeccompProfile(applycorev1.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))
 
 	container := applycorev1.Container().
