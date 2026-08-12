@@ -90,4 +90,4 @@ Note that the nested rules' `hubPath`/`spokePath` (`sizeGB`, `size`, `label`, `n
 ## Constraints
 
 - **Nesting is capped at depth 1.** A `forEach`'s own rule list can't contain another `forEach` — see [Limitations](../limitations.md).
-- **Strict positional correspondence is required at runtime.** The hub and spoke arrays must have the same length and element order; a length mismatch during an actual conversion is a hard runtime error, not a best-effort merge or truncation.
+- **Strict positional correspondence is required at runtime.** The hub and spoke arrays must have the same length and element order. If both item paths are present on the input as arrays of unequal length, conversion fails with a hard runtime error — not a best-effort merge or truncation to the source length. If the destination path is absent, the output is built from the source array alone.

@@ -563,6 +563,85 @@ func TestForEach_NestedFieldRename(t *testing.T) {
 	}
 }
 
+func TestForEach_LengthMismatchIsHardError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"hubReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{"region": strSchema()}), nil),
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"spokeReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{"zone": strSchema()}), nil),
+	})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyForEach, Params: ForEachParams{
+			HubItemsPath: ParsePath("hubReplicas"), SpokeItemsPath: ParsePath("spokeReplicas"),
+			Rules: []Rule{
+				{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("region"), SpokePath: ParsePath("zone")}},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	// Both paired paths present with unequal lengths → hard error (not silent coerce).
+	mismatched := map[string]any{
+		"hubReplicas": []any{
+			map[string]any{"region": "us-east-1"},
+			map[string]any{"region": "us-west-2"},
+		},
+		"spokeReplicas": []any{
+			map[string]any{"zone": "us-east-1"},
+		},
+	}
+	_, err = Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: mismatched})
+	if err == nil {
+		t.Fatalf("expected length-mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "length mismatch") {
+		t.Fatalf("expected length-mismatch error, got: %v", err)
+	}
+
+	// Dest path absent → convert from source length alone is OK.
+	sourceOnly := map[string]any{
+		"hubReplicas": []any{
+			map[string]any{"region": "us-east-1"},
+			map[string]any{"region": "us-west-2"},
+		},
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: sourceOnly})
+	if err != nil {
+		t.Fatalf("convert with dest absent: %v", err)
+	}
+	arr, ok := out["spokeReplicas"].([]any)
+	if !ok || len(arr) != 2 {
+		t.Fatalf("unexpected spokeReplicas: %#v", out["spokeReplicas"])
+	}
+
+	// Equal lengths on both paths → OK.
+	matched := map[string]any{
+		"hubReplicas": []any{
+			map[string]any{"region": "us-east-1"},
+		},
+		"spokeReplicas": []any{
+			map[string]any{"zone": "old"},
+		},
+	}
+	out, err = Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: matched})
+	if err != nil {
+		t.Fatalf("convert with matching lengths: %v", err)
+	}
+	arr, ok = out["spokeReplicas"].([]any)
+	if !ok || len(arr) != 1 {
+		t.Fatalf("unexpected spokeReplicas: %#v", out["spokeReplicas"])
+	}
+	if arr[0].(map[string]any)["zone"] != "us-east-1" {
+		t.Fatalf("unexpected zone: %#v", arr[0])
+	}
+}
+
 func TestTypeCoerce_RoundTrip(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"replicas": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"replicas": intSchema()})

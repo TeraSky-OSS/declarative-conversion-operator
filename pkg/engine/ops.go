@@ -405,6 +405,20 @@ func (o forEachOp) apply(ctx *execContext) error {
 	if !ok {
 		return fmt.Errorf("forEach: value at %q is not an array", o.srcItemsPath)
 	}
+	// Strict positional correspondence: if the destination-side array is
+	// already present on the input (paired hub/spoke paths both populated),
+	// its length must match the source. Building from source alone when the
+	// dest path is absent is fine.
+	if dst, ok := getValue(ctx.input, o.dstItemsPath); ok {
+		dstArr, isArr := dst.([]any)
+		if !isArr {
+			return fmt.Errorf("forEach: value at %q is not an array", o.dstItemsPath)
+		}
+		if len(dstArr) != len(arr) {
+			return fmt.Errorf("forEach: length mismatch between %q (%d) and %q (%d)",
+				o.srcItemsPath, len(arr), o.dstItemsPath, len(dstArr))
+		}
+	}
 	outArr := make([]any, len(arr))
 	for i, elem := range arr {
 		elemMap, ok := elem.(map[string]any)
