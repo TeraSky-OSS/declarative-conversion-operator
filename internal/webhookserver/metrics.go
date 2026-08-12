@@ -29,6 +29,7 @@ type Metrics struct {
 	ObjectsTotal        *prometheus.CounterVec
 	LossyTotal          *prometheus.CounterVec
 	RegistrySize        prometheus.Gauge
+	RegistryEntryLoaded *prometheus.GaugeVec
 	RegistryLastReload  *prometheus.GaugeVec
 	RegistryReloadTotal *prometheus.CounterVec
 	RegistryCompileErr  *prometheus.CounterVec
@@ -57,15 +58,19 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"xrd", "direction"}),
 		RegistrySize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "xrdconv_webhook_registry_size",
-			Help: "Number of XRD paths currently loaded on this replica.",
+			Help: "Number of target resources (XRD/CRD names) currently present in this replica's registry, including error-only placeholders.",
 		}),
+		RegistryEntryLoaded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "xrdconv_webhook_registry_entry_loaded",
+			Help: "1 if this replica has a compiled, servable conversion plan for the target (label xrd); 0 if the registry entry is error-only / not ready. Scraped per pod, so replica identity comes from the scrape target.",
+		}, []string{"xrd"}),
 		RegistryLastReload: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "xrdconv_webhook_registry_last_reload_timestamp_seconds",
-			Help: "Unix timestamp of the last successful compile, per XRD.",
+			Help: "Unix timestamp of the last successful compile, per target.",
 		}, []string{"xrd"}),
 		RegistryReloadTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_registry_reload_total",
-			Help: "Total attempted (re)compiles, per XRD and result.",
+			Help: "Total attempted (re)compiles, per target and result.",
 		}, []string{"xrd", "result"}),
 		RegistryCompileErr: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_registry_compile_errors_total",
@@ -76,6 +81,26 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
 		}),
 	}
-	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
+	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
+}
+
+// SyncRegistryMetrics refreshes RegistrySize and per-target
+// RegistryEntryLoaded gauges from the live registry snapshot. Call after
+// any Set / Remove / RecordError so operators can scrape "is config X
+// loaded on this replica?" without exec'ing into the pod.
+func (m *Metrics) SyncRegistryMetrics(reg *Registry) {
+	if m == nil || reg == nil {
+		return
+	}
+	snap := reg.Snapshot()
+	m.RegistrySize.Set(float64(len(snap)))
+	m.RegistryEntryLoaded.Reset()
+	for name, entry := range snap {
+		loaded := 0.0
+		if entry != nil && entry.Router != nil {
+			loaded = 1
+		}
+		m.RegistryEntryLoaded.WithLabelValues(name).Set(loaded)
+	}
 }

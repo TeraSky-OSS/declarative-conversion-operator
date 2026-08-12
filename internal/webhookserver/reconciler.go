@@ -154,6 +154,9 @@ func (r *Reconciler) reconcileOneXRD(ctx context.Context, name string) error {
 	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
 	if err != nil || assigned != r.ServerName {
 		r.Registry.Remove(cfg.Spec.TargetXRD.Name)
+		if r.Metrics != nil {
+			r.Metrics.SyncRegistryMetrics(r.Registry)
+		}
 		return nil
 	}
 
@@ -213,6 +216,9 @@ func (r *Reconciler) reconcileOneCRD(ctx context.Context, name string) error {
 	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
 	if err != nil || assigned != r.ServerName {
 		r.Registry.Remove(cfg.Spec.TargetCRD.Name)
+		if r.Metrics != nil {
+			r.Metrics.SyncRegistryMetrics(r.Registry)
+		}
 		return nil
 	}
 
@@ -269,6 +275,7 @@ func (r *Reconciler) compileAndRegister(targetName, hubVersion string, reviewVer
 	if r.Metrics != nil {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "success").Inc()
 		r.Metrics.RegistryLastReload.WithLabelValues(targetName).Set(float64(time.Now().Unix()))
+		r.Metrics.SyncRegistryMetrics(r.Registry)
 	}
 }
 
@@ -285,6 +292,9 @@ func (r *Reconciler) forgetConfig(key string) {
 	r.mu.Unlock()
 	if ok {
 		r.Registry.Remove(targetName)
+		if r.Metrics != nil {
+			r.Metrics.SyncRegistryMetrics(r.Registry)
+		}
 	}
 }
 
@@ -293,6 +303,7 @@ func (r *Reconciler) recordFailure(targetName, reason, msg string) {
 	if r.Metrics != nil {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "error").Inc()
 		r.Metrics.RegistryCompileErr.WithLabelValues(targetName, reason).Inc()
+		r.Metrics.SyncRegistryMetrics(r.Registry)
 	}
 }
 
