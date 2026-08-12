@@ -88,6 +88,29 @@ func TestXRDConversionConfigValidator_LiveSchemaValidationFailure_Rejected(t *te
 	}
 }
 
+func TestXRDConversionConfigValidator_WarnPolicyWithoutReason_Rejected(t *testing.T) {
+	xrd := establishedXRD("xfoos.example.org")
+	c := newFakeClient(xrd).Build()
+	v := &XRDConversionConfigValidator{Client: c, Enabled: true}
+	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
+	cfg.Spec.UnmappedFieldPolicy = teraskyv1alpha1.UnmappedFieldPolicyWarn
+	if _, err := v.ValidateCreate(context.Background(), cfg); err == nil {
+		t.Fatalf("expected an error: unmappedFieldReason is required when unmappedFieldPolicy is Warn")
+	}
+}
+
+func TestXRDConversionConfigValidator_WarnPolicyWithReason_Accepted(t *testing.T) {
+	xrd := establishedXRD("xfoos.example.org")
+	c := newFakeClient(xrd).Build()
+	v := &XRDConversionConfigValidator{Client: c, Enabled: true}
+	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
+	cfg.Spec.UnmappedFieldPolicy = teraskyv1alpha1.UnmappedFieldPolicyWarn
+	cfg.Spec.UnmappedFieldReason = "legacy field retained for backwards compatibility"
+	if _, err := v.ValidateCreate(context.Background(), cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestXRDConversionConfigValidator_HappyPath_NoErrorNoWarnings(t *testing.T) {
 	xrd := establishedXRD("xfoos.example.org")
 	c := newFakeClient(xrd).Build()

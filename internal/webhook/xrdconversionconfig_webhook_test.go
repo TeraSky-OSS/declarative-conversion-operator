@@ -80,6 +80,40 @@ func TestValidateStructure_RejectsDeepForEachNesting(t *testing.T) {
 	}
 }
 
+func TestValidateStructure_RejectsWarnPolicyWithoutReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyWarn,
+		UnmappedFieldReason: "",
+		Spokes:              []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+	}}
+	if err := ValidateStructure(cfg); err == nil {
+		t.Fatalf("expected an error when unmappedFieldPolicy is Warn and unmappedFieldReason is empty")
+	}
+}
+
+func TestValidateStructure_AcceptsWarnPolicyWithReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyWarn,
+		UnmappedFieldReason: "legacy field retained for backwards compatibility",
+		Spokes:              []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+	}}
+	if err := ValidateStructure(cfg); err != nil {
+		t.Fatalf("unexpected error when unmappedFieldPolicy is Warn and unmappedFieldReason is set: %v", err)
+	}
+}
+
+func TestValidateStructure_AcceptsDefaultErrorPolicyWithoutReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion: "v2",
+		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+	}}
+	if err := ValidateStructure(cfg); err != nil {
+		t.Fatalf("unexpected error: unmappedFieldReason is only required when unmappedFieldPolicy is Warn: %v", err)
+	}
+}
+
 func TestValidateStructure_AcceptsWellFormedConfig(t *testing.T) {
 	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
 		HubVersion: "v2",

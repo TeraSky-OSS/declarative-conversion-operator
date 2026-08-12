@@ -37,6 +37,40 @@ func TestValidateCRDStructure_RejectsSpokeEqualToHub(t *testing.T) {
 	}
 }
 
+func TestValidateCRDStructure_RejectsWarnPolicyWithoutReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.CRDConversionConfig{Spec: teraskyv1alpha1.CRDConversionConfigSpec{
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyWarn,
+		UnmappedFieldReason: "",
+		Spokes:              []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+	}}
+	if err := ValidateCRDStructure(cfg); err == nil {
+		t.Fatalf("expected an error when unmappedFieldPolicy is Warn and unmappedFieldReason is empty")
+	}
+}
+
+func TestValidateCRDStructure_AcceptsWarnPolicyWithReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.CRDConversionConfig{Spec: teraskyv1alpha1.CRDConversionConfigSpec{
+		HubVersion:          "v2",
+		UnmappedFieldPolicy: teraskyv1alpha1.UnmappedFieldPolicyWarn,
+		UnmappedFieldReason: "legacy field retained for backwards compatibility",
+		Spokes:              []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+	}}
+	if err := ValidateCRDStructure(cfg); err != nil {
+		t.Fatalf("unexpected error when unmappedFieldPolicy is Warn and unmappedFieldReason is set: %v", err)
+	}
+}
+
+func TestValidateCRDStructure_AcceptsDefaultErrorPolicyWithoutReason(t *testing.T) {
+	cfg := &teraskyv1alpha1.CRDConversionConfig{Spec: teraskyv1alpha1.CRDConversionConfigSpec{
+		HubVersion: "v2",
+		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1"}},
+	}}
+	if err := ValidateCRDStructure(cfg); err != nil {
+		t.Fatalf("unexpected error: unmappedFieldReason is only required when unmappedFieldPolicy is Warn: %v", err)
+	}
+}
+
 func TestValidateCRDStructure_AcceptsWellFormedConfig(t *testing.T) {
 	cfg := &teraskyv1alpha1.CRDConversionConfig{Spec: teraskyv1alpha1.CRDConversionConfigSpec{
 		HubVersion: "v2",

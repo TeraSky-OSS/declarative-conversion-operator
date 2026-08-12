@@ -132,6 +132,9 @@ func summarizeErrors(report engine.AnalyzeReport) string {
 // express: duplicate spoke versions, a spoke equal to the hub, and
 // strategy/params mismatches (including recursively inside ForEach).
 func ValidateStructure(cfg *teraskyv1alpha1.XRDConversionConfig) error {
+	if err := validateUnmappedFieldReason(cfg.Spec.UnmappedFieldPolicy, cfg.Spec.UnmappedFieldReason); err != nil {
+		return err
+	}
 	return validateSpokesStructure(cfg.Spec.HubVersion, cfg.Spec.Spokes)
 }
 
@@ -140,7 +143,23 @@ func ValidateStructure(cfg *teraskyv1alpha1.XRDConversionConfig) error {
 // rules a rule set must satisfy don't depend on whether it's converting an
 // XRD or a native CRD.
 func ValidateCRDStructure(cfg *teraskyv1alpha1.CRDConversionConfig) error {
+	if err := validateUnmappedFieldReason(cfg.Spec.UnmappedFieldPolicy, cfg.Spec.UnmappedFieldReason); err != nil {
+		return err
+	}
 	return validateSpokesStructure(cfg.Spec.HubVersion, cfg.Spec.Spokes)
+}
+
+// validateUnmappedFieldReason enforces the requirement documented in
+// docs/configuration/{xrd,crd}conversionconfig.md: downgrading unmapped
+// fields from an error to a warning must come with a stated reason, so the
+// looser policy is a deliberate, auditable choice rather than a silent
+// default. The reason is otherwise unused (not read by pkg/engine), so this
+// is the only place it's enforced.
+func validateUnmappedFieldReason(policy teraskyv1alpha1.UnmappedFieldPolicy, reason string) error {
+	if policy == teraskyv1alpha1.UnmappedFieldPolicyWarn && reason == "" {
+		return fmt.Errorf("spec.unmappedFieldReason is required when spec.unmappedFieldPolicy is Warn")
+	}
+	return nil
 }
 
 func validateSpokesStructure(hubVersion string, spokes []teraskyv1alpha1.SpokeVersionRules) error {
