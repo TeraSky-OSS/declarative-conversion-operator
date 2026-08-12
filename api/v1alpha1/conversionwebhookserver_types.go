@@ -129,12 +129,6 @@ type ConversionWebhookServerSpec struct {
 	Service ServiceSpec `json:"service,omitempty"`
 	// +optional
 	PodDisruptionBudget *PodDisruptionBudgetSpec `json:"podDisruptionBudget,omitempty"`
-
-	// CacheSelector optionally restricts which XRDs/XRDConversionConfigs
-	// this instance's pods watch and cache, bounding memory and
-	// cold-start cost in clusters with many unrelated XRDs.
-	// +optional
-	CacheSelector *metav1.LabelSelector `json:"cacheSelector,omitempty"`
 }
 
 // AssignedConfigRef is one XRDConversionConfig the resolver currently
