@@ -99,6 +99,7 @@ nav:
   - Limitations: limitations.md
   - Security:
       - security/pod-security.md
+      - security/metrics.md
   - Roadmap: roadmap.md
 
 extra:
