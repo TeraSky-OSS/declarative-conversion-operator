@@ -1,0 +1,76 @@
+{{- if .Values.networkPolicy.enabled }}
+# Manager: admit conversion/admission webhook traffic + metrics scrapes;
+# deny everything else to the manager pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Admission webhook (apiserver → manager). No `from` so the control-plane
+    # can reach the webhook regardless of how apiserver is networked.
+    - ports:
+        - protocol: TCP
+          port: 9443
+    # Health probes from kubelet use the pod network; allow probes port
+    # similarly without a from-selector.
+    - ports:
+        - protocol: TCP
+          port: 8081
+    {{- if .Values.metrics.enabled }}
+    # Metrics scrape. Restrict with networkPolicy.metrics.allowedPeers when set;
+    # empty allowedPeers keeps metrics reachable from any in-cluster source
+    # while still locking non-metrics ports (see docs/security/metrics.md).
+    - ports:
+        - protocol: TCP
+          port: 8080
+      {{- with .Values.networkPolicy.metrics.allowedPeers }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+---
+# ConversionWebhookServer pods (default instance when chart creates one).
+# Extra CWS instances need their own NetworkPolicy or a broader selector.
+{{- if .Values.conversionWebhookServer.create }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server
+  namespace: {{ .Values.conversionWebhookServer.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: declarative-conversion-webhook-server
+      app.kubernetes.io/instance: {{ .Values.conversionWebhookServer.name }}
+      app.kubernetes.io/managed-by: declarative-conversion-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    # CRD/XRD conversion webhook (apiserver → CWS). No `from` — same reason
+    # as the manager admission webhook above.
+    - ports:
+        - protocol: TCP
+          port: 9443
+    {{- if .Values.metrics.enabled }}
+    - ports:
+        - protocol: TCP
+          port: 8443
+      {{- with .Values.networkPolicy.metrics.allowedPeers }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

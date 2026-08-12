@@ -145,3 +145,22 @@ metrics:
   prometheusRule:
     enabled: false
     labels: {}
+
+# Opt-in NetworkPolicies for manager + default ConversionWebhookServer pods.
+# Off by default so existing installs see no behavior change. When enabled,
+# non-webhook/non-metrics ingress is denied; see docs/security/metrics.md.
+networkPolicy:
+  enabled: false
+  metrics:
+    # List of networking.k8s.io NetworkPolicyPeer objects allowed to scrape
+    # metrics ports. Empty = any source may scrape metrics (webhook ports
+    # remain open to the apiserver either way).
+    # Example:
+    #   allowedPeers:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: monitoring
+    #       podSelector:
+    #         matchLabels:
+    #           app.kubernetes.io/name: prometheus
+    allowedPeers: []
