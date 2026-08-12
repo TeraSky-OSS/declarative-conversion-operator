@@ -24,7 +24,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -35,10 +35,11 @@ import (
 var Tracer trace.Tracer = noop.NewTracerProvider().Tracer("declarative-conversion-operator/webhook-server")
 
 // InitTracing configures an OTLP/gRPC exporter when endpoint is non-empty.
-// sampleRatio is clamped to [0, 1]. Returns a shutdown func; callers must
-// invoke it on process exit. When endpoint is empty, this is a no-op and
-// Tracer remains the package no-op tracer.
-func InitTracing(ctx context.Context, endpoint string, sampleRatio float64) (func(context.Context) error, error) {
+// sampleRatio is clamped to [0, 1]. insecure=true disables TLS (for trusted
+// in-cluster collectors only); TLS is the default. Returns a shutdown func;
+// callers must invoke it on process exit. When endpoint is empty, this is a
+// no-op and Tracer remains the package no-op tracer.
+func InitTracing(ctx context.Context, endpoint string, sampleRatio float64, insecure bool) (func(context.Context) error, error) {
 	if endpoint == "" {
 		return func(context.Context) error { return nil }, nil
 	}
@@ -49,20 +50,21 @@ func InitTracing(ctx context.Context, endpoint string, sampleRatio float64) (fun
 		sampleRatio = 1
 	}
 
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
+	opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint)}
+	if insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("creating OTLP trace exporter: %w", err)
 	}
 
+	// Schema-less override attributes avoid ErrSchemaURLConflict when
+	// merging with resource.Default()'s detectors (which may use a newer
+	// semconv schema than this import path).
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName("declarative-conversion-webhook-server"),
-		),
+		resource.NewSchemaless(semconv.ServiceName("declarative-conversion-webhook-server")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("building OTel resource: %w", err)

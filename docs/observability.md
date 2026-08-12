@@ -176,6 +176,8 @@ spec:
   extraArgs:
     - --otel-exporter-otlp-endpoint=otel-collector.observability.svc:4317
     - --otel-trace-sample-ratio=0.1
+    # Optional: disable TLS only for trusted in-cluster collectors
+    # - --otel-exporter-otlp-insecure=true
 ```
 
 When the endpoint flag is empty (the default), the webhook-server uses a

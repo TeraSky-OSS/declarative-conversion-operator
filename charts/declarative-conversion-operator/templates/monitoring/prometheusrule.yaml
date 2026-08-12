@@ -22,7 +22,7 @@ spec:
             summary: "ConversionWebhookServer replica failing to (re)compile plan for {{`{{ $labels.target }}`}}"
             description: "Check the corresponding XRDConversionConfig/CRDConversionConfig status and the replica's /debug/registry endpoint."
         - alert: ConversionWebhookNotReady
-          expr: max(xrdconv_webhook_ready) == 0
+          expr: (max(xrdconv_webhook_ready) or on() vector(0)) == 0
           for: 5m
           labels:
             severity: critical
@@ -72,7 +72,7 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: "Config phase transitioned to {{`{{ $labels.to_phase }}`}}"
+            summary: "Config {{`{{ $labels.target }}`}} phase transitioned to {{`{{ $labels.to_phase }}`}}"
             description: "config_kind={{`{{ $labels.config_kind }}`}} from={{`{{ $labels.from_phase }}`}} reason={{`{{ $labels.reason }}`}}. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
         - alert: ConversionWebhookReplicaNotReady
           expr: xrdconv_webhook_ready == 0

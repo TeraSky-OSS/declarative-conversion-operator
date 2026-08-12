@@ -55,7 +55,7 @@ func GetManagerMetrics() *ManagerMetrics {
 			PhaseTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 				Name: "xrdconv_manager_phase_transitions_total",
 				Help: "Config status phase transitions observed by the manager (e.g. Applied→Stale, Applied→Failed).",
-			}, []string{"config_kind", "from_phase", "to_phase", "reason"}),
+			}, []string{"config_kind", "target", "from_phase", "to_phase", "reason"}),
 		}
 		crmetrics.Registry.MustRegister(
 			managerMetrics.AnalyzeFailures,

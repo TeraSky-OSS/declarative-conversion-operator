@@ -70,6 +70,19 @@ tests:
         alertname: ConversionWebhookNotReady
         exp_alerts: []
 
+  - name: fleet not ready fires when no readiness series exist
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ConversionWebhookNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "No ConversionWebhookServer replica is ready"
+              description: "Every scraped webhook-server replica reports xrdconv_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
+
   # --- ConversionWebhookReplicaNotReady ---
   - name: replica not ready fires on ready==0
     interval: 1m
@@ -275,7 +288,7 @@ tests:
   - name: phase stale fires on Stale transition
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",from_phase="Applied",to_phase="Stale",reason="SchemaDrift"}'
+      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",target="xfoos.example.org",from_phase="Applied",to_phase="Stale",reason="SchemaDrift"}'
         values: "0+1x20"
     alert_rule_test:
       - eval_time: 3m
@@ -284,17 +297,18 @@ tests:
           - exp_labels:
               severity: warning
               config_kind: xrd
+              target: xfoos.example.org
               from_phase: Applied
               to_phase: Stale
               reason: SchemaDrift
             exp_annotations:
-              summary: "Config phase transitioned to Stale"
+              summary: "Config xfoos.example.org phase transitioned to Stale"
               description: "config_kind=xrd from=Applied reason=SchemaDrift. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
 
   - name: phase failed fires on Failed transition
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_phase_transitions_total{config_kind="crd",from_phase="Applied",to_phase="Failed",reason="Reverted"}'
+      - series: 'xrdconv_manager_phase_transitions_total{config_kind="crd",target="foos.example.org",from_phase="Applied",to_phase="Failed",reason="Reverted"}'
         values: "0+1x20"
     alert_rule_test:
       - eval_time: 3m
@@ -303,17 +317,18 @@ tests:
           - exp_labels:
               severity: warning
               config_kind: crd
+              target: foos.example.org
               from_phase: Applied
               to_phase: Failed
               reason: Reverted
             exp_annotations:
-              summary: "Config phase transitioned to Failed"
+              summary: "Config foos.example.org phase transitioned to Failed"
               description: "config_kind=crd from=Applied reason=Reverted. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
 
   - name: phase stays silent for Applied transitions
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",from_phase="Pending",to_phase="Applied",reason="Applied"}'
+      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",target="xfoos.example.org",from_phase="Pending",to_phase="Applied",reason="Applied"}'
         values: "0+1x20"
     alert_rule_test:
       - eval_time: 3m

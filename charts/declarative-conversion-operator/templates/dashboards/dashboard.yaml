@@ -6,10 +6,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
-    grafana_dashboard: "1"
     {{- with .Values.dashboards.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    grafana_dashboard: "1"
 data:
   conversion-overview.json: |-
 {{ .Files.Get "files/dashboards/conversion-overview.json" | indent 4 }}

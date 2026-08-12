@@ -26,6 +26,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -138,7 +139,9 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		if rec := recover(); rec != nil {
 			s.writeReview(w, "", nil, fmt.Sprintf("internal error: %v", rec))
 			s.observe(xrdName, direction, "panic", start)
-			span.RecordError(fmt.Errorf("panic: %v", rec))
+			err := fmt.Errorf("panic: %v", rec)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 		}
 	}()
 
@@ -193,10 +196,12 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		out, err := entry.Router.Convert(obj, fromVersion, toVersion)
 		if err != nil {
 			objSpan.RecordError(err)
+			objSpan.SetStatus(codes.Error, err.Error())
 			objSpan.End()
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf("converting %s -> %s: %v", fromVersion, toVersion, err))
 			s.observe(xrdName, direction, "error", start)
 			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			if s.Metrics != nil {
 				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "error").Inc()
 			}
@@ -209,6 +214,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf("marshaling converted object: %v", err))
 			s.observe(xrdName, direction, "error", start)
 			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return
 		}
 		converted = append(converted, runtime.RawExtension{Raw: b})

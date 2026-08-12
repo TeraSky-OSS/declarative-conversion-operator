@@ -64,6 +64,7 @@ func main() {
 		enableCRDSupport bool
 		otelEndpoint     string
 		otelSampleRatio  float64
+		otelInsecure     bool
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -74,6 +75,7 @@ func main() {
 	flag.BoolVar(&enableCRDSupport, "enable-crd-support", true, "Serve conversions for CRDConversionConfig-backed native CRDs. Must match the operator's own --enable-crd-support.")
 	flag.StringVar(&otelEndpoint, "otel-exporter-otlp-endpoint", "", "Optional OTLP/gRPC endpoint for conversion-path tracing (empty = tracing disabled).")
 	flag.Float64Var(&otelSampleRatio, "otel-trace-sample-ratio", 0.1, "Trace sampling ratio when --otel-exporter-otlp-endpoint is set (0.0–1.0).")
+	flag.BoolVar(&otelInsecure, "otel-exporter-otlp-insecure", false, "Disable TLS when exporting traces (trusted in-cluster collectors only).")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -90,7 +92,7 @@ func main() {
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	shutdownTracing, err := webhookserver.InitTracing(rootCtx, otelEndpoint, otelSampleRatio)
+	shutdownTracing, err := webhookserver.InitTracing(rootCtx, otelEndpoint, otelSampleRatio, otelInsecure)
 	if err != nil {
 		logger.Error(err, "unable to initialize OpenTelemetry tracing")
 		os.Exit(1)

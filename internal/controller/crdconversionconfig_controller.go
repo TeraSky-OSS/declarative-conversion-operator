@@ -157,7 +157,7 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonRevertFailed, Message: msg,
 				})
-				recordPhaseTransition("crd", fromPhase, teraskyv1alpha1.PhaseFailed, teraskyv1alpha1.ReasonRevertFailed)
+				recordPhaseTransition("crd", cfg.Spec.TargetCRD.Name, fromPhase, teraskyv1alpha1.PhaseFailed, teraskyv1alpha1.ReasonRevertFailed)
 			} else {
 				cfg.Status.Phase = teraskyv1alpha1.PhaseFailed
 				meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
@@ -165,16 +165,16 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 				meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 					Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionFalse, Reason: teraskyv1alpha1.ReasonReverted, Message: msg,
 				})
-				recordPhaseTransition("crd", fromPhase, teraskyv1alpha1.PhaseFailed, teraskyv1alpha1.ReasonReverted)
+				recordPhaseTransition("crd", cfg.Spec.TargetCRD.Name, fromPhase, teraskyv1alpha1.PhaseFailed, teraskyv1alpha1.ReasonReverted)
 			}
 		} else if wasApplied {
 			msg = "schema drift invalidated this config, but the previously-applied webhook configuration is left untouched (driftPolicy=KeepServingStale); fix the config or the CRD to clear this"
 			setPhaseStale(&cfg.Status.Conditions, &cfg.Status.Phase, "SchemaDrift", msg)
-			recordPhaseTransition("crd", fromPhase, teraskyv1alpha1.PhaseStale, "SchemaDrift")
+			recordPhaseTransition("crd", cfg.Spec.TargetCRD.Name, fromPhase, teraskyv1alpha1.PhaseStale, "SchemaDrift")
 		} else {
 			cfg.Status.Phase = teraskyv1alpha1.PhaseInvalid
 			meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
-			recordPhaseTransition("crd", fromPhase, teraskyv1alpha1.PhaseInvalid, "ValidationFailed")
+			recordPhaseTransition("crd", cfg.Spec.TargetCRD.Name, fromPhase, teraskyv1alpha1.PhaseInvalid, "ValidationFailed")
 		}
 		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 			Type: teraskyv1alpha1.ConditionValidated, Status: metav1.ConditionFalse, Reason: "ValidationFailed", Message: msg,
@@ -261,7 +261,7 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	}
 	GetManagerMetrics().ApplyDuration.WithLabelValues("crd", cfg.Spec.TargetCRD.Name, "success").Observe(time.Since(applyStart).Seconds())
 	if cfg.Status.Phase != teraskyv1alpha1.PhaseApplied {
-		recordPhaseTransition("crd", cfg.Status.Phase, teraskyv1alpha1.PhaseApplied, "Applied")
+		recordPhaseTransition("crd", cfg.Spec.TargetCRD.Name, cfg.Status.Phase, teraskyv1alpha1.PhaseApplied, "Applied")
 	}
 
 	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
