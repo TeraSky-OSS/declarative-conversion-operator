@@ -344,15 +344,38 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	}
 	args = append(args, server.Spec.ExtraArgs...)
 
+	// PSS restricted: non-root, no privilege escalation, drop all caps,
+	// read-only root FS, RuntimeDefault seccomp. Matches the distroless
+	// nonroot image USER 65532:65532. /tmp is an emptyDir because the
+	// root FS is read-only.
+	const nonRootUID int64 = 65532
+	containerSec := applycorev1.SecurityContext().
+		WithRunAsNonRoot(true).
+		WithRunAsUser(nonRootUID).
+		WithRunAsGroup(nonRootUID).
+		WithAllowPrivilegeEscalation(false).
+		WithReadOnlyRootFilesystem(true).
+		WithCapabilities(applycorev1.Capabilities().WithDrop(corev1.Capability("ALL"))).
+		WithSeccompProfile(applycorev1.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))
+	podSec := applycorev1.PodSecurityContext().
+		WithRunAsNonRoot(true).
+		WithRunAsUser(nonRootUID).
+		WithRunAsGroup(nonRootUID).
+		WithSeccompProfile(applycorev1.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))
+
 	container := applycorev1.Container().
 		WithName("webhook-server").
 		WithImage(image).
 		WithArgs(args...).
+		WithSecurityContext(containerSec).
 		WithPorts(
 			applycorev1.ContainerPort().WithName("conversion").WithContainerPort(webhookServerConversionPort),
 			applycorev1.ContainerPort().WithName("metrics").WithContainerPort(webhookServerMetricsPort),
 		).
-		WithVolumeMounts(applycorev1.VolumeMount().WithName("tls").WithMountPath("/tls").WithReadOnly(true)).
+		WithVolumeMounts(
+			applycorev1.VolumeMount().WithName("tls").WithMountPath("/tls").WithReadOnly(true),
+			applycorev1.VolumeMount().WithName("tmp").WithMountPath("/tmp"),
+		).
 		WithReadinessProbe(applycorev1.Probe().
 			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/readyz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
 			WithPeriodSeconds(5).WithFailureThreshold(3)).
@@ -368,9 +391,13 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 
 	podSpec := applycorev1.PodSpec().
 		WithServiceAccountName(saName).
+		WithSecurityContext(podSec).
 		WithContainers(container).
-		WithVolumes(applycorev1.Volume().WithName("tls").
-			WithSecret(applycorev1.SecretVolumeSource().WithSecretName(cwsCertificateSecretName(server.Name))))
+		WithVolumes(
+			applycorev1.Volume().WithName("tls").
+				WithSecret(applycorev1.SecretVolumeSource().WithSecretName(cwsCertificateSecretName(server.Name))),
+			applycorev1.Volume().WithName("tmp").WithEmptyDir(applycorev1.EmptyDirVolumeSource()),
+		)
 	if len(server.Spec.NodeSelector) > 0 {
 		podSpec = podSpec.WithNodeSelector(server.Spec.NodeSelector)
 	}
