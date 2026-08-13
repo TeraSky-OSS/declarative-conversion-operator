@@ -65,8 +65,15 @@ silently dropped by the apiserver.
 
 ```console
 # Fetch once; fail here if Helm cannot retrieve the chart version.
-helm show crds oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
-  --version <new-version> > /tmp/dco-crds.yaml
+if ! helm show crds oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
+  --version <new-version> > /tmp/dco-crds.yaml; then
+  echo "helm show crds failed; not applying CRDs" >&2
+  exit 1
+fi
+if [ ! -s /tmp/dco-crds.yaml ]; then
+  echo "helm show crds returned empty output; not applying CRDs" >&2
+  exit 1
+fi
 
 # kubectl diff exits 0 (identical), 1 (diff), or >1 (tooling error).
 set +e

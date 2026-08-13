@@ -4,6 +4,8 @@ metadata:
   name: xwidgets.example.org
 spec:
   scope: Namespaced
+  defaultCompositionRef:
+    name: xwidgets.example.org
   group: example.org
   names:
     kind: XWidget
