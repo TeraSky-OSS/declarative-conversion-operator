@@ -309,6 +309,12 @@ func enumKey(v any) string {
 		return "s:" + t
 	case bool:
 		return "b:" + strconv.FormatBool(t)
+	case int64:
+		return "n:" + strconv.FormatInt(t, 10)
+	case int:
+		return "n:" + strconv.FormatInt(int64(t), 10)
+	case int32:
+		return "n:" + strconv.FormatInt(int64(t), 10)
 	default:
 		if f, ok := AsFloat64(v); ok {
 			return "n:" + formatNumber(f)
@@ -477,12 +483,30 @@ func (o whenOp) apply(ctx *execContext) error {
 // that JSON/YAML might produce (float64 vs int64) as equal when they
 // represent the same number.
 func jsonValuesEqual(a, b any) bool {
+	if ai, ok := asInt64(a); ok {
+		if bi, ok := asInt64(b); ok {
+			return ai == bi
+		}
+	}
 	if af, ok := AsFloat64(a); ok {
 		if bf, ok := AsFloat64(b); ok {
 			return af == bf
 		}
 	}
 	return reflect.DeepEqual(a, b)
+}
+
+func asInt64(v any) (int64, bool) {
+	switch t := v.(type) {
+	case int64:
+		return t, true
+	case int:
+		return int64(t), true
+	case int32:
+		return int64(t), true
+	default:
+		return 0, false
+	}
 }
 
 // coerceOp reads a scalar and rewrites it as whatever JSON type toKind

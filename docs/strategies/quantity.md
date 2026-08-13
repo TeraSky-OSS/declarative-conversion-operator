@@ -9,7 +9,7 @@ Converts between a Kubernetes [`resource.Quantity`](https://pkg.go.dev/k8s.io/ap
 A field that stores a resource request or limit as a Quantity string on one API version and as an integer number of millicores (or milli-units) on another. `NumericScale` only rescales numbers; it cannot parse `"500m"`.
 
 !!! conditional-lossy "Integer → canonical Quantity string is lossy"
-    Parsing a Quantity string into a millivalue is exact. Writing that millivalue back out uses the canonical Quantity spelling (`"500m"`), which is not always the original string (`"0.5"` and `"500m"` are the same Quantity). That direction requires `acknowledgeLossy: true`.
+    Parsing a Quantity string into a millivalue is exact at milli resolution (`Quantity.MilliValue()`). Amounts finer than 1m round to that granularity. Writing the millivalue back out uses the canonical Quantity spelling (`"500m"`), which is not always the original string (`"0.5"` and `"500m"` are the same Quantity). That direction requires `acknowledgeLossy: true`.
 
 ## Example
 

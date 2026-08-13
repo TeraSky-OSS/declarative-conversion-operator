@@ -9,7 +9,7 @@ Converts between a Go duration string (`"5m"`, `"1h30m"`) and an integer number 
 A timeout, interval, or TTL stored as a duration string on one API version and as integer seconds on another. This is not Kubernetes `resource.Quantity` — `"5m"` here is five minutes, not five millicores. Use [Quantity](quantity.md) for resource amounts.
 
 !!! conditional-lossy "Integer seconds → canonical duration string is lossy"
-    Parsing a duration string into seconds is exact (sub-second fractions are truncated toward zero). Writing those seconds back out uses Go's canonical `Duration.String()` spelling (`"5m0s"`), which is not always the original string (`"5m"`). That direction requires `acknowledgeLossy: true`.
+    Parsing a whole-second duration string into seconds is exact. A duration with a sub-second remainder (`1500ms`) is a **runtime conversion error**, not silent truncation. Writing seconds back out uses Go's canonical `Duration.String()` spelling (`"5m0s"`), which is not always the original string (`"5m"`). That direction requires `acknowledgeLossy: true`.
 
 ## Example
 

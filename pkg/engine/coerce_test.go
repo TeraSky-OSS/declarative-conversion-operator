@@ -114,6 +114,18 @@ func TestCoerceScalarValue_UncoercibleTypeErrors(t *testing.T) {
 	}
 }
 
+func TestCoerceScalarValue_RejectsNonFinite(t *testing.T) {
+	if _, err := coerceScalarValue("NaN", FieldKindNumber); err == nil {
+		t.Fatal("expected an error coercing NaN")
+	}
+	if _, err := coerceScalarValue("+Inf", FieldKindInteger); err == nil {
+		t.Fatal("expected an error coercing +Inf")
+	}
+	if _, err := coerceScalarValue("-Inf", FieldKindNumber); err == nil {
+		t.Fatal("expected an error coercing -Inf")
+	}
+}
+
 func TestCoerceScalarValue_FractionalIntegerPolicy(t *testing.T) {
 	if _, err := coerceScalarValue(1.7, FieldKindInteger); err == nil {
 		t.Fatal("default Error policy should reject 1.7 -> integer")

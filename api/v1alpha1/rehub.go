@@ -703,6 +703,8 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		}
 	case StrategyJSONPatch:
 		return out, fmt.Errorf("JSONPatch hub-path rewrite is not supported; rewrite remaining-spoke JSONPatch rules by hand")
+	case StrategyCEL:
+		return out, fmt.Errorf("cel hub-path rewrite is not supported; rewrite remaining-spoke CEL rules by hand")
 	case StrategyForEach:
 		if r.ForEach == nil {
 			return out, fmt.Errorf("ForEach: missing params")
@@ -839,21 +841,6 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		cp := *r.MapKeyRename
 		cp.HubPath = hp
 		out.MapKeyRename = &cp
-	case StrategyCEL:
-		if r.CEL == nil {
-			return out, fmt.Errorf("cel: missing params")
-		}
-		paths := make([]string, len(r.CEL.HubPaths))
-		for i, p := range r.CEL.HubPaths {
-			np, err := mapPath(p)
-			if err != nil {
-				return out, err
-			}
-			paths[i] = np
-		}
-		cp := *r.CEL
-		cp.HubPaths = paths
-		out.CEL = &cp
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}

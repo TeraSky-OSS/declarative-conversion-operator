@@ -8,8 +8,8 @@ Converts a scalar field's JSON type — string, integer, number, or boolean — 
 
 The same field, same path, same meaning, is typed differently between versions — e.g. a `priority` field that was a `string` in one version and became an `integer` in another (a common cleanup once an API's real constraints become clear).
 
-!!! lossless "Always lossless for whole values"
-    Canonically-formatted whole values round-trip exactly in both directions. A value that genuinely can't be parsed as the target type (a non-numeric string coerced to a number) is a **runtime conversion error**, not a lossiness concern — it means the input object doesn't actually match its own declared schema.
+!!! lossless "Always lossless for whole values within float64 precision"
+    Canonically-formatted whole values that fit in the IEEE-754 binary64 mantissa (up to 2⁵³) round-trip exactly in both directions. Integers beyond that range cannot be represented exactly as JSON numbers. A value that genuinely can't be parsed as the target type (a non-numeric string coerced to a number) is a **runtime conversion error**, not a lossiness concern — it means the input object doesn't actually match its own declared schema.
 
     Fractional numbers written into an **integer** destination follow `onFractionalInteger` (default `Error`). `Truncate` and `Round` require `acknowledgeLossy: true` because they discard precision.
 

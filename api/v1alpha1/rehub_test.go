@@ -263,3 +263,20 @@ func TestRehubSpokes_JSONPatchPromoteFails(t *testing.T) {
 		t.Fatal("expected JSONPatch promote to fail closed")
 	}
 }
+
+func TestComposeSpokeRules_CELRewriteFails(t *testing.T) {
+	t.Parallel()
+	_, err := ComposeSpokeRules([]ConversionRule{{
+		Strategy: StrategyCEL,
+		CEL: &CELParams{
+			HubPaths:   []string{"spec.packed"},
+			SpokePaths: []string{"spec.bitHigh"},
+			HubToSpoke: `{"spec.bitHigh": object.spec.packed}`,
+			SpokeToHub: `{"spec.packed": object.spec.bitHigh}`,
+		},
+		AcknowledgeLossy: true,
+	}}, HubPathMap{"spec.packed": "spec.blob"}, map[string]bool{"spec.bitHigh": true})
+	if err == nil {
+		t.Fatal("expected CEL hub-path rewrite to fail closed")
+	}
+}

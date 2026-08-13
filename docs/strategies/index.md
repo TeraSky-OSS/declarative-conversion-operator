@@ -25,7 +25,7 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`delete`](delete.md) | Intentionally drops a field that exists on only one side. | :material-close:{ style="color:#c62828" } Always requires acknowledgement |
 | [`jsonPatch`](json-patch.md) | Escape hatch: raw RFC 6902 JSON Patch per direction. | :material-close:{ style="color:#c62828" } Lossy unless `losslessOverride` |
 | [`forEach`](for-each.md) | Applies a nested rule list to each element of an array. | Depends on nested rules |
-| [`typeCoerce`](type-coerce.md) | Converts a scalar's JSON type (string/int/number/bool). | :material-alert:{ style="color:#ef6c00" } Conditional (`onFractionalInteger`) |
+| [`typeCoerce`](type-coerce.md) | Converts a scalar's JSON type (string/int/number/bool). | :material-alert:{ style="color:#ef6c00" } Conditional (`onFractionalInteger`; integers beyond 2⁵³) |
 | [`scalarToFields`](scalar-fields.md) | Decomposes one scalar into several fields via regex + template. | :material-close:{ style="color:#c62828" } Lossy unless `losslessOverride` |
 | [`fieldsToScalar`](scalar-fields.md) | Joins several fields into one scalar via template + regex. | :material-close:{ style="color:#c62828" } Lossy unless `losslessOverride` |
 | [`arrayToMapByKey`](array-map-key.md) | Array of objects ⇄ map keyed by one of their fields. | :material-alert:{ style="color:#ef6c00" } Array→map yes, map→array no |
@@ -33,10 +33,10 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`numericScale`](numeric-scale.md) | Rescales a numeric field by a fixed factor. | :material-alert:{ style="color:#ef6c00" } Conditional (integer side) |
 | [`listJoin`](list-join-split.md) | Array of scalars ⇄ delimited string. | :material-check-all:{ style="color:#2e7d32" } Always |
 | [`listSplit`](list-join-split.md) | Delimited string ⇄ array of scalars. | :material-check-all:{ style="color:#2e7d32" } Always |
-| [`quantity`](quantity.md) | Kubernetes Quantity string ⇄ integer millivalue. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy |
-| [`duration`](duration.md) | Go duration string ⇄ integer seconds. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy |
+| [`quantity`](quantity.md) | Kubernetes Quantity string ⇄ integer millivalue. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy; string→milli is exact at milli resolution |
+| [`duration`](duration.md) | Go duration string ⇄ integer seconds. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy; sub-second strings error |
 | [`mapKeyRename`](map-key-rename.md) | Rename known keys in a free-form map; other keys pass through. | :material-check-all:{ style="color:#2e7d32" } Always (injective renames) |
-| [`cel`](cel.md) | Arbitrary CEL expressions over declared paths. | :material-close:{ style="color:#c62828" } Always (no `losslessOverride`) |
+| [`cel`](cel.md) | Arbitrary CEL expressions over declared paths. | :material-close:{ style="color:#c62828" } Always lossy (requires `acknowledgeLossy`; no `losslessOverride`) |
 
 ## Reading the examples
 

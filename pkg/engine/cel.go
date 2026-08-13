@@ -28,6 +28,15 @@ func celEnv() (*cel.Env, error) {
 }
 
 func compileCELProgram(expr string) (cel.Program, error) {
+	return compileCELProgramWithLimit(expr, DefaultCELCostLimit)
+}
+
+// DefaultCELCostLimit bounds CEL evaluation on the conversion hot path so a
+// hostile or accidental expression cannot run unbounded. 1e6 matches the
+// typical Kubernetes CEL budget.
+const DefaultCELCostLimit uint64 = 1_000_000
+
+func compileCELProgramWithLimit(expr string, limit uint64) (cel.Program, error) {
 	env, err := celEnv()
 	if err != nil {
 		return nil, err
@@ -36,7 +45,7 @@ func compileCELProgram(expr string) (cel.Program, error) {
 	if iss != nil && iss.Err() != nil {
 		return nil, iss.Err()
 	}
-	return env.Program(ast)
+	return env.Program(ast, cel.CostLimit(limit))
 }
 
 // celOp evaluates a precompiled CEL expression against the source object

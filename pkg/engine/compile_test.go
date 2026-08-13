@@ -81,11 +81,26 @@ func TestWhen_AppliesOnlyIfPredicateMatches(t *testing.T) {
 	}
 }
 
+func TestWhen_PathMustExistOnBothSchemas(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"mode": strSchema(), "name": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"name": strSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyFieldRename,
+		Params:   FieldRenameParams{HubPath: ParsePath("name"), SpokePath: ParsePath("name")},
+		When:     &RuleWhen{Path: ParsePath("mode"), Equals: "advanced"},
+	}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error when when.path is missing from the spoke schema")
+	}
+}
+
 func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
 	ref := "#/definitions/Payload"
 	hub := objSchema(map[string]extv1.JSONSchemaProps{
 		"payload": {OneOf: []extv1.JSONSchemaProps{strSchema(), {Type: "object"}}},
 		"blob":    {Ref: &ref},
+		"choice":  {AnyOf: []extv1.JSONSchemaProps{strSchema(), intSchema()}},
 	})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{
 		"other": strSchema(),
@@ -95,7 +110,7 @@ func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	errs := diagMessages(diags, SeverityError)
-	var sawOneOf, sawRef bool
+	var sawOneOf, sawRef, sawAnyOf bool
 	for _, msg := range errs {
 		if strings.Contains(msg, "oneOf") && strings.Contains(msg, "payload") {
 			sawOneOf = true
@@ -103,12 +118,18 @@ func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
 		if strings.Contains(msg, "$ref") && strings.Contains(msg, "blob") {
 			sawRef = true
 		}
+		if strings.Contains(msg, "anyOf") && strings.Contains(msg, "choice") {
+			sawAnyOf = true
+		}
 	}
 	if !sawOneOf {
 		t.Fatalf("expected uncovered diagnostic naming oneOf for payload, got %v", errs)
 	}
 	if !sawRef {
 		t.Fatalf("expected uncovered diagnostic naming $ref for blob, got %v", errs)
+	}
+	if !sawAnyOf {
+		t.Fatalf("expected uncovered diagnostic naming anyOf for choice, got %v", errs)
 	}
 }
 
@@ -657,6 +678,41 @@ func TestEnumRemap_IntegerValues(t *testing.T) {
 	}
 	if got, ok := AsFloat64(back["code"]); !ok || got != 404 {
 		t.Fatalf("expected code=404, got %#v", back["code"])
+	}
+}
+
+func TestEnumRemap_BooleanValues(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"enabled": boolSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"enabled": boolSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyEnumRemap, Params: EnumRemapParams{
+			Path: ParsePath("enabled"),
+			Mapping: []EnumValueMapping{
+				{Hub: true, Spoke: false},
+				{Hub: false, Spoke: true},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"enabled": true}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if out["enabled"] != false {
+		t.Fatalf("expected enabled=false, got %#v", out["enabled"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if back["enabled"] != true {
+		t.Fatalf("expected enabled=true, got %#v", back["enabled"])
 	}
 }
 
@@ -1475,6 +1531,24 @@ func TestDuration_StringToSecondsIsLossless_ReverseIsLossy(t *testing.T) {
 	}
 	if back["timeout"] != "5m0s" {
 		t.Fatalf("expected canonical duration 5m0s, got %#v", back["timeout"])
+	}
+}
+
+func TestDuration_FractionalSecondsAreRejected(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"timeout": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"timeoutSeconds": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyDuration, Params: DurationParams{HubPath: ParsePath("timeout"), SpokePath: ParsePath("timeoutSeconds")}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if _, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"timeout": "1500ms"}}); err == nil {
+		t.Fatal("expected a conversion error for a duration that is not a whole number of seconds")
 	}
 }
 

@@ -78,6 +78,9 @@ func (o durationOp) apply(ctx *execContext) error {
 		if err != nil {
 			return fmt.Errorf("duration: parse %q: %w", s, err)
 		}
+		if d%time.Second != 0 {
+			return fmt.Errorf("duration: %q is not a whole number of seconds", s)
+		}
 		return setValue(ctx.output, o.dst, float64(int64(d/time.Second)))
 	}
 	f, ok := AsFloat64(v)

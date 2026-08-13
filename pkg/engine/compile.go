@@ -243,12 +243,23 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			if len(rule.When.Path) == 0 {
 				ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path is required", idx, rule.Strategy))
 			} else {
-				ruleDiags = append(ruleDiags, warnf(idx, "rule %d (%s): applies only when %q equals %#v; coverage of its target paths is partial", idx, rule.Strategy, rule.When.Path, rule.When.Equals))
-				if h2sOp != nil {
-					h2sOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: h2sOp}
+				validWhen := true
+				if _, err := lookupPath(hub, rule.When.Path); err != nil {
+					ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path on hub: %v", idx, rule.Strategy, err))
+					validWhen = false
 				}
-				if s2hOp != nil {
-					s2hOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: s2hOp}
+				if _, err := lookupPath(spoke, rule.When.Path); err != nil {
+					ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path on spoke: %v", idx, rule.Strategy, err))
+					validWhen = false
+				}
+				if validWhen {
+					ruleDiags = append(ruleDiags, warnf(idx, "rule %d (%s): applies only when %q equals %#v; coverage of its target paths is partial", idx, rule.Strategy, rule.When.Path, rule.When.Equals))
+					if h2sOp != nil {
+						h2sOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: h2sOp}
+					}
+					if s2hOp != nil {
+						s2hOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: s2hOp}
+					}
 				}
 			}
 		}

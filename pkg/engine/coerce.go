@@ -96,12 +96,18 @@ func coerceScalarValueWithPolicy(v any, to FieldKind, frac FractionalIntegerPoli
 
 func numericAsFloat64(v any) (float64, error) {
 	if f, ok := AsFloat64(v); ok {
+		if err := rejectNonFinite(f); err != nil {
+			return 0, err
+		}
 		return f, nil
 	}
 	switch t := v.(type) {
 	case string:
 		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
 		if err != nil {
+			return 0, fmt.Errorf("cannot coerce %q to a number: %w", t, err)
+		}
+		if err := rejectNonFinite(f); err != nil {
 			return 0, fmt.Errorf("cannot coerce %q to a number: %w", t, err)
 		}
 		return f, nil
@@ -113,6 +119,13 @@ func numericAsFloat64(v any) (float64, error) {
 	default:
 		return 0, fmt.Errorf("cannot coerce %T to a number", v)
 	}
+}
+
+func rejectNonFinite(f float64) error {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return fmt.Errorf("cannot coerce non-finite number %v", f)
+	}
+	return nil
 }
 
 func applyFractionalInteger(f float64, frac FractionalIntegerPolicy) (float64, error) {

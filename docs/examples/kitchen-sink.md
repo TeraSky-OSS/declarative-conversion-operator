@@ -48,7 +48,8 @@ Nine paths is three samples across three served versions. The three `PASS`
 results are the identity paths (`v3→v3`, `v2→v2`, `v1→v1`); the other six carry
 acknowledged loss, because this fixture deliberately includes every strategy
 that is *always* lossy in one direction — `delete`, `constant`, `defaultValue`,
-`numericScale` onto an integer, `mapToArrayByKey`. Each of those rules states
+`numericScale` onto an integer, `mapToArrayByKey`, `quantity`/`duration`
+canonical string re-formatting, and `cel` (always lossy). Each of those rules states
 its `reason` in the config, and acknowledged loss never fails a run at any
 `--fail-on` threshold. What would fail is loss nobody declared.
 

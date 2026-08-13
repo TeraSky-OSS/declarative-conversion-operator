@@ -11,7 +11,7 @@ A transform that none of the declarative strategies can express — for example 
 !!! lossy "Always lossy — no `losslessOverride`"
     Compile cannot prove the two expressions are inverses. `acknowledgeLossy: true` is **required** at admission and at compile time. Unlike `jsonPatch` / `scalarToFields`, there is no `losslessOverride` escape. Prove a particular expression pair on your data with [`convctl test`](../cli.md).
 
-Coverage still fail-closes: `hubPaths` / `spokePaths` are claimed so those fields are not reported as uncovered. The engine does not inspect the expression bodies beyond parsing them.
+Coverage still fail-closes: `hubPaths` / `spokePaths` are claimed so those fields are not reported as uncovered. The engine does not inspect the expression bodies beyond parsing them. Evaluation is bounded by a 1e6 CEL cost limit so a runaway expression cannot stall conversion.
 
 ## Example
 
