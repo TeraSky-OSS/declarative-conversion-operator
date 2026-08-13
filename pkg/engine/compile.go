@@ -1254,7 +1254,7 @@ func resolveStringIntegerPair(idx int, name string, hubPath, spokePath FieldPath
 	}
 	hubStr, hubInt := hubKind == FieldKindString, hubKind == FieldKindInteger
 	spokeStr, spokeInt := spokeKind == FieldKindString, spokeKind == FieldKindInteger
-	if !((hubStr && spokeInt) || (hubInt && spokeStr)) {
+	if (!hubStr || !spokeInt) && (!hubInt || !spokeStr) {
 		diags = append(diags, errorf(idx, "rule %d (%s): one side must be a string and the other an integer (hub %q is %s, spoke %q is %s)", idx, name, hubPath, hubKind, spokePath, spokeKind))
 	}
 	if d := claim(claimedHub, hubPath, idx, "hub"); d != nil {

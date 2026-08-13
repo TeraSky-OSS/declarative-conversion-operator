@@ -266,7 +266,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		}
 	case StrategyQuantity:
 		if r.Quantity == nil {
-			return out, fmt.Errorf("Quantity: missing params")
+			return out, fmt.Errorf("quantity: missing params")
 		}
 		out.Strategy = StrategyQuantity
 		out.Quantity = &QuantityParams{
@@ -274,7 +274,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		}
 	case StrategyDuration:
 		if r.Duration == nil {
-			return out, fmt.Errorf("Duration: missing params")
+			return out, fmt.Errorf("duration: missing params")
 		}
 		out.Strategy = StrategyDuration
 		out.Duration = &DurationParams{
@@ -282,7 +282,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		}
 	case StrategyMapKeyRename:
 		if r.MapKeyRename == nil {
-			return out, fmt.Errorf("MapKeyRename: missing params")
+			return out, fmt.Errorf("mapKeyRename: missing params")
 		}
 		rev := make(map[string]string, len(r.MapKeyRename.Renames))
 		for hubKey, spokeKey := range r.MapKeyRename.Renames {
@@ -294,7 +294,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		}
 	case StrategyCEL:
 		if r.CEL == nil {
-			return out, fmt.Errorf("CEL: missing params")
+			return out, fmt.Errorf("cel: missing params")
 		}
 		out.Strategy = StrategyCEL
 		out.CEL = &CELParams{
@@ -452,22 +452,22 @@ func hubSpokePathPairs(r ConversionRule) ([]pathPair, error) {
 		return []pathPair{{r.ListSplit.HubPath, r.ListSplit.SpokePath}}, nil
 	case StrategyQuantity:
 		if r.Quantity == nil {
-			return nil, fmt.Errorf("Quantity: missing params")
+			return nil, fmt.Errorf("quantity: missing params")
 		}
 		return []pathPair{{r.Quantity.HubPath, r.Quantity.SpokePath}}, nil
 	case StrategyDuration:
 		if r.Duration == nil {
-			return nil, fmt.Errorf("Duration: missing params")
+			return nil, fmt.Errorf("duration: missing params")
 		}
 		return []pathPair{{r.Duration.HubPath, r.Duration.SpokePath}}, nil
 	case StrategyMapKeyRename:
 		if r.MapKeyRename == nil {
-			return nil, fmt.Errorf("MapKeyRename: missing params")
+			return nil, fmt.Errorf("mapKeyRename: missing params")
 		}
 		return []pathPair{{r.MapKeyRename.HubPath, r.MapKeyRename.SpokePath}}, nil
 	case StrategyCEL:
 		if r.CEL == nil {
-			return nil, fmt.Errorf("CEL: missing params")
+			return nil, fmt.Errorf("cel: missing params")
 		}
 		pairs := make([]pathPair, 0, len(r.CEL.HubPaths))
 		for _, hp := range r.CEL.HubPaths {
@@ -808,7 +808,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		out.ListSplit = &cp
 	case StrategyQuantity:
 		if r.Quantity == nil {
-			return out, fmt.Errorf("Quantity: missing params")
+			return out, fmt.Errorf("quantity: missing params")
 		}
 		hp, err := mapPath(r.Quantity.HubPath)
 		if err != nil {
@@ -819,7 +819,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		out.Quantity = &cp
 	case StrategyDuration:
 		if r.Duration == nil {
-			return out, fmt.Errorf("Duration: missing params")
+			return out, fmt.Errorf("duration: missing params")
 		}
 		hp, err := mapPath(r.Duration.HubPath)
 		if err != nil {
@@ -830,7 +830,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		out.Duration = &cp
 	case StrategyMapKeyRename:
 		if r.MapKeyRename == nil {
-			return out, fmt.Errorf("MapKeyRename: missing params")
+			return out, fmt.Errorf("mapKeyRename: missing params")
 		}
 		hp, err := mapPath(r.MapKeyRename.HubPath)
 		if err != nil {
@@ -841,7 +841,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		out.MapKeyRename = &cp
 	case StrategyCEL:
 		if r.CEL == nil {
-			return out, fmt.Errorf("CEL: missing params")
+			return out, fmt.Errorf("cel: missing params")
 		}
 		paths := make([]string, len(r.CEL.HubPaths))
 		for i, p := range r.CEL.HubPaths {
