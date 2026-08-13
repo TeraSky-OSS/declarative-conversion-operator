@@ -82,7 +82,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.Strategy = StrategyMapToFields
 		out.MapToFields = &MapToFieldsParams{
 			HubMapPath: r.FieldsToMap.SpokeMapPath, SpokePaths: append([]string(nil), r.FieldsToMap.HubPaths...),
-			KeyNames: invertKeyNames(r.FieldsToMap.HubPaths, r.FieldsToMap.KeyNames),
+			KeyNames:        invertKeyNames(r.FieldsToMap.HubPaths, r.FieldsToMap.KeyNames),
 			OnUnknownHubKey: r.FieldsToMap.OnUnknownSpokeKey,
 		}
 	case StrategyMapToFields:
@@ -92,7 +92,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.Strategy = StrategyFieldsToMap
 		out.FieldsToMap = &FieldsToMapParams{
 			HubPaths: append([]string(nil), r.MapToFields.SpokePaths...), SpokeMapPath: r.MapToFields.HubMapPath,
-			KeyNames: invertKeyNames(r.MapToFields.SpokePaths, r.MapToFields.KeyNames),
+			KeyNames:          invertKeyNames(r.MapToFields.SpokePaths, r.MapToFields.KeyNames),
 			OnUnknownSpokeKey: r.MapToFields.OnUnknownHubKey,
 		}
 	case StrategyToAnnotation:
@@ -168,8 +168,8 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		}
 		out.Strategy = StrategyJSONPatch
 		out.JSONPatch = &JSONPatchParams{
-			HubToSpoke: append([]JSONPatchOp(nil), r.JSONPatch.SpokeToHub...),
-			SpokeToHub: append([]JSONPatchOp(nil), r.JSONPatch.HubToSpoke...),
+			HubToSpoke:       append([]JSONPatchOp(nil), r.JSONPatch.SpokeToHub...),
+			SpokeToHub:       append([]JSONPatchOp(nil), r.JSONPatch.HubToSpoke...),
 			LosslessOverride: r.JSONPatch.LosslessOverride,
 		}
 	case StrategyForEach:
