@@ -68,9 +68,10 @@ Both CRDs (`XRDConversionConfig`, `CRDConversionConfig`) are always installed re
 | `conversionWebhookServer.autoscaling.enabled` | Use an HPA instead of a fixed replica count for the default instance. | `false` |
 | `conversionWebhookServer.certificate.issuerRef` | Issuer override for the default instance's conversion-webhook certificate. | inherits `certManager.issuerRef` |
 | `metrics.serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor`. Opt-in by value, not capability-detected, so chart behavior doesn't change based on how it's rendered. | `false` |
+| `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in alerts. | `false` |
+| `dashboards.enabled` | Create Grafana sidecar ConfigMap(s) labeled `grafana_dashboard: "1"`. | `false` |
 | `features.crossplane.enabled` | Enable `XRDConversionConfig` support. Requires Crossplane installed. | `true` |
 | `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support. | `true` |
-| `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in alerts. | `false` |
 | `crds.install` | Install the two CRDs from `crds/`. Disable if you manage CRDs separately (e.g. a dedicated CRD-management pipeline). | `true` |
 
 See [`values.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/values.yaml) for the complete set, including resource requests/limits, `nodeSelector`/`tolerations`/`affinity` for both the manager and the default webhook server, and `PodDisruptionBudget` settings.

@@ -150,6 +150,12 @@ metrics:
     enabled: false
     labels: {}
 
+# Grafana sidecar ConfigMaps (label grafana_dashboard: "1"). Independent of
+# ServiceMonitor — you still need scrapes for panels to populate.
+dashboards:
+  enabled: false
+  labels: {}
+
 # Opt-in NetworkPolicies for manager + default ConversionWebhookServer pods.
 # Off by default so existing installs see no behavior change. When enabled,
 # non-webhook/non-probe ingress is denied; see docs/security/metrics.md.

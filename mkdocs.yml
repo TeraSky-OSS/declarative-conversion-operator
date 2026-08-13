@@ -77,6 +77,8 @@ nav:
       - ConversionWebhookServer: configuration/conversionwebhookserver.md
   - Architecture: architecture.md
   - Observability: observability.md
+  - Operations:
+      - HPA on conversion QPS: operations/hpa-custom-metrics.md
   - CLI Reference: cli.md
   - Strategy Reference:
       - strategies/index.md

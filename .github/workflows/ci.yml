@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Any PR base (including stacked phase-* branches), not only main.
   pull_request:
-    branches: [main]
   workflow_dispatch: {}
   workflow_call: {}
 
@@ -163,13 +163,17 @@ jobs:
       - name: helm template (default values)
         run: helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 
-      - name: helm template (autoscaling + monitoring enabled)
+      - name: helm template (autoscaling + monitoring + dashboards enabled)
         run: |
           helm template declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system \
             --set conversionWebhookServer.autoscaling.enabled=true \
             --set metrics.serviceMonitor.enabled=true \
             --set metrics.prometheusRule.enabled=true \
+            --set dashboards.enabled=true \
             --set manager.podDisruptionBudget.enabled=true
+
+      - name: promtool test rules
+        run: make test-prometheus
 
   docker-build-check:
     name: Docker build check (${{ matrix.component }})

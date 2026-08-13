@@ -43,39 +43,39 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name:    "xrdconv_webhook_conversion_review_duration_seconds",
 			Help:    "Latency of ConversionReview requests, end to end.",
 			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
-		}, []string{"xrd", "direction", "result"}),
+		}, []string{"target", "direction", "result"}),
 		ReviewRequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_conversion_review_requests_total",
 			Help: "Total ConversionReview requests handled.",
-		}, []string{"xrd", "result"}),
+		}, []string{"target", "result"}),
 		ObjectsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_conversion_objects_total",
 			Help: "Total individual objects converted.",
-		}, []string{"xrd", "from_version", "to_version", "result"}),
+		}, []string{"target", "from_version", "to_version", "result"}),
 		LossyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_lossy_conversion_total",
 			Help: "Total conversions performed in a direction statically known to be lossy.",
-		}, []string{"xrd", "direction"}),
+		}, []string{"target", "direction"}),
 		RegistrySize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "xrdconv_webhook_registry_size",
 			Help: "Number of target resources (XRD/CRD names) currently present in this replica's registry, including error-only placeholders.",
 		}),
 		RegistryEntryLoaded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "xrdconv_webhook_registry_entry_loaded",
-			Help: "1 if this replica has a compiled, servable conversion plan for the target (label xrd); 0 if the registry entry is error-only / not ready. Scraped per pod, so replica identity comes from the scrape target.",
-		}, []string{"xrd"}),
+			Help: "1 if this replica has a compiled, servable conversion plan for the target; 0 if the registry entry is error-only / not ready. Scraped per pod, so replica identity comes from the scrape target.",
+		}, []string{"target"}),
 		RegistryLastReload: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "xrdconv_webhook_registry_last_reload_timestamp_seconds",
 			Help: "Unix timestamp of the last successful compile, per target.",
-		}, []string{"xrd"}),
+		}, []string{"target"}),
 		RegistryReloadTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_registry_reload_total",
 			Help: "Total attempted (re)compiles, per target and result.",
-		}, []string{"xrd", "result"}),
+		}, []string{"target", "result"}),
 		RegistryCompileErr: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "xrdconv_webhook_registry_compile_errors_total",
 			Help: "Total compile failures that left a stale-but-serving (or absent) plan in place.",
-		}, []string{"xrd", "reason"}),
+		}, []string{"target", "reason"}),
 		Ready: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "xrdconv_webhook_ready",
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
