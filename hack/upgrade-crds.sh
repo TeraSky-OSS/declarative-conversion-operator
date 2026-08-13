@@ -67,7 +67,12 @@ if [ -z "${CRDS}" ]; then
 fi
 
 if [ "${PRINT_ONLY}" -eq 1 ]; then
-  printf '%s\n' "${CRDS}"
+  # Consumers like `grep -q` or `head` close the pipe as soon as they have
+  # enough output. Ignoring SIGPIPE (and tolerating a write error) keeps that
+  # from failing under `set -e` / pipefail. Stderr is muted only for this
+  # write so bash's "Broken pipe" noise does not look like a real failure.
+  trap '' PIPE
+  printf '%s\n' "${CRDS}" 2>/dev/null || true
   exit 0
 fi
 

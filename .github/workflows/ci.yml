@@ -196,8 +196,14 @@ jobs:
 
       - name: CRD upgrade helper prints chart CRDs
         run: |
-          ./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print \
-            | grep -q 'kind: CustomResourceDefinition'
+          out="$(./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print)"
+          case "$out" in
+            *"kind: CustomResourceDefinition"*) ;;
+            *)
+              echo "FAIL: upgrade-crds --print did not emit a CustomResourceDefinition" >&2
+              exit 1
+              ;;
+          esac
 
       - name: promtool test rules
         run: make test-prometheus

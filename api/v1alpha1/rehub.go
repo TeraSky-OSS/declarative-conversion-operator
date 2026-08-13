@@ -152,13 +152,13 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.DefaultValue = &DefaultValueParams{Path: r.DefaultValue.Path, ExistsOn: flipSide(r.DefaultValue.ExistsOn), Default: r.DefaultValue.Default}
 	case StrategyConstant:
 		if r.Constant == nil {
-			return out, fmt.Errorf("Constant: missing params")
+			return out, fmt.Errorf("constant rule: missing params")
 		}
 		out.Strategy = StrategyConstant
 		out.Constant = &ConstantParams{Path: r.Constant.Path, ExistsOn: flipSide(r.Constant.ExistsOn), Value: r.Constant.Value}
 	case StrategyDelete:
 		if r.Delete == nil {
-			return out, fmt.Errorf("Delete: missing params")
+			return out, fmt.Errorf("delete rule: missing params")
 		}
 		out.Strategy = StrategyDelete
 		out.Delete = &DeleteParams{Path: r.Delete.Path, ExistsOn: flipSide(r.Delete.ExistsOn)}
@@ -606,7 +606,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		}
 	case StrategyConstant:
 		if r.Constant == nil {
-			return out, fmt.Errorf("Constant: missing params")
+			return out, fmt.Errorf("constant rule: missing params")
 		}
 		if r.Constant.ExistsOn == SideHub {
 			hp, err := mapPath(r.Constant.Path)
@@ -619,7 +619,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		}
 	case StrategyDelete:
 		if r.Delete == nil {
-			return out, fmt.Errorf("Delete: missing params")
+			return out, fmt.Errorf("delete rule: missing params")
 		}
 		if r.Delete.ExistsOn == SideHub {
 			hp, err := mapPath(r.Delete.Path)
