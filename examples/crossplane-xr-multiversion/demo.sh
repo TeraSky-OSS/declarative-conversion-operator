@@ -69,13 +69,11 @@ kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/n
 kubectl wait --for=condition=Available --timeout=120s conversionwebhookserver/default >/dev/null 2>&1 \
   || die "ConversionWebhookServer/default is not Available yet."
 
-# Make the typed commands say `convctl`, not `go run`.
-if ! command -v convctl >/dev/null 2>&1; then
-  mkdir -p "${REPO_ROOT}/bin"
-  (cd "${REPO_ROOT}" && go build -o bin/convctl ./cmd/convctl) \
-    || die "failed to build convctl"
-  export PATH="${REPO_ROOT}/bin:${PATH}"
-fi
+# Always use this checkout's convctl so a stale PATH binary cannot drift.
+mkdir -p "${REPO_ROOT}/bin"
+(cd "${REPO_ROOT}" && go build -o bin/convctl ./cmd/convctl) \
+  || die "failed to build convctl"
+export PATH="${REPO_ROOT}/bin:${PATH}"
 
 # demo-magic aborts if TYPE_SPEED is set and pv is missing. -d is the
 # upstream switch that unsets TYPE_SPEED before that check.

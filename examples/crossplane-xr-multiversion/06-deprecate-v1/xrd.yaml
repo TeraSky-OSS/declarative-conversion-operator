@@ -51,8 +51,9 @@ spec:
               properties:
                 phase:
                   type: string
-    # Stopped serving. Drop this block entirely once no stored objects and
-    # no clients remain on v1 — see the README deprecation steps.
+    # Stopped serving. Drop this block entirely only after stored objects
+    # are rewritten at the current storage version and v1 is gone from the
+    # generated CRD's status.storedVersions — see the README deprecation steps.
     - name: v1
       served: false
       referenceable: false

@@ -62,13 +62,21 @@ passes `-d` for you.
 
 The broken configs live in [`mistakes/`](mistakes/). They are never applied.
 
+The `kubectl` / `convctl` commands from here on are relative to this directory:
+
+```console
+cd examples/crossplane-xr-multiversion
+```
+
 ---
 
 ## Stage 1 — one version, no conversion
 
 [`01-v1-only/`](01-v1-only/) is a normal Crossplane XRD: a single served,
 referenceable `v1`. The Composition's `compositeTypeRef` is `example.org/v1`
-and the template reads `spec.widgetName` / `spec.size`.
+and the template reads `spec.widgetName` / `spec.size`. The XRD sets
+`spec.defaultCompositionRef` so the XR does not need its own
+`spec.crossplane.compositionRef`.
 
 ```console
 kubectl apply -f 01-v1-only/xrd.yaml
@@ -273,8 +281,18 @@ live API. Hub stays `v3`; `v2` remains a served spoke. Do this in order:
 3. **Set `served: false` on `v1`** in the XRD. The version block can stay so
    stored objects are still understood; the apiserver stops serving the
    `example.org/v1` endpoint.
-4. **Remove the `v1` version block** from the XRD once you are sure nothing
-   remains that needs that schema. That is ordinary Crossplane/CRD cleanup.
+4. **Remove the `v1` version block** from the XRD only after stored objects
+   have been rewritten at the current storage version (Crossplane's
+   `referenceable` version — `v3` here) **and** `v1` is gone from the
+   generated CRD's `status.storedVersions`. Kubernetes rejects dropping a
+   version that is still listed there; “no live `v1` objects” is not enough
+   because `storedVersions` keeps historical versions until you prune it.
+
+   ```console
+   kubectl get crd xwidgets.example.org -o jsonpath='{.status.storedVersions}{"\n"}'
+   # rewrite remaining objects at the storage version, then prune storedVersions
+   kubectl get xwidgets.example.org -A -o json | kubectl replace -f -
+   ```
 
 ```console
 convctl validate --config 06-deprecate-v1/xrdconversionconfig.yaml --xrd 06-deprecate-v1/xrd.yaml

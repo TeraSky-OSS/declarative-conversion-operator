@@ -155,7 +155,7 @@ Every reconcile recomputes a hash of the live XRD's schema plus this config's ru
 3. Whichever of those two changes lands first, `hubVersion` and the live referenceable version will briefly disagree. The next reconcile re-validates as `Invalid`/`Stale` — but per `KeepServingStale`, the controller never un-patches the XRD; it keeps serving the last-known-good plan (still hub=`v2`) the whole time. Since `v3` was already a working spoke from step 1, conversions keep functioning correctly through the old plan throughout — Kubernetes' conversion webhook protocol converts between whatever version is stored and whatever version was requested per-request, so a router internally pivoting through `v2` handles a `v3`-desired request exactly as it always did.
 4. Once both changes have landed, the next reconcile finds `hubVersion` matching the live referenceable version again, validates cleanly, and re-patches the XRD with the new `v3`-anchored plan — no outage, no manual intervention to "resume."
 
-A worked, apply-able walkthrough of this sequence — including creating a new Composition when the hub moves (`spec.compositeTypeRef` is immutable) — is [`examples/crossplane-xr-multiversion/`](../examples/xr-lifecycle.md).
+A worked, apply-able walkthrough of this sequence — including creating a new Composition when the hub moves (`spec.compositeTypeRef` is immutable) — is the [Crossplane XR lifecycle walkthrough](../examples/xr-lifecycle.md).
 
 `DriftPolicy: FailClosed` does **not** offer this safety net — a mismatch under `FailClosed` stops serving conversions immediately, so plan the two updates as a single fast operation (or temporarily switch to `KeepServingStale` for the migration) if you use that policy.
 
