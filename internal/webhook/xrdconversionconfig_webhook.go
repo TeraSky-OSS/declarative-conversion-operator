@@ -34,6 +34,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -220,6 +221,12 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.ToLabel != nil {
 		set++
 	}
+	if r.FromAnnotation != nil {
+		set++
+	}
+	if r.FromLabel != nil {
+		set++
+	}
 	if r.EnumRemap != nil {
 		set++
 	}
@@ -271,6 +278,19 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 		}
 		if err := validateRules(r.ForEach.Rules, depth+1); err != nil {
 			return fmt.Errorf("forEach: %w", err)
+		}
+	}
+	if r.Strategy == teraskyv1alpha1.StrategyFromLabel && r.FromLabel != nil && r.FromLabel.Serialization == "JSON" {
+		return fmt.Errorf("FromLabel does not support serialization=JSON; use String (labels cannot carry JSON-quoted values)")
+	}
+	if r.ToLabel != nil {
+		if msgs := k8svalidation.IsQualifiedName(r.ToLabel.Key); len(msgs) > 0 {
+			return fmt.Errorf("ToLabel key %q is not a valid label key: %s", r.ToLabel.Key, strings.Join(msgs, "; "))
+		}
+	}
+	if r.FromLabel != nil {
+		if msgs := k8svalidation.IsQualifiedName(r.FromLabel.Key); len(msgs) > 0 {
+			return fmt.Errorf("FromLabel key %q is not a valid label key: %s", r.FromLabel.Key, strings.Join(msgs, "; "))
 		}
 	}
 	return nil

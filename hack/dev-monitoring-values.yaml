@@ -1,0 +1,47 @@
+# Values for kube-prometheus-stack when installed by `make dev-up`.
+# Local-dev only: Grafana is anonymous (no login) and Prometheus selects
+# ServiceMonitors / PrometheusRules across all namespaces so the operator
+# chart's monitoring objects are scraped without a shared release label.
+
+grafana:
+  # Skip the login page; open http://localhost:3000 after port-forward.
+  grafana.ini:
+    auth:
+      disable_login_form: true
+    auth.anonymous:
+      enabled: true
+      org_name: Main Org.
+      org_role: Admin
+    users:
+      viewers_can_edit: true
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+      label: grafana_dashboard
+      labelValue: "1"
+    datasources:
+      enabled: true
+
+prometheus:
+  prometheusSpec:
+    # Empty selectors (via NilUsesHelmValues=false) pick up ServiceMonitors
+    # and PrometheusRules from any namespace, including the operator release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorNamespaceSelector: {}
+    ruleSelectorNilUsesHelmValues: false
+    ruleNamespaceSelector: {}
+    retention: 24h
+    # Kind control-plane scrapes for etcd/scheduler/controller-manager are
+    # usually unreachable; keep the operator + node / kubelet targets.
+
+# These control-plane endpoints are not exposed on kind by default and only
+# produce perpetual DOWN targets / noisy alerts.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false

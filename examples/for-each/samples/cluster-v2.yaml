@@ -1,0 +1,10 @@
+apiVersion: example.org/v2
+kind: XCluster
+metadata:
+  name: cluster-hub
+spec:
+  nodePools:
+    - instanceType: m5.large
+      nodeCount: 3
+    - instanceType: m5.xlarge
+      nodeCount: 2

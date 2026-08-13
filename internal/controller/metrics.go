@@ -44,16 +44,16 @@ func GetManagerMetrics() *ManagerMetrics {
 	managerMetricsOnce.Do(func() {
 		managerMetrics = &ManagerMetrics{
 			AnalyzeFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
-				Name: "xrdconv_manager_analyze_failures_total",
+				Name: "dco_manager_analyze_failures_total",
 				Help: "Analyze/compile validation failures during config reconcile (manager side).",
 			}, []string{"config_kind", "target", "reason"}),
 			ApplyDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-				Name:    "xrdconv_manager_apply_duration_seconds",
+				Name:    "dco_manager_apply_duration_seconds",
 				Help:    "Latency of SSA patches applying conversion webhook config onto the target XRD/CRD.",
 				Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 			}, []string{"config_kind", "target", "result"}),
 			PhaseTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
-				Name: "xrdconv_manager_phase_transitions_total",
+				Name: "dco_manager_phase_transitions_total",
 				Help: "Config status phase transitions observed by the manager (e.g. Applied→Stale, Applied→Failed).",
 			}, []string{"config_kind", "target", "from_phase", "to_phase", "reason"}),
 		}

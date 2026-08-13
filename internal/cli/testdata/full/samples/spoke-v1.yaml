@@ -13,6 +13,7 @@ spec:
   teamTag: "core"
   computeUnits: 5
   debugMode: true
+  operatorTier: "ops-bronze"
   volumes:
     - size: "10"
       name: "scratch"

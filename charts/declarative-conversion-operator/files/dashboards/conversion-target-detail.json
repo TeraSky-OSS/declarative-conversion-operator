@@ -1,0 +1,299 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Loaded on replicas",
+      "description": "1 if every ready scraped webhook replica has a compiled plan for this target (ready pods missing the plan count as not loaded).",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Not loaded", "color": "red" }, "1": { "text": "Loaded", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "(count((dco_webhook_ready == 1) unless on(pod) (dco_webhook_registry_entry_loaded{target=\"$target\"} == 1)) or vector(0)) == bool 0",
+          "legendFormat": "loaded",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Replicas with plan",
+      "description": "Count of webhook pods that currently report a loaded plan for this target.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "count(dco_webhook_registry_entry_loaded{target=\"$target\"} == 1) or vector(0)",
+          "legendFormat": "replicas",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Seconds since last compile",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "time() - max(dco_webhook_registry_last_reload_timestamp_seconds{target=\"$target\"})",
+          "legendFormat": "age",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Request rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "expr": "sum(rate(dco_webhook_conversion_review_requests_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "req/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Error ratio",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "(sum(rate(dco_webhook_conversion_review_requests_total{target=\"$target\",result!=\"success\"}[5m])) or vector(0)) / clamp_min(sum(rate(dco_webhook_conversion_review_requests_total{target=\"$target\"}[5m])) or vector(0), 1e-9)",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Config kind (manager)",
+      "description": "From manager apply metrics: xrd or crd. Empty until the manager has applied webhook config for this target.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "name" },
+      "targets": [
+        {
+          "expr": "group by (config_kind) (dco_manager_apply_duration_seconds_count{target=\"$target\"})",
+          "legendFormat": "{{config_kind}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Conversion latency p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, direction) (rate(dco_webhook_conversion_review_duration_seconds_bucket{target=\"$target\"}[5m])))",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Conversion requests by result",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(dco_webhook_conversion_review_requests_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Objects converted (from → to)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (from_version, to_version, result) (rate(dco_webhook_conversion_objects_total{target=\"$target\"}[5m]))",
+          "legendFormat": "{{from_version}}→{{to_version}} ({{result}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Lossy conversions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (direction) (rate(dco_webhook_lossy_conversion_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Registry entry loaded (per webhook pod)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "dco_webhook_registry_entry_loaded{target=\"$target\"}",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Compile / reload",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(dco_webhook_registry_reload_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "reload {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (reason) (rate(dco_webhook_registry_compile_errors_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "compile {{reason}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Manager apply latency p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, config_kind, result) (rate(dco_manager_apply_duration_seconds_bucket{target=\"$target\"}[5m])))",
+          "legendFormat": "{{config_kind}} {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Manager analyze failures",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (config_kind, reason) (rate(dco_manager_analyze_failures_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "{{config_kind}} {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Manager phase transitions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (config_kind, from_phase, to_phase, reason) (rate(dco_manager_phase_transitions_total{target=\"$target\"}[5m])) or vector(0)",
+          "legendFormat": "{{config_kind}} {{from_phase}}→{{to_phase}} ({{reason}})",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["declarative-conversion-operator", "conversion", "target"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "label": "Datasource",
+        "refresh": 1
+      },
+      {
+        "name": "target",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values({__name__=~\"dco_webhook_registry_entry_loaded|dco_manager_apply_duration_seconds_count\"}, target)",
+        "query": "label_values({__name__=~\"dco_webhook_registry_entry_loaded|dco_manager_apply_duration_seconds_count\"}, target)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "label": "Target XRD/CRD",
+        "current": {}
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "Conversion Target Detail",
+  "uid": "dco-conversion-target-detail",
+  "version": 1
+}

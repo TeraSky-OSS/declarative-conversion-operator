@@ -1,0 +1,19 @@
+# testdata/config.yaml with its FieldRename rule dropped, so `convctl diff`
+# has a pair of configs differing in exactly one rule.
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xfoos-conversion
+spec:
+  targetXRD:
+    name: xfoos.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: Delete
+          delete:
+            path: spec.legacyDebugFlag
+            existsOn: Hub
+          acknowledgeLossy: true
+          reason: "not needed on v1"

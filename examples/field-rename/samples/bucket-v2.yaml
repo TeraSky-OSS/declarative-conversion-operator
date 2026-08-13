@@ -1,0 +1,9 @@
+apiVersion: example.org/v2
+kind: XBucket
+metadata:
+  name: bucket-hub
+spec:
+  storageGB: "500"
+  region: us-east-1
+status:
+  phase: Ready

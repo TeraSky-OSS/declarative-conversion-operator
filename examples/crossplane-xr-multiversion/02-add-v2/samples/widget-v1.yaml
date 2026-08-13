@@ -1,0 +1,7 @@
+apiVersion: example.org/v1
+kind: XWidget
+metadata:
+  name: widget-v1
+spec:
+  widgetName: demo-widget
+  size: Large

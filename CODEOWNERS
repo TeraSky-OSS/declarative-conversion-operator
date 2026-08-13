@@ -1,0 +1,33 @@
+# Code Owners
+
+These owners are requested for review on matching paths. Paths are relative
+to the repository root.
+
+# Default
+*       @vrabbi
+
+# Conversion engine and public API surface
+/api/                                   @vrabbi
+/pkg/engine/                            @vrabbi
+/pkg/xrdadapter/                        @vrabbi
+/pkg/crdadapter/                        @vrabbi
+
+# Controllers, admission, webhook runtime
+/internal/controller/                   @vrabbi
+/internal/webhook/                      @vrabbi
+/internal/webhookserver/                @vrabbi
+/internal/assign/                       @vrabbi
+/internal/conversionpatch/              @vrabbi
+
+# CLI
+/internal/cli/                          @vrabbi
+/cmd/                                   @vrabbi
+
+# Packaging and install
+/charts/                                @vrabbi
+/config/                                @vrabbi
+/.github/                               @vrabbi
+
+# Docs and examples
+/docs/                                  @vrabbi
+/examples/                              @vrabbi

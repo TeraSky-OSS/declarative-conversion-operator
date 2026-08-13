@@ -10,12 +10,18 @@ PromQL recipes for registry readiness. Scraped endpoints:
 
 Enable chart `ServiceMonitor`s with `metrics.serviceMonitor.enabled=true`
 (and optional `PrometheusRule` / Grafana dashboard ConfigMaps — see
-[Installation](installation.md)). Trust boundary and NetworkPolicy:
+[Installation](installation.md)). `make dev-up` turns those on automatically
+and installs kube-prometheus-stack with anonymous Grafana
+(`hack/dev-monitoring-values.yaml`). Trust boundary and NetworkPolicy:
 [security/metrics.md](security/metrics.md).
 
 **Label note:** target identity uses the Prometheus label `target` (XRD or
 CRD resource name). Older scrapes/alerts that filtered on `xrd=` must be
 updated.
+
+**Metric prefix:** all series use `dco_` (declarative-conversion-operator).
+The pre-1.0 `xrdconv_` prefix is retired — update scrapes, alerts, and
+dashboards that still reference it.
 
 ---
 
@@ -27,16 +33,16 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `xrdconv_webhook_conversion_review_duration_seconds` | Histogram | `target`, `direction`, `result` | End-to-end ConversionReview latency |
-| `xrdconv_webhook_conversion_review_requests_total` | Counter | `target`, `result` | ConversionReview requests handled |
-| `xrdconv_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `result` | Individual objects converted inside reviews |
-| `xrdconv_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy |
-| `xrdconv_webhook_registry_size` | Gauge | — | Registry entries on this replica (includes error-only placeholders) |
-| `xrdconv_webhook_registry_entry_loaded` | Gauge | `target` | `1` if this replica has a compiled, servable plan for that target; `0` if error-only |
-| `xrdconv_webhook_registry_last_reload_timestamp_seconds` | Gauge | `target` | Unix time of last successful compile |
-| `xrdconv_webhook_registry_reload_total` | Counter | `target`, `result` | Attempted (re)compiles |
-| `xrdconv_webhook_registry_compile_errors_total` | Counter | `target`, `reason` | Compile failures that left a stale-or-absent plan in place |
-| `xrdconv_webhook_ready` | Gauge | — | `1` after this replica's registry completed initial sync |
+| `dco_webhook_conversion_review_duration_seconds` | Histogram | `target`, `direction`, `result` | End-to-end ConversionReview latency |
+| `dco_webhook_conversion_review_requests_total` | Counter | `target`, `result` | ConversionReview requests handled |
+| `dco_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `result` | Individual objects converted inside reviews |
+| `dco_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy |
+| `dco_webhook_registry_size` | Gauge | — | Registry entries on this replica (includes error-only placeholders) |
+| `dco_webhook_registry_entry_loaded` | Gauge | `target` | `1` if this replica has a compiled, servable plan for that target; `0` if error-only |
+| `dco_webhook_registry_last_reload_timestamp_seconds` | Gauge | `target` | Unix time of last successful compile |
+| `dco_webhook_registry_reload_total` | Counter | `target`, `result` | Attempted (re)compiles |
+| `dco_webhook_registry_compile_errors_total` | Counter | `target`, `reason` | Compile failures that left a stale-or-absent plan in place |
+| `dco_webhook_ready` | Gauge | — | `1` after this replica's registry completed initial sync |
 
 ### Common label values
 
@@ -50,15 +56,15 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 ```promql
 # p99 ConversionReview latency by target
 histogram_quantile(0.99,
-  sum by (le, target) (rate(xrdconv_webhook_conversion_review_duration_seconds_bucket[5m])))
+  sum by (le, target) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))
 
 # Error ratio by target
-sum by (target) (rate(xrdconv_webhook_conversion_review_requests_total{result="error"}[5m]))
+sum by (target) (rate(dco_webhook_conversion_review_requests_total{result="error"}[5m]))
 /
-sum by (target) (rate(xrdconv_webhook_conversion_review_requests_total[5m]))
+sum by (target) (rate(dco_webhook_conversion_review_requests_total[5m]))
 
 # Lossy conversion rate
-sum by (target, direction) (rate(xrdconv_webhook_lossy_conversion_total[5m]))
+sum by (target, direction) (rate(dco_webhook_lossy_conversion_total[5m]))
 ```
 
 ---
@@ -71,9 +77,9 @@ and workqueue series.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `xrdconv_manager_analyze_failures_total` | Counter | `config_kind`, `target`, `reason` | Analyze/compile validation failures during config reconcile |
-| `xrdconv_manager_apply_duration_seconds` | Histogram | `config_kind`, `target`, `result` | Latency of SSA patches applying conversion webhook config onto the target XRD/CRD |
-| `xrdconv_manager_phase_transitions_total` | Counter | `config_kind`, `from_phase`, `to_phase`, `reason` | Config status phase transitions (e.g. Applied→Stale, Applied→Failed) |
+| `dco_manager_analyze_failures_total` | Counter | `config_kind`, `target`, `reason` | Analyze/compile validation failures during config reconcile |
+| `dco_manager_apply_duration_seconds` | Histogram | `config_kind`, `target`, `result` | Latency of SSA patches applying conversion webhook config onto the target XRD/CRD |
+| `dco_manager_phase_transitions_total` | Counter | `config_kind`, `from_phase`, `to_phase`, `reason` | Config status phase transitions (e.g. Applied→Stale, Applied→Failed) |
 
 - **`config_kind`**: `xrd` or `crd`
 - **`to_phase` / `from_phase`**: `Pending`, `Applied`, `Stale`, `Failed`, …
@@ -81,15 +87,15 @@ and workqueue series.
 
 ```promql
 # Analyze failures
-sum by (config_kind, target, reason) (rate(xrdconv_manager_analyze_failures_total[5m]))
+sum by (config_kind, target, reason) (rate(dco_manager_analyze_failures_total[5m]))
 
 # Apply p99
 histogram_quantile(0.99,
-  sum by (le, config_kind, target) (rate(xrdconv_manager_apply_duration_seconds_bucket[5m])))
+  sum by (le, config_kind, target) (rate(dco_manager_apply_duration_seconds_bucket[5m])))
 
 # Transitions into Stale or Failed
 sum by (config_kind, to_phase, reason)
-  (rate(xrdconv_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[5m]))
+  (rate(dco_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[5m]))
 ```
 
 ---
@@ -103,7 +109,7 @@ a legitimate empty result. Configs still periodically self-reconcile
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `xrdconv_watch_map_list_errors_total` | Counter | `map_func` | Watch-mapping List failures |
+| `dco_watch_map_list_errors_total` | Counter | `map_func` | Watch-mapping List failures |
 
 ---
 
@@ -118,9 +124,9 @@ Example: confirm every **ready** webhook-server pod has loaded
 target `xfoos.example.org` (empty result = healthy):
 
 ```promql
-(xrdconv_webhook_ready == 1)
+(dco_webhook_ready == 1)
   unless on (pod)
-(xrdconv_webhook_registry_entry_loaded{target="xfoos.example.org"} == 1)
+(dco_webhook_registry_entry_loaded{target="xfoos.example.org"} == 1)
 ```
 
 Use `instance` instead of `pod` if that is the stable scrape identity in
@@ -130,7 +136,7 @@ Compare desired assignment count on the CWS status with live load:
 
 ```promql
 # per-replica loaded (servable) entries
-count by (pod) (xrdconv_webhook_registry_entry_loaded == 1)
+count by (pod) (dco_webhook_registry_entry_loaded == 1)
 ```
 
 `ConversionWebhookServer.status.assignedConfigs` remains the cluster-level
@@ -147,9 +153,11 @@ The chart ships:
   fleet/replica not-ready, high latency, lossy rate, error ratio, manager
   analyze failures, and Stale/Failed phase transitions. Expressions are
   unit-tested under `hack/prometheus/` (`make test-prometheus`).
-- **Grafana dashboard ConfigMap** (`dashboards.enabled`) — labeled
-  `grafana_dashboard: "1"` for the Grafana sidecar; JSON lives at
-  `charts/declarative-conversion-operator/files/dashboards/conversion-overview.json`.
+- **Grafana dashboard ConfigMaps** (`dashboards.enabled`) — labeled
+  `grafana_dashboard: "1"` for the Grafana sidecar; JSON under
+  `charts/declarative-conversion-operator/files/dashboards/`:
+  - [`conversion-overview.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-overview.json) — fleet-wide overview
+  - [`conversion-target-detail.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-target-detail.json) — one XRD/CRD via the `target` dropdown (`target` label)
 
 ---
 
@@ -189,6 +197,7 @@ via OTLP/gRPC (suitable for Jaeger/Tempo).
 
 ## Related
 
+- Symptom-driven use of these metrics: [operations/troubleshooting.md](operations/troubleshooting.md)
 - Custom-metric HPA example: [operations/hpa-custom-metrics.md](operations/hpa-custom-metrics.md)
 - Metrics trust boundary and NetworkPolicy: [security/metrics.md](security/metrics.md)
 - ConversionWebhookServer status fields: [configuration/conversionwebhookserver.md](configuration/conversionwebhookserver.md)

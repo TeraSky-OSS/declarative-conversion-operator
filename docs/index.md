@@ -1,5 +1,11 @@
 # declarative-conversion-operator
 
+!!! note "Canonical product name"
+    The product, Helm chart, Go module, and GitHub repository are all
+    **`declarative-conversion-operator`**. A local directory still named
+    `xrd-conversion-operator` is the same project — clone from
+    [`TeraSky-OSS/declarative-conversion-operator`](https://github.com/TeraSky-OSS/declarative-conversion-operator).
+
 !!! warning "Alpha, under active development"
     APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome on [GitHub](https://github.com/terasky-oss/declarative-conversion-operator).
 
@@ -22,7 +28,7 @@ Most version migrations are not exotic: they're field renames, reshaping a scala
 You create one **`XRDConversionConfig`** per Crossplane XRD you want to version-convert, or one **`CRDConversionConfig`** per plain native CRD — both share the identical spec shape and rule vocabulary. Each names:
 
 - the resource's **hub version** (the one Kubernetes/Crossplane already stores objects as),
-- for each other served (**spoke**) version, a list of **conversion rules** — one of 16 built-in strategies like `fieldRename`, `scalarToObject`, `enumRemap`, or `jsonPatch` as an escape hatch.
+- for each other served (**spoke**) version, a list of **conversion rules** — one of the built-in strategies like `fieldRename`, `scalarToObject`, `enumRemap`, or `jsonPatch` as an escape hatch (see the [Strategy Reference](strategies/index.md) for the full set).
 
 The operator then:
 
@@ -79,6 +85,8 @@ See [Architecture](architecture.md) for the full picture.
 
 - New to the operator? Start with [Getting Started](getting-started.md).
 - Ready to install? See [Installation](installation.md).
+- Want a complete, runnable config to copy? See [Examples](examples/index.md).
 - Configuring a real XRD? See [XRDConversionConfig](configuration/xrdconversionconfig.md).
 - Looking for a specific strategy? See the [Strategy Reference](strategies/index.md).
+- Already running and something's off? See [Troubleshooting](operations/troubleshooting.md).
 - Wondering what this doesn't do (yet)? See [Limitations](limitations.md) and the [Roadmap](roadmap.md).

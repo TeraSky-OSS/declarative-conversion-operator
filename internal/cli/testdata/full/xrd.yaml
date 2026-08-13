@@ -4,6 +4,10 @@ metadata:
   name: xwidgets.example.org
 spec:
   scope: Namespaced
+  group: example.org
+  names:
+    kind: Widget
+    plural: xwidgets
   versions:
     - name: v3
       served: true
@@ -143,6 +147,9 @@ spec:
                   type: integer
                 dnsServersCSV:
                   type: string
+                # spoke-only field restored from a hub annotation (FromAnnotation)
+                operatorNote:
+                  type: string
                 # -- mirrors of fields owned by the v1 spoke's rules, kept
                 # identical in shape so they're auto-covered here without a
                 # rule --
@@ -238,6 +245,9 @@ spec:
                   type: integer
                 debugMode:
                   type: boolean
+                # spoke-only field restored from a hub label (FromLabel)
+                operatorTier:
+                  type: string
                 volumes:
                   type: array
                   items:

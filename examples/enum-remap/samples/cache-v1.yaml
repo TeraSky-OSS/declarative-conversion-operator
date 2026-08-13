@@ -1,0 +1,7 @@
+apiVersion: example.org/v1
+kind: XCache
+metadata:
+  name: cache-legacy
+spec:
+  size: S
+  engine: memcached

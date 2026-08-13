@@ -65,6 +65,7 @@ func main() {
 		otelEndpoint     string
 		otelSampleRatio  float64
 		otelInsecure     bool
+		cacheSelector    string
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -76,6 +77,7 @@ func main() {
 	flag.StringVar(&otelEndpoint, "otel-exporter-otlp-endpoint", "", "Optional OTLP/gRPC endpoint for conversion-path tracing (empty = tracing disabled).")
 	flag.Float64Var(&otelSampleRatio, "otel-trace-sample-ratio", 0.1, "Trace sampling ratio when --otel-exporter-otlp-endpoint is set (0.0–1.0).")
 	flag.BoolVar(&otelInsecure, "otel-exporter-otlp-insecure", false, "Disable TLS when exporting traces (trusted in-cluster collectors only).")
+	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping XRDConversionConfig and CRDConversionConfig informers. Empty watches every config.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -113,6 +115,12 @@ func main() {
 	opts.Metrics = metricsserver.Options{BindAddress: "0"}
 	opts.HealthProbeBindAddress = "0"
 	opts.LeaderElection = false // every replica is symmetric; no coordination needed.
+	cacheOpts, err := webhookserver.CacheOptionsFromSelectorJSON(cacheSelector)
+	if err != nil {
+		logger.Error(err, "invalid --cache-label-selector")
+		os.Exit(1)
+	}
+	opts.Cache = cacheOpts
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), opts)
 	if err != nil {
 		logger.Error(err, "unable to start manager")
@@ -121,7 +129,7 @@ func main() {
 
 	registry := webhookserver.NewRegistry()
 	metricsReg := prometheus.NewRegistry()
-	metrics := webhookserver.NewMetrics(metricsReg)
+	metrics := webhookserver.NewMetrics(metricsReg, metricsReg)
 
 	reconciler := &webhookserver.Reconciler{
 		Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics,

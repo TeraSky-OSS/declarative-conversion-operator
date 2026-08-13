@@ -90,6 +90,15 @@ type LeafField struct {
 	Required bool
 }
 
+// FlattenSchema walks schema and returns every leaf field it can address,
+// with the kind and required-ness the engine's own coverage analysis uses.
+// Exported for tooling that has to reason about uncovered fields in the
+// same terms Analyze does — notably convctl's rule-stub suggester, which
+// needs a leaf's FieldKind to tell a rename apart from a type coercion.
+func FlattenSchema(schema *extv1.JSONSchemaProps) []LeafField {
+	return flattenSchema(schema)
+}
+
 // flattenSchema walks schema and returns every leaf field it can address,
 // recursing into structured objects and stopping (marking Opaque) at maps
 // with no statically-known key set.

@@ -19,6 +19,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
+	"sync"
 	"time"
 
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
@@ -44,6 +47,30 @@ type TestOptions struct {
 	Live        bool
 	Kubeconfig  string
 	KubeContext string
+
+	// Concurrency is how many samples to test at once. Zero or negative
+	// means runtime.GOMAXPROCS(0). Testing a cluster's entire population
+	// of objects (Live) is embarrassingly parallel — every sample is
+	// independent, and the compiled Router is read-only once built.
+	Concurrency int
+	// Quiet suppresses the progress line written to stderr.
+	Quiet bool
+}
+
+// effectiveConcurrency clamps Concurrency to at least one worker, and to
+// no more workers than there are samples to give them.
+func (o TestOptions) effectiveConcurrency(samples int) int {
+	n := o.Concurrency
+	if n <= 0 {
+		n = runtime.GOMAXPROCS(0)
+	}
+	if n > samples {
+		n = samples
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // RunTest loads the config, its target XRD or CRD, and samples, validates
@@ -198,28 +225,54 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 	rep.Meta.ServedVersions = served
 	rep.Meta.GeneratedAt = nowRFC3339()
 
-	for _, s := range samples {
-		sr := SampleResult{File: s.File, AssertedVersion: s.Version}
-		for _, target := range targets {
-			if opts.SkipIdentity && target == s.Version {
-				continue
-			}
-			pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, ruleUsage)
-			sr.Paths = append(sr.Paths, pr)
-			rep.Summary.PathsTested++
-			switch pr.Result {
-			case "pass":
-				rep.Summary.Pass++
-			case "loss":
-				rep.Summary.AcknowledgedLoss++
-			case "fail":
-				rep.Summary.UnacknowledgedLoss++
-			case "error":
-				rep.Summary.Errors++
-			}
+	// Samples are tested by a worker pool, but the results are collected
+	// by index and only appended to the Report afterwards, so the report
+	// a run produces never depends on how many workers produced it.
+	results := make([]SampleResult, len(samples))
+	var (
+		mu       sync.Mutex
+		done     int
+		next     = make(chan int)
+		wg       sync.WaitGroup
+		progress = !opts.Quiet && len(samples) > 1
+	)
+	go func() {
+		defer close(next)
+		for i := range samples {
+			next <- i
 		}
-		rep.Samples = append(rep.Samples, sr)
+	}()
+	for w := 0; w < opts.effectiveConcurrency(len(samples)); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], targets)
+
+				mu.Lock()
+				results[i] = sr
+				rep.Summary.PathsTested += counts.pathsTested
+				rep.Summary.Pass += counts.pass
+				rep.Summary.AcknowledgedLoss += counts.acknowledgedLoss
+				rep.Summary.UnacknowledgedLoss += counts.unacknowledgedLoss
+				rep.Summary.Errors += counts.errors
+				for id, n := range usage {
+					ruleUsage[id] += n
+				}
+				done++
+				if progress {
+					_, _ = fmt.Fprintf(os.Stderr, "\rtested %d/%d samples", done, len(samples))
+				}
+				mu.Unlock()
+			}
+		}()
 	}
+	wg.Wait()
+	if progress {
+		_, _ = fmt.Fprintln(os.Stderr)
+	}
+
+	rep.Samples = results
 	rep.Summary.Samples = len(samples)
 
 	for _, sr := range report.SpokeReports {
@@ -231,6 +284,46 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 
 	rep.Meta.DurationMs = float64(time.Since(start).Microseconds()) / 1000.0
 	return rep, nil
+}
+
+// sampleCounts is one sample's contribution to the report summary, tallied
+// inside a worker so the shared Report is touched exactly once per sample
+// rather than once per path.
+type sampleCounts struct {
+	pathsTested        int
+	pass               int
+	acknowledgedLoss   int
+	unacknowledgedLoss int
+	errors             int
+}
+
+// testOneSample runs one sample across every target version. Paths within
+// a sample stay sequential: they're cheap next to the coordination cost,
+// and keeping the unit of parallelism at the sample level is what makes
+// deterministic result ordering trivial.
+func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, targets []string) (SampleResult, sampleCounts, map[string]int) {
+	sr := SampleResult{File: s.File, AssertedVersion: s.Version}
+	var counts sampleCounts
+	usage := map[string]int{}
+	for _, target := range targets {
+		if opts.SkipIdentity && target == s.Version {
+			continue
+		}
+		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage)
+		sr.Paths = append(sr.Paths, pr)
+		counts.pathsTested++
+		switch pr.Result {
+		case "pass":
+			counts.pass++
+		case "loss":
+			counts.acknowledgedLoss++
+		case "fail":
+			counts.unacknowledgedLoss++
+		case "error":
+			counts.errors++
+		}
+	}
+	return sr, counts, usage
 }
 
 func ruleID(spokeVersion string, rr engine.RuleResult) string {

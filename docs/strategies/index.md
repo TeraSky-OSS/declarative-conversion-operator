@@ -17,6 +17,8 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`mapToFields`](fields-map.md) | Hub map ⇄ several spoke sibling fields. | :material-alert:{ style="color:#ef6c00" } Conditional |
 | [`toAnnotation`](metadata-stash.md) | Stashes a hub field's value into a spoke annotation. | :material-alert:{ style="color:#ef6c00" } Conditional (`restoreOnReverse`) |
 | [`toLabel`](metadata-stash.md) | Stashes a hub field's value into a spoke label. | :material-alert:{ style="color:#ef6c00" } Conditional (`restoreOnReverse`) |
+| [`fromAnnotation`](metadata-stash.md) | Restores a spoke field from a hub annotation (inverse of `toAnnotation`). | :material-alert:{ style="color:#ef6c00" } Conditional (`stashOnReverse`) |
+| [`fromLabel`](metadata-stash.md) | Restores a spoke field from a hub label (inverse of `toLabel`). | :material-alert:{ style="color:#ef6c00" } Conditional (`stashOnReverse`) |
 | [`enumRemap`](enum-remap.md) | Bidirectionally maps a scalar field's enumerated values. | :material-alert:{ style="color:#ef6c00" } Conditional |
 | [`defaultValue`](default-value.md) | Injects a default for a field that only exists on one side. | :material-close:{ style="color:#c62828" } One direction always lossy |
 | [`constant`](constant.md) | Forces a field to a fixed value on the side it exists on. | :material-close:{ style="color:#c62828" } One direction always lossy |
@@ -42,4 +44,4 @@ Every strategy page follows the same shape:
 4. The **`XRDConversionConfig` rule** that maps between them.
 5. **Example objects** at both versions, so you can see the exact before/after shape.
 
-All examples are self-contained and runnable through `convctl test` — see [Getting Started](../getting-started.md) and the [CLI Reference](../cli.md). For a single fixture exercising every strategy in this reference at once, see [`internal/cli/testdata/full`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full) in the repository.
+All examples are self-contained and runnable through `convctl test` — see [Getting Started](../getting-started.md) and the [CLI Reference](../cli.md). For complete configs combining several strategies against a whole schema, see [Examples](../examples/index.md); for a single fixture exercising every strategy in this reference at once — with a rule-by-rule index of where each one lives — see [Kitchen sink](../examples/kitchen-sink.md).

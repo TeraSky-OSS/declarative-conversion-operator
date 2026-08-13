@@ -1,6 +1,6 @@
 # Mirrors internal/cli/testdata/full/config.yaml exactly (same targetXRD
 # schema, same rules) so this e2e run exercises every one of pkg/engine's
-# 23 built-in strategies against a real apiserver, not just the 2 the
+# 25 built-in strategies against a real apiserver, not just the 2 the
 # earlier, minimal version of this fixture covered.
 apiVersion: terasky.com/v1alpha1
 kind: XRDConversionConfig
@@ -50,6 +50,12 @@ spec:
             hubPath: spec.description
             key: xrd.example.org/description
             restoreOnReverse: true
+
+        - strategy: FromAnnotation
+          fromAnnotation:
+            spokePath: spec.operatorNote
+            key: xrd.example.org/operator-note
+            stashOnReverse: true
 
         - strategy: EnumRemap
           enumRemap:
@@ -138,6 +144,13 @@ spec:
             key: tier
             serialization: String
             restoreOnReverse: true
+
+        - strategy: FromLabel
+          fromLabel:
+            spokePath: spec.operatorTier
+            key: operator-tier
+            serialization: String
+            stashOnReverse: true
 
         - strategy: DefaultValue
           defaultValue:

@@ -151,5 +151,6 @@ The object was created at `v1` and read back at the hub version `v2`, converted 
 ## Next steps
 
 - [Configuration](configuration/index.md) — the full `XRDConversionConfig` and `ConversionWebhookServer` spec.
+- [Examples](examples/index.md) — five complete, runnable conversion stories, smallest first.
 - [Strategy Reference](strategies/index.md) — every built-in strategy with worked examples.
 - [CLI Reference](cli.md) — `convctl validate` / `analyze` / `test`, including `--live` pre-upgrade checks.

@@ -32,23 +32,29 @@ Both CRDs are always installed regardless of these toggles (an unused CRD sittin
 
 ## Upgrading CRDs
 
-CRDs live in `crds/` and are only applied at install time (Helm's standard convention — safest against accidental schema-change data loss, at the cost of not auto-upgrading). When upgrading to a chart version with CRD schema changes, apply them manually first:
+CRDs live in `crds/` and are only applied at install time (Helm's standard convention — safest against accidental schema-change data loss, at the cost of not auto-upgrading). When upgrading to a chart version with CRD schema changes, diff/apply them first:
 
 ```console
-helm show crds charts/declarative-conversion-operator | kubectl apply -f -
+make helm-upgrade-crds          # kubectl diff; no write
+make helm-upgrade-crds APPLY=1  # apply if they differ
 helm upgrade declarative-conversion-operator charts/declarative-conversion-operator --namespace declarative-conversion-system
 ```
+
+`./hack/upgrade-crds.sh --chart oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version <new-version> --apply` is the same helper against a published chart.
 
 ## Key values
 
 | Key | Description | Default |
 |---|---|---|
+| `commonLabels` | Labels merged onto every chart-templated resource | `{}` |
+| `manager.priorityClassName` / `podLabels` / `extraEnv` / `extraVolumes` | Scheduling, labeling, and escape hatches on the manager Deployment | unset / `{}` / `[]` |
+| `conversionWebhookServer.extraArgs` / `cacheSelector` / `extraEnv` | Passed through to the default CWS CR (the operator builds the Deployment) | `[]` / `{}` / `[]` |
 | `certManager.issuerRef` | Issuer/ClusterIssuer for `ConversionWebhookServer` certificates | bootstrap self-signed `ClusterIssuer` |
 | `admissionWebhook.certificate.issuerRef` | Issuer/ClusterIssuer for this operator's own admission-webhook certificate (a separate trust surface) | bootstrap self-signed `ClusterIssuer` |
 | `conversionWebhookServer.autoscaling.enabled` | Use an HPA instead of a fixed replica count for the default instance | `false` |
 | `metrics.serviceMonitor.enabled` | Create Prometheus Operator `ServiceMonitor`s (opt-in; not auto-detected) | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in conversion/manager alerts | `false` |
-| `dashboards.enabled` | Create Grafana sidecar dashboard ConfigMap(s) (`grafana_dashboard: "1"`) | `false` |
+| `dashboards.enabled` | Create Grafana sidecar dashboard ConfigMaps (`grafana_dashboard: "1"`): Conversion Overview + Conversion Target Detail | `false` |
 | `features.crossplane.enabled` | Enable `XRDConversionConfig` support for Crossplane XRDs. Requires Crossplane to be installed. | `true` |
 | `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support for plain native CustomResourceDefinitions. | `true` |
 

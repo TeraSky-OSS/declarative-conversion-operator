@@ -68,4 +68,40 @@ spec:
   affinity:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- with .Values.conversionWebhookServer.priorityClassName }}
+  priorityClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.topologySpreadConstraints }}
+  topologySpreadConstraints:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.podLabels }}
+  podLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.podAnnotations }}
+  podAnnotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.extraArgs }}
+  extraArgs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.extraEnv }}
+  extraEnv:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.extraVolumes }}
+  extraVolumes:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.extraVolumeMounts }}
+  extraVolumeMounts:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- $cs := .Values.conversionWebhookServer.cacheSelector | default dict }}
+  {{- if or $cs.matchLabels $cs.matchExpressions }}
+  cacheSelector:
+    {{- toYaml $cs | nindent 4 }}
+  {{- end }}
 {{- end }}

@@ -51,7 +51,10 @@ cluster. Every command works against either resource type:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newVersionCmd())
+	root.AddCommand(
+		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
+		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newPatchPreviewCmd(), newVersionCmd(),
+	)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -159,9 +162,10 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		skipIdentity, strict, live                                           bool
+		skipIdentity, strict, live, quiet                                    bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext                                              string
+		concurrency                                                          int
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
@@ -184,17 +188,27 @@ target resource — no write access, and no access to the operator's own CRDs.
 
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
-pass/loss/fail/error summary still prints to stdout either way.`,
+pass/loss/fail/error summary still prints to stdout either way.
+
+Samples are tested in parallel (--concurrency, default one worker per CPU) with
+progress on stderr (--quiet to silence it). The report is identical either way:
+results are collected by sample index, never by completion order.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch output {
 			case "table", "json", "junit":
 			default:
 				return fmt.Errorf("invalid --output value %q (want table, json, or junit)", output)
 			}
+			switch failOn {
+			case failOnNone, failOnWarn, failOnLoss:
+			default:
+				return fmt.Errorf("invalid --fail-on value %q (want %s, %s, or %s)", failOn, failOnNone, failOnWarn, failOnLoss)
+			}
 			rep, err := RunTest(TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
+				Concurrency: concurrency, Quiet: quiet,
 			})
 			if err != nil {
 				return err
@@ -238,8 +252,10 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write the full report to this file instead of stdout; a short summary still prints to stdout")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
-	cmd.Flags().StringVar(&failOn, "fail-on", "loss", "Exit-code threshold: none|warn|loss")
+	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
+	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
@@ -248,14 +264,89 @@ pass/loss/fail/error summary still prints to stdout either way.`,
 	return cmd
 }
 
+func newDiffCmd() *cobra.Command {
+	var (
+		configPaths                                       []string
+		xrdPath, crdPath, output, kubeconfig, kubeContext string
+		live                                              bool
+	)
+	cmd := &cobra.Command{
+		Use:   "diff",
+		Short: "Compare coverage, rule claims, and lossiness between two conversion configs",
+		Long: `Analyze two conversion configs against the same schema and report what changed
+between them: which hub/spoke fields go from covered to uncovered (or back),
+which rules claim which paths, which directions flip between lossless and lossy,
+and which errors and warnings appear or disappear.
+
+Pass --config twice to compare two local files. Pass it once with --live to
+compare against the cluster instead: the live XRD/CRD supplies the schema, and
+the ConversionConfig of the same name supplies the other side. If the cluster
+has no such config yet, the comparison runs against an empty rule set for the
+same spokes — "what would applying this claim?" rather than an error.
+
+Exits 0 when the two sides are equivalent and 1 when any delta is found, so it
+drops straight into a CI gate.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			}
+			out, err := RunDiff(DiffOptions{
+				ConfigPaths: configPaths, XRDPath: xrdPath, CRDPath: crdPath,
+				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
+			})
+			if err != nil {
+				return err
+			}
+			if output == "table" {
+				out.WriteTable(cmd.OutOrStdout())
+			} else if err := writeJSON(cmd, out); err != nil {
+				return err
+			}
+			if out.HasDeltas {
+				exitCode = ExitTestFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVarP(&configPaths, "config", "c", nil, "Path to a conversion config YAML file; pass twice to compare two files, or once with --live")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for two-file mode against XRDConversionConfigs)")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for two-file mode against CRDConversionConfigs)")
+	cmd.Flags().BoolVar(&live, "live", false, "Compare the single --config against the cluster's live schema and applied config")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (default: $KUBECONFIG, then ~/.kube/config); only used with --live")
+	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
+	cmd.Flags().StringVarP(&output, "output", "o", "json", "Output format: json|table")
+	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+// The accepted --fail-on thresholds, in increasing order of tolerance. See
+// docs/cli.md for the full threshold × outcome exit-code matrix.
+const (
+	// failOnNone reports results but never fails the process.
+	failOnNone = "none"
+	// failOnWarn fails on warnings too — today, a declared rule no sample
+	// ever exercised.
+	failOnWarn = "warn"
+	// failOnLoss (the default) fails only on an unacknowledged loss or a
+	// conversion error. An acknowledged loss is a decision the config
+	// author already made explicitly, so it never fails here.
+	failOnLoss = "loss"
+)
+
 func decideExitCode(rep *Report, failOn string, strict bool) int {
-	if failOn == "none" {
+	if failOn == failOnNone {
 		return ExitOK
 	}
 	if rep.Summary.Errors > 0 || rep.Summary.UnacknowledgedLoss > 0 {
 		return ExitTestFailure
 	}
-	if failOn == "warn" || strict {
+	// --strict escalates coverage gaps exactly the way --fail-on warn
+	// does; the two are interchangeable for this check, and either one
+	// alone is enough to trip it.
+	if failOn == failOnWarn || strict {
 		for _, rc := range rep.RuleCoverage {
 			if rc.MatchedSamples == 0 {
 				return ExitTestFailure

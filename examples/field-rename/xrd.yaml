@@ -1,0 +1,53 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xbuckets.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XBucket
+    plural: xbuckets
+  versions:
+    # v2 is the hub: it is the only referenceable (storage) version, which
+    # this operator requires of the hub.
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                region:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+    # v1 differs from the hub in exactly one field name. Everything else has
+    # an identical shape on both sides, so it needs no rule at all.
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string
+                region:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string

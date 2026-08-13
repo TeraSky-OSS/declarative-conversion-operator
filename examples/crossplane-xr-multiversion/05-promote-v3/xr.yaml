@@ -1,0 +1,11 @@
+apiVersion: example.org/v3
+kind: XWidget
+metadata:
+  name: demo
+  namespace: default
+spec:
+  crossplane:
+    compositionRef:
+      name: xwidgets-v3.example.org
+  name: demo-widget
+  capacity: Large

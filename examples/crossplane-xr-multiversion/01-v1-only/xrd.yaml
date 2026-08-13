@@ -1,0 +1,33 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xwidgets.example.org
+spec:
+  scope: Namespaced
+  defaultCompositionRef:
+    name: xwidgets.example.org
+  group: example.org
+  names:
+    kind: XWidget
+    plural: xwidgets
+  versions:
+    - name: v1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [widgetName, size]
+              properties:
+                widgetName:
+                  type: string
+                size:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string

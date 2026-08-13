@@ -1,0 +1,19 @@
+# INTENTIONALLY WRONG — copy-pasted stage-2 paths after promoting the hub.
+# Rules are hub-relative. After hubVersion: v2, spec.size is a spoke field
+# and spec.capacity is the hub field. Swapping the names in YAML is not
+# enough; the hubPath/spokePath roles have to flip too.
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.size
+            spokePath: spec.capacity

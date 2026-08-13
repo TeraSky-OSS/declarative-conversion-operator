@@ -1,0 +1,9 @@
+apiVersion: example.org/v1
+kind: XBucket
+metadata:
+  name: bucket-legacy
+spec:
+  storageSize: "100"
+  region: eu-central-1
+status:
+  phase: Pending

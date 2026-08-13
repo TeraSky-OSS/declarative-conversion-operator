@@ -1,0 +1,8 @@
+apiVersion: example.org/v1
+kind: XCluster
+metadata:
+  name: cluster-legacy
+spec:
+  nodePools:
+    - machineType: n1-standard-2
+      replicas: 1

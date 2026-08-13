@@ -4,6 +4,10 @@ metadata:
   name: xfoos.example.org
 spec:
   scope: Namespaced
+  group: example.org
+  names:
+    kind: Foo
+    plural: xfoos
   versions:
     - name: v2
       served: true

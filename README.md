@@ -1,5 +1,11 @@
 # declarative-conversion-operator
 
+**Canonical name.** The product, Helm chart, Go module, and GitHub repository
+are all **`declarative-conversion-operator`**
+(`github.com/terasky-oss/declarative-conversion-operator`). Older checkouts or
+local directories may still be named `xrd-conversion-operator` — that is the
+same project; prefer the declarative name in docs, scripts, and new clones.
+
 > [!WARNING]
 > **Alpha, under active development.** APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome.
 
@@ -79,9 +85,18 @@ kubectl apply -f config/samples/terasky_v1alpha1_xrdconversionconfig.yaml
 kubectl get xrdconversionconfig xpostgresqlinstances-conversion -o yaml
 ```
 
+## Examples
+
+[`examples/`](examples/) holds five self-contained conversion stories, smallest first — a field rename, an enum remap, a `forEach` array reshape, a three-version Crossplane XR migration, and the same model against a plain native CRD. Each directory has a schema, a config, sample objects at every served version, and a README explaining the scenario, and each is independently runnable offline:
+
+```console
+go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yaml \
+  --xrd examples/field-rename/xrd.yaml --samples examples/field-rename/samples/
+```
+
 ## Conversion strategies
 
-`fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, one level of nesting), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`. Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
+`fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `fromAnnotation` / `fromLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, one level of nesting), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`. Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
 
 A few of the newer strategies are worth calling out specifically:
 
@@ -126,6 +141,8 @@ This is the tool to run before applying a new or changed `XRDConversionConfig`: 
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop. Short version:
+
 ```console
 make generate manifests   # regenerate deepcopy code and CRD/RBAC YAML from kubebuilder markers
 make test                  # go vet + unit tests (race-enabled)
@@ -135,13 +152,13 @@ make helm-lint helm-template
 
 ### Local dev environment
 
-`make dev-up` stands up a full local environment — a [kind](https://kind.sigs.k8s.io/) cluster, cert-manager, Crossplane, and this operator's own Helm chart installed with images built from your local checkout — and leaves it running for interactive use. It's the same setup the e2e tests use (see below), minus the test assertions and the teardown. Safe to re-run after every code change: it rebuilds the images, reloads them into the cluster, and restarts the running pods so the new code actually takes effect. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; tear it down with `make dev-down`.
+`make dev-up` stands up a full local environment — a [kind](https://kind.sigs.k8s.io/) cluster, cert-manager, Crossplane, [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) (Prometheus + Grafana with anonymous access), and this operator's own Helm chart installed with images built from your local checkout (ServiceMonitors, PrometheusRules, and Grafana dashboard ConfigMaps enabled) — and leaves it running for interactive use. It's the same setup the e2e tests use (see below), minus the test assertions, the teardown, and the monitoring stack. Safe to re-run after every code change: it rebuilds the images, reloads them into the cluster, and restarts the running pods so the new code actually takes effect. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; tear it down with `make dev-down`.
 
 ### End-to-end tests
 
 Three scripts, all built on shared setup in `hack/e2e-common.sh`, prove the conversion webhook works against a real `kube-apiserver`, not just `pkg/engine` offline — each creates a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's `manager`/`webhook-server` images and loads them straight into the cluster (no registry push), and installs the operator via its own Helm chart:
 
-- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 23 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
+- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 25 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
 - `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
 - `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
 

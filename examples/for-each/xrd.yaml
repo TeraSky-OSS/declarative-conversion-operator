@@ -1,0 +1,51 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xclusters.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XCluster
+    plural: xclusters
+  versions:
+    # Hub. Both versions have a nodePools array at the same path; what
+    # differs is the shape of each element.
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                nodePools:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      instanceType:
+                        type: string
+                      nodeCount:
+                        type: integer
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                nodePools:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      machineType:
+                        type: string
+                      replicas:
+                        type: integer

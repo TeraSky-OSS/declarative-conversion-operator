@@ -389,6 +389,126 @@ func TestToAnnotation_WithoutRestore_DoesNotLeakStashKeyBackToHub(t *testing.T) 
 	}
 }
 
+func TestFromAnnotation_StashOnReverse(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"operatorNote": strSchema(),
+	})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFromAnnotation, Params: FromMetadataParams{
+			SpokePath: ParsePath("operatorNote"), Key: "x/operator-note", StashOnReverse: true,
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	spokeObj := map[string]any{"operatorNote": "keep-me", "metadata": map[string]any{"name": "x"}}
+	hubObj, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: spokeObj})
+	if err != nil {
+		t.Fatalf("spoke→hub: %v", err)
+	}
+	md := hubObj["metadata"].(map[string]any)
+	ann, ok := md["annotations"].(map[string]any)
+	if !ok || ann["x/operator-note"] == nil {
+		t.Fatalf("expected hub annotation stash, got metadata: %#v", md)
+	}
+	if _, ok := hubObj["operatorNote"]; ok {
+		t.Fatalf("hub object should not have operatorNote field")
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: hubObj})
+	if err != nil {
+		t.Fatalf("hub→spoke: %v", err)
+	}
+	if back["operatorNote"] != "keep-me" {
+		t.Fatalf("expected restored operatorNote, got %#v", back["operatorNote"])
+	}
+	backMd := back["metadata"].(map[string]any)
+	if backAnn, ok := backMd["annotations"].(map[string]any); ok {
+		if _, exists := backAnn["x/operator-note"]; exists {
+			t.Fatalf("bookkeeping annotation should have been removed on restore")
+		}
+	}
+}
+
+func TestFromAnnotation_WithoutStashIsLossyOnReverse(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"operatorNote": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFromAnnotation, Params: FromMetadataParams{
+			SpokePath: ParsePath("operatorNote"), Key: "x/operator-note", StashOnReverse: false,
+		}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatalf("expected lossy-without-ack error when StashOnReverse=false")
+	}
+}
+
+func TestFromLabel_StashOnReverse(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"operatorTier": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFromLabel, Params: FromMetadataParams{
+			SpokePath: ParsePath("operatorTier"), Key: "operator-tier",
+			Serialization: "String", StashOnReverse: true,
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	spokeObj := map[string]any{"operatorTier": "gold", "metadata": map[string]any{"name": "x"}}
+	hubObj, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: spokeObj})
+	if err != nil {
+		t.Fatalf("spoke→hub: %v", err)
+	}
+	md := hubObj["metadata"].(map[string]any)
+	labels, ok := md["labels"].(map[string]any)
+	if !ok || labels["operator-tier"] != "gold" {
+		t.Fatalf("expected hub label stash, got metadata: %#v", md)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: hubObj})
+	if err != nil {
+		t.Fatalf("hub→spoke: %v", err)
+	}
+	if back["operatorTier"] != "gold" {
+		t.Fatalf("expected restored operatorTier, got %#v", back["operatorTier"])
+	}
+}
+
+func TestFromLabel_RejectsJSONSerialization(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"operatorTier": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFromLabel, Params: FromMetadataParams{
+			SpokePath: ParsePath("operatorTier"), Key: "operator-tier",
+			Serialization: "JSON", StashOnReverse: true,
+		}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	errs := diagMessages(diags, SeverityError)
+	if len(errs) == 0 {
+		t.Fatal("expected error rejecting FromLabel serialization=JSON")
+	}
+	found := false
+	for _, msg := range errs {
+		if strings.Contains(msg, "serialization=JSON") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostic mentioning serialization=JSON, got %v", errs)
+	}
+}
+
 func TestEnumRemap_Bidirectional(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})

@@ -10,7 +10,7 @@ tests:
   - name: compile errors fires when increase sustained
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_registry_compile_errors_total{target="xfoos.example.org",reason="InvalidRules"}'
+      - series: 'dco_webhook_registry_compile_errors_total{target="xfoos.example.org",reason="InvalidRules"}'
         values: "0+1x40"
     alert_rule_test:
       - eval_time: 5m
@@ -30,7 +30,7 @@ tests:
   - name: compile errors stays silent when flat
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_registry_compile_errors_total{target="xfoos.example.org",reason="InvalidRules"}'
+      - series: 'dco_webhook_registry_compile_errors_total{target="xfoos.example.org",reason="InvalidRules"}'
         values: "0+0x40"
     alert_rule_test:
       - eval_time: 31m
@@ -41,9 +41,9 @@ tests:
   - name: fleet not ready fires when all replicas report 0
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_ready{pod="a"}'
+      - series: 'dco_webhook_ready{pod="a"}'
         values: "0+0x20"
-      - series: 'xrdconv_webhook_ready{pod="b"}'
+      - series: 'dco_webhook_ready{pod="b"}'
         values: "0+0x20"
     alert_rule_test:
       - eval_time: 2m
@@ -56,14 +56,14 @@ tests:
               severity: critical
             exp_annotations:
               summary: "No ConversionWebhookServer replica is ready"
-              description: "Every scraped webhook-server replica reports xrdconv_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
+              description: "Every scraped webhook-server replica reports dco_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
 
   - name: fleet not ready stays silent when any replica is ready
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_ready{pod="a"}'
+      - series: 'dco_webhook_ready{pod="a"}'
         values: "0+0x20"
-      - series: 'xrdconv_webhook_ready{pod="b"}'
+      - series: 'dco_webhook_ready{pod="b"}'
         values: "1+0x20"
     alert_rule_test:
       - eval_time: 6m
@@ -81,13 +81,13 @@ tests:
               severity: critical
             exp_annotations:
               summary: "No ConversionWebhookServer replica is ready"
-              description: "Every scraped webhook-server replica reports xrdconv_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
+              description: "Every scraped webhook-server replica reports dco_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
 
   # --- ConversionWebhookReplicaNotReady ---
   - name: replica not ready fires on ready==0
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_ready{pod="a"}'
+      - series: 'dco_webhook_ready{pod="a"}'
         values: "0+0x20"
     alert_rule_test:
       - eval_time: 2m
@@ -106,7 +106,7 @@ tests:
   - name: replica not ready stays silent when ready
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_ready{pod="a"}'
+      - series: 'dco_webhook_ready{pod="a"}'
         values: "1+0x20"
     alert_rule_test:
       - eval_time: 6m
@@ -118,27 +118,27 @@ tests:
     interval: 1m
     input_series:
       # All observations land in le="5" / +Inf only (values between 1 and 5) → p99 > 1
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0001"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0001"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0005"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0005"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.001"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.001"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.005"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.005"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.01"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.01"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.05"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.05"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.1"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.1"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.5"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.5"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="1"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="1"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="5"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="5"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="+Inf"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="+Inf"}'
         values: "0+10x30"
     alert_rule_test:
       - eval_time: 5m
@@ -157,27 +157,27 @@ tests:
   - name: high latency stays silent when p99 is low
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0001"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0001"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0005"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.0005"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.001"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.001"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.005"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.005"}'
         values: "0+0x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.01"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.01"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.05"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.05"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.1"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.1"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.5"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="0.5"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="1"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="1"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="5"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="5"}'
         values: "0+10x30"
-      - series: 'xrdconv_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="+Inf"}'
+      - series: 'dco_webhook_conversion_review_duration_seconds_bucket{target="xfoos.example.org",direction="v1->v2",result="success",le="+Inf"}'
         values: "0+10x30"
     alert_rule_test:
       - eval_time: 16m
@@ -189,7 +189,7 @@ tests:
     interval: 1m
     input_series:
       # +1/min ≈ 0.0167/s > 0.01
-      - series: 'xrdconv_webhook_lossy_conversion_total{target="xfoos.example.org",direction="hub_to_spoke"}'
+      - series: 'dco_webhook_lossy_conversion_total{target="xfoos.example.org",direction="hub_to_spoke"}'
         values: "0+1x30"
     alert_rule_test:
       - eval_time: 5m
@@ -209,7 +209,7 @@ tests:
   - name: lossy rate stays silent when flat
     interval: 1m
     input_series:
-      - series: 'xrdconv_webhook_lossy_conversion_total{target="xfoos.example.org",direction="hub_to_spoke"}'
+      - series: 'dco_webhook_lossy_conversion_total{target="xfoos.example.org",direction="hub_to_spoke"}'
         values: "0+0x30"
     alert_rule_test:
       - eval_time: 16m
@@ -221,9 +221,9 @@ tests:
     interval: 1m
     input_series:
       # 2 errors / (2+10) ≈ 16.7% per step
-      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="error"}'
+      - series: 'dco_webhook_conversion_review_requests_total{target="xfoos.example.org",result="error"}'
         values: "0+2x30"
-      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="success"}'
+      - series: 'dco_webhook_conversion_review_requests_total{target="xfoos.example.org",result="success"}'
         values: "0+10x30"
     alert_rule_test:
       - eval_time: 5m
@@ -243,9 +243,9 @@ tests:
     interval: 1m
     input_series:
       # 1 error / (1+100) ≈ 1%
-      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="error"}'
+      - series: 'dco_webhook_conversion_review_requests_total{target="xfoos.example.org",result="error"}'
         values: "0+1x30"
-      - series: 'xrdconv_webhook_conversion_review_requests_total{target="xfoos.example.org",result="success"}'
+      - series: 'dco_webhook_conversion_review_requests_total{target="xfoos.example.org",result="success"}'
         values: "0+100x30"
     alert_rule_test:
       - eval_time: 16m
@@ -256,7 +256,7 @@ tests:
   - name: analyze failures fires on increase
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_analyze_failures_total{config_kind="xrd",target="xfoos.example.org",reason="AnalyzeFailed"}'
+      - series: 'dco_manager_analyze_failures_total{config_kind="xrd",target="xfoos.example.org",reason="AnalyzeFailed"}'
         values: "0+1x30"
     alert_rule_test:
       - eval_time: 2m
@@ -277,7 +277,7 @@ tests:
   - name: analyze failures stays silent when flat
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_analyze_failures_total{config_kind="xrd",target="xfoos.example.org",reason="AnalyzeFailed"}'
+      - series: 'dco_manager_analyze_failures_total{config_kind="xrd",target="xfoos.example.org",reason="AnalyzeFailed"}'
         values: "0+0x30"
     alert_rule_test:
       - eval_time: 21m
@@ -288,7 +288,7 @@ tests:
   - name: phase stale fires on Stale transition
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",target="xfoos.example.org",from_phase="Applied",to_phase="Stale",reason="SchemaDrift"}'
+      - series: 'dco_manager_phase_transitions_total{config_kind="xrd",target="xfoos.example.org",from_phase="Applied",to_phase="Stale",reason="SchemaDrift"}'
         values: "0+1x20"
     alert_rule_test:
       - eval_time: 3m
@@ -308,7 +308,7 @@ tests:
   - name: phase failed fires on Failed transition
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_phase_transitions_total{config_kind="crd",target="foos.example.org",from_phase="Applied",to_phase="Failed",reason="Reverted"}'
+      - series: 'dco_manager_phase_transitions_total{config_kind="crd",target="foos.example.org",from_phase="Applied",to_phase="Failed",reason="Reverted"}'
         values: "0+1x20"
     alert_rule_test:
       - eval_time: 3m
@@ -328,7 +328,7 @@ tests:
   - name: phase stays silent for Applied transitions
     interval: 1m
     input_series:
-      - series: 'xrdconv_manager_phase_transitions_total{config_kind="xrd",target="xfoos.example.org",from_phase="Pending",to_phase="Applied",reason="Applied"}'
+      - series: 'dco_manager_phase_transitions_total{config_kind="xrd",target="xfoos.example.org",from_phase="Pending",to_phase="Applied",reason="Applied"}'
         values: "0+1x20"
     alert_rule_test:
       - eval_time: 3m

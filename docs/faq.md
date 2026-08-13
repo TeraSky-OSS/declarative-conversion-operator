@@ -26,7 +26,7 @@ The hub is the version every rule is expressed relative to, and it must equal th
 
 ### How do I promote a different version to be the hub?
 
-See [XRDConversionConfig: Changing the hub version](configuration/xrdconversionconfig.md#changing-the-hub-version) for the full runbook. Short version: add the new version as an ordinary spoke first, then update the config's `hubVersion` and flip the schema's storage/referenceable flag — in either order. The `DriftPolicy: KeepServingStale` default means a brief mismatch between the two doesn't cause an outage; the controller just keeps serving the last-known-good plan until both sides agree again.
+See [XRDConversionConfig: Changing the hub version](configuration/xrdconversionconfig.md#changing-the-hub-version) for the full runbook. Short version: add the new version as an ordinary spoke first, then update the config's `hubVersion` and flip the schema's storage/referenceable flag — in either order. Draft the config rewrite with [`convctl rehub`](cli.md#convctl-rehub) (invert + compose), then `validate` / `test` before apply. The `DriftPolicy: KeepServingStale` default means a brief mismatch between the two doesn't cause an outage; the controller just keeps serving the last-known-good plan until both sides agree again. A staged XRD + Composition example is the [Crossplane XR lifecycle](examples/xr-lifecycle.md) walkthrough.
 
 ### If I make a mistake in my config, does it break my existing conversion?
 

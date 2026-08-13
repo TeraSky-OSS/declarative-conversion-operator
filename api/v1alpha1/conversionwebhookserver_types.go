@@ -131,14 +131,51 @@ type ConversionWebhookServerSpec struct {
 
 	// ExtraArgs are additional container arguments appended after the
 	// operator-managed flags (--webhook-server-name, --tls-cert-dir,
-	// bind addresses, and feature toggles). Use for optional webhook-server
-	// flags such as --cert-reload-interval or zap logging options.
-	// Admission and reconcile reject ExtraArgs that name those managed
-	// flags (--flag=value or --flag value); overriding them would break
-	// identity, TLS, or feature wiring. Webhook-server pods are configured
-	// via this CR (not Helm conversionWebhookServer.* Deployment keys).
+	// bind addresses, feature toggles, and --cache-label-selector).
+	// Use for optional webhook-server flags such as --cert-reload-interval
+	// or zap logging options. Admission and reconcile reject ExtraArgs that
+	// name those managed flags (--flag=value or --flag value); overriding
+	// them would break identity, TLS, feature wiring, or cache scoping.
+	// Webhook-server pods are configured via this CR (not Helm
+	// conversionWebhookServer.* Deployment keys).
 	// +optional
 	ExtraArgs []string `json:"extraArgs,omitempty"`
+
+	// ExtraEnv is appended to the webhook-server container environment.
+	// +optional
+	ExtraEnv []corev1.EnvVar `json:"extraEnv,omitempty"`
+
+	// ExtraVolumes is appended after the operator-managed tls and tmp volumes.
+	// +optional
+	ExtraVolumes []corev1.Volume `json:"extraVolumes,omitempty"`
+
+	// ExtraVolumeMounts is appended after the operator-managed tls and tmp mounts.
+	// +optional
+	ExtraVolumeMounts []corev1.VolumeMount `json:"extraVolumeMounts,omitempty"`
+
+	// TopologySpreadConstraints is applied to this instance's pods.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// PodLabels is merged onto the webhook-server pod template. Keys that
+	// the controller uses for the Deployment selector
+	// (app.kubernetes.io/name, instance, managed-by) are ignored so a
+	// mis-set label cannot break rolling updates.
+	// +optional
+	PodLabels map[string]string `json:"podLabels,omitempty"`
+
+	// PodAnnotations is set on the webhook-server pod template.
+	// +optional
+	PodAnnotations map[string]string `json:"podAnnotations,omitempty"`
+
+	// CacheSelector, when set, is passed to webhook-server replicas as
+	// --cache-label-selector and scopes their informer caches for
+	// XRDConversionConfig and CRDConversionConfig to matching objects.
+	// Unset watches every config (the default). Use this for multi-tenant
+	// or very-large-cluster deployments where a CWS instance should only
+	// compile a labeled subset.
+	// +optional
+	CacheSelector *metav1.LabelSelector `json:"cacheSelector,omitempty"`
 
 	Certificate CertificateSpec `json:"certificate"`
 	// +optional

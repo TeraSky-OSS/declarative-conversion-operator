@@ -1,0 +1,31 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xwidgets-v2.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: example.org/v2
+    kind: XWidget
+  mode: Pipeline
+  pipeline:
+    - step: render-configmap
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation "settings" }}
+              name: {{ .observed.composite.resource.metadata.name }}-settings
+            data:
+              widgetName: {{ .observed.composite.resource.spec.widgetName | quote }}
+              capacity: {{ .observed.composite.resource.spec.capacity | quote }}
+    - step: automatically-detect-ready
+      functionRef:
+        name: function-auto-ready
