@@ -157,7 +157,7 @@ make helm-lint helm-template
 
 ### End-to-end tests
 
-The three correctness scripts plus an optional load script, all built on
+The three correctness scripts plus local load/scale targets, all built on
 shared setup in `hack/e2e-common.sh`, prove the conversion webhook works
 against a real `kube-apiserver`, not just `pkg/engine` offline — each creates
 a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
@@ -168,11 +168,13 @@ a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
 - `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
 - `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
 - `make test-e2e-load` (`hack/e2e-load.sh`) — native-CRD kind cluster, then synthetic `ConversionReview` batches of varying object count/size against the live webhook-server; prints latency/throughput for [Capacity planning](docs/operations/capacity.md).
+- `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 29 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`). Not in the CI matrix.
 
 Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`. The three
 correctness scripts run identically in CI (`.github/workflows/e2e.yml`, as a
-matrix) and locally. `make test-e2e-load` is a local/capacity target (also
-needs `python3` and `curl`) and is not in that matrix. Set `KEEP_CLUSTER=1`
+matrix) and locally. `make test-e2e-load` and `make test-e2e-scale` are
+local/capacity targets (`test-e2e-load` also needs `python3` and `curl`) and
+are not in that matrix. Set `KEEP_CLUSTER=1`
 to skip teardown for local debugging.
 
 ## License

@@ -33,6 +33,7 @@ and are summarized in [Capacity planning](operations/capacity.md). Extremely
 large or deeply nested schemas beyond the published 1000-leaf / 1000-element
 points are still unvalidated against a live apiserver. Re-run `make bench`
 locally; `make test-e2e-load` posts synthetic ConversionReview batches at a
-live webhook-server.
+live webhook-server; `make test-e2e-scale` drives real Get/List through the
+apiserver conversion path against a generated CRD fleet (up to 100×100).
 
 If something here blocks you, please [open an issue](https://github.com/terasky-oss/declarative-conversion-operator/issues) — several of these are natural extension points the design was deliberately seamed for (see [Roadmap](roadmap.md)), not fundamental barriers.

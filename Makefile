@@ -70,6 +70,10 @@ test-e2e-crossplane-only: ## Run the e2e test for the Crossplane-only deployment
 test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
 	./hack/e2e-load.sh
 
+.PHONY: test-e2e-scale
+test-e2e-scale: ## Cluster-scale Get/List through the live conversion webhook (native CRDs). Configurable via TARGETS/INSTANCES/PARALLEL. See docs/operations/capacity.md.
+	./hack/e2e-scale.sh
+
 ##@ Build
 
 .PHONY: build

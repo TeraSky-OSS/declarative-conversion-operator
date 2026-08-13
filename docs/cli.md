@@ -253,8 +253,9 @@ What it does:
 
 Hub promotion is **not** a mechanical path swap — remaining spokes must be
 re-expressed against the new hub. `rehub` fail-closes if a rule cannot be
-rewritten safely (for example a promote spoke that is JSONPatch-only, or a
-remaining-spoke `JSONPatch` that needs a hand rewrite). Review the draft, then
+rewritten safely (CEL and JSONPatch cannot be used as a hub path map when
+promoting, remaining-spoke CEL/JSONPatch that need path rewrite fail closed,
+and `ToLabel` with `serialization: JSON` cannot invert). Review the draft, then
 `convctl validate` / `convctl test` before applying.
 
 The Crossplane lifecycle example is the acceptance fixture:

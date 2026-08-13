@@ -135,6 +135,86 @@ The 1s p99 alert in [Observability](../observability.md) is more than an
 order of magnitude above this envelope for small objects. Re-run with
 `make test-e2e-load` (or `KEEP_CLUSTER=1`) after changing the hot path.
 
+## Per-strategy Convert cost
+
+`BenchmarkConvert_PerStrategy` in `pkg/engine/strategy_bench_test.go` times
+hub→spoke `Convert` for every built-in strategy on a tiny object (one field
+or a 2-element array). Same workstation as the tables above
+(`go test -bench=BenchmarkConvert_PerStrategy -benchtime=300ms`). Use this
+to compare strategies, not as an SLO — real requests also pay TLS, JSON
+codec, and apiserver overhead (see the load and cluster-scale sections).
+
+| Strategy | ns/op | B/op | allocs/op | ≈ time |
+|---|---:|---:|---:|---:|
+| DefaultValue / Constant / Delete | ~80–88 | 96 | 2 | 0.08 µs |
+| FieldRename | 258 | 384 | 3 | 0.26 µs |
+| NumericScale / Duration / ObjectToScalar | ~328–330 | 384–392 | 3–4 | 0.33 µs |
+| EnumRemap / TypeCoerce / Quantity | ~345–390 | 392–400 | 4 | 0.37 µs |
+| MapToFields / ListJoin / ListSplit | ~391–472 | 384–536 | 3–10 | 0.4 µs |
+| ScalarToObject / MapKeyRename / FieldsToMap | ~499–698 | 720 | 5 | 0.6 µs |
+| SingletonArrayToObject | 708 | 720 | 5 | 0.71 µs |
+| ScalarToFields | 755 | 560 | 9 | 0.76 µs |
+| ObjectToSingletonArray | 950 | 760 | 7 | 0.95 µs |
+| FromLabel / ToAnnotation / FromAnnotation / ToLabel | ~1.0–1.1 µs | ~1.1 KiB | 9–10 | 1.0 µs |
+| FieldsToScalar | 1.3 µs | 969 | 14 | 1.3 µs |
+| ArrayToMapByKey / MapToArrayByKey | 2.4–3.0 µs | ~3.4 KiB | 21–30 | 2.7 µs |
+| ForEach (2 nested FieldRenames, tiny array) | 3.1 µs | 3.6 KiB | 29 | 3.1 µs |
+| JSONPatch (1 op) | 3.9 µs | 1.7 KiB | 44 | 3.9 µs |
+| CEL | 4.0 µs | 2.6 KiB | 43 | 4.0 µs |
+
+Cheap path-copy strategies stay in the hundreds of nanoseconds. JSONPatch and
+CEL are ~15× FieldRename on a tiny object (marshal / CEL program eval), still
+well under a millisecond. Array-shaped ops (`forEach`, `arrayToMapByKey`,
+`mapToArrayByKey`) scale with element count — see Convert vs array length
+above for n=10/100/1000.
+
+## Cluster-scale Get/List (kind)
+
+`make test-e2e-scale` (`hack/e2e-scale.sh` → `cmd/scalegen`) stands up a
+native-CRD kind cluster, then **generates** a fleet of CRDs and drives real
+apiserver Get/List (which invoke the conversion webhook) in parallel:
+
+- Each CRD has **3 versions** (`v3` storage hub, `v1`/`v2` spokes).
+- Each spoke conversion has **3–10 strategies**, assigned so **all 29**
+  built-in strategies appear across the fleet (`2 × targets × strategies-max`
+  must be ≥ 29).
+- Instances are created at `v1`; Get/List run at both spoke versions so the
+  apiserver converts hub↔spoke on every call.
+
+Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars — this is
+**not** in the CI e2e matrix; 100×100 is a local capacity run (kind etcd and
+apiserver will dominate before the webhook does).
+
+```console
+# smoke (default)
+make test-e2e-scale
+
+# 100 CRDs × 100 CRs × 3 versions, 32 parallel Get/List workers
+TARGETS=100 INSTANCES=100 PARALLEL=32 make test-e2e-scale
+
+# skip kind teardown while iterating
+KEEP_CLUSTER=1 TARGETS=20 INSTANCES=20 make test-e2e-scale
+go run ./cmd/scalegen --targets 20 --instances 20 --parallel 16 --namespace dco-scale
+```
+
+| Flag / env | Default | Meaning |
+|---|---|---|
+| `--targets` / `TARGETS` | 4 | Number of CRDs (each with 3 versions) |
+| `--instances` / `INSTANCES` | 5 | CRs created per CRD |
+| `--strategies-min` / `STRATEGIES_MIN` | 3 | Min strategies per spoke |
+| `--strategies-max` / `STRATEGIES_MAX` | 10 | Max strategies per spoke |
+| `--parallel` / `PARALLEL` | 8 | Concurrent create/get/list workers |
+| `--seed` / `SEED` | 1 | Strategy assignment RNG |
+| `--list-repeats` / `LIST_REPEATS` | 3 | List calls per CRD per spoke version |
+| `--get-repeats` / `GET_REPEATS` | 1 | Get calls per instance per spoke version |
+| `--dry-run` | false | Print strategy coverage only (no cluster) |
+
+Native CRDs are used on purpose: they exercise the same `pkg/engine` +
+webhook-server path as XRDs without requiring Crossplane. Record p50/p99 from
+the `=== cluster scale ===` summary into this page after a 100×100 run on
+your hardware — those numbers include apiserver + etcd + conversion, not just
+`Convert`.
+
 ## What actually consumes capacity
 
 | Workload | Who pays | Scales with |
