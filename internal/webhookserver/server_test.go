@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -268,5 +269,28 @@ func TestHandleDebugRegistry(t *testing.T) {
 	}
 	if byXRD["broken.example.org"]["lastError"] != "schema drift" {
 		t.Fatalf("unexpected lastError: %v", byXRD["broken.example.org"]["lastError"])
+	}
+}
+
+func TestPlainMux_ExposesDedicatedRegistryMetrics(t *testing.T) {
+	metrics := NewMetrics(newTestRegisterer())
+	metrics.Ready.Set(1)
+	metrics.RegistrySize.Set(3)
+	s := &Server{Registry: NewRegistry(), Metrics: metrics}
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	s.PlainMux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"xrdconv_webhook_ready 1",
+		"xrdconv_webhook_registry_size 3",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected /metrics to contain %q; body starts with:\n%.500s", want, body)
+		}
 	}
 }

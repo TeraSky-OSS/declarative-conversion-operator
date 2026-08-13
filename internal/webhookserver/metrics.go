@@ -17,7 +17,10 @@ limitations under the License.
 package webhookserver
 
 import (
+	"net/http"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Metrics is the webhook server's Prometheus metric set, registered on a
@@ -34,6 +37,11 @@ type Metrics struct {
 	RegistryReloadTotal *prometheus.CounterVec
 	RegistryCompileErr  *prometheus.CounterVec
 	Ready               prometheus.Gauge
+
+	// gatherer is the registry metrics were registered on, used by
+	// PlainMux's /metrics handler. Nil when NewMetrics was given a
+	// Registerer that is not also a Gatherer.
+	gatherer prometheus.Gatherer
 }
 
 // NewMetrics constructs and registers the full metric set on reg.
@@ -81,8 +89,21 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
 		}),
 	}
+	if g, ok := reg.(prometheus.Gatherer); ok {
+		m.gatherer = g
+	}
 	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
+}
+
+// Handler returns an HTTP handler that exposes this metric set. Prefer this
+// over promhttp.Handler(), which serves the process-wide default registry
+// and would hide every series registered on the dedicated registry.
+func (m *Metrics) Handler() http.Handler {
+	if m == nil || m.gatherer == nil {
+		return promhttp.Handler()
+	}
+	return promhttp.HandlerFor(m.gatherer, promhttp.HandlerOpts{})
 }
 
 // SyncRegistryMetrics refreshes RegistrySize and per-target
