@@ -1,0 +1,19 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xcodes-conversion
+spec:
+  targetXRD:
+    name: xcodes.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: EnumRemap
+          enumRemap:
+            path: spec.statusCode
+            mapping:
+              - hub: 200
+                spoke: 2
+              - hub: 404
+                spoke: 4

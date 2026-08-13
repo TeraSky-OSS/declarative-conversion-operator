@@ -625,6 +625,41 @@ func TestEnumRemap_Bidirectional(t *testing.T) {
 	}
 }
 
+func TestEnumRemap_IntegerValues(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"code": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"code": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyEnumRemap, Params: EnumRemapParams{
+			Path: ParsePath("code"),
+			Mapping: []EnumValueMapping{
+				{Hub: float64(200), Spoke: float64(2)},
+				{Hub: float64(404), Spoke: float64(4)},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"code": float64(404)}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if got, ok := AsFloat64(out["code"]); !ok || got != 4 {
+		t.Fatalf("expected code=4, got %#v", out["code"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if got, ok := AsFloat64(back["code"]); !ok || got != 404 {
+		t.Fatalf("expected code=404, got %#v", back["code"])
+	}
+}
+
 func TestEnumRemap_NonInjectiveIsLossy(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})

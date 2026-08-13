@@ -225,9 +225,14 @@ type FromLabelParams struct {
 }
 
 // EnumValueMapping pairs one hub enum value with its spoke equivalent.
+// Values may be strings, integers, numbers, or booleans.
 type EnumValueMapping struct {
-	Hub   string `json:"hub"`
-	Spoke string `json:"spoke"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Hub extv1.JSON `json:"hub"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Spoke extv1.JSON `json:"spoke"`
 }
 
 // EnumRemapParams bidirectionally maps a scalar field's enumerated values.

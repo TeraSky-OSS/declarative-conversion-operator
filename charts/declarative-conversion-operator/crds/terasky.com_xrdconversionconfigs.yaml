@@ -182,13 +182,14 @@ spec:
                             properties:
                               mapping:
                                 items:
-                                  description: EnumValueMapping pairs one hub enum
-                                    value with its spoke equivalent.
+                                  description: |-
+                                    EnumValueMapping pairs one hub enum value with its spoke equivalent.
+                                    Values may be strings, integers, numbers, or booleans.
                                   properties:
                                     hub:
-                                      type: string
+                                      x-kubernetes-preserve-unknown-fields: true
                                     spoke:
-                                      type: string
+                                      x-kubernetes-preserve-unknown-fields: true
                                   required:
                                   - hub
                                   - spoke

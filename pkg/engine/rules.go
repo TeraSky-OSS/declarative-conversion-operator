@@ -208,7 +208,7 @@ type EnumRemapParams struct {
 func (EnumRemapParams) isRuleParams() {}
 
 type EnumValueMapping struct {
-	Hub, Spoke string
+	Hub, Spoke any
 }
 
 // DefaultValueParams injects a default for a field that exists only in one

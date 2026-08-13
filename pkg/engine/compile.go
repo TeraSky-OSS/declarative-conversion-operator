@@ -623,13 +623,13 @@ func resolveEnumRemap(idx int, p EnumRemapParams, hub, spoke *extv1.JSONSchemaPr
 		diags = append(diags, *d)
 	}
 
-	hubToSpoke := map[string]string{}
-	spokeToHub := map[string]string{}
+	hubToSpoke := map[string]any{}
+	spokeToHub := map[string]any{}
 	spokeSeen := map[string]int{}
 	for _, m := range p.Mapping {
-		hubToSpoke[m.Hub] = m.Spoke
-		spokeToHub[m.Spoke] = m.Hub
-		spokeSeen[m.Spoke]++
+		hubToSpoke[enumKey(m.Hub)] = m.Spoke
+		spokeToHub[enumKey(m.Spoke)] = m.Hub
+		spokeSeen[enumKey(m.Spoke)]++
 	}
 	injective := true
 	for _, n := range spokeSeen {

@@ -259,6 +259,23 @@ func TestStatusFieldConversion(t *testing.T) {
 	}
 }
 
+func TestRunTest_IntegerEnumRemap(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/enum-int/xrd.yaml",
+		ConfigPath: "testdata/enum-int/config.yaml",
+		SamplesDir: "testdata/enum-int/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
 func TestRunAnalyze_OneOfNamedInDiagnostics(t *testing.T) {
 	out, err := RunAnalyze("testdata/oneof/xrd.yaml", "", "testdata/oneof/config.yaml")
 	if err != nil {

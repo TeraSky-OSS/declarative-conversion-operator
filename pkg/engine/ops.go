@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -278,11 +279,12 @@ func (o restoreAnnotationOp) apply(ctx *execContext) error {
 	return nil
 }
 
-// remapEnumOp rewrites a scalar string field's value through a precompiled
-// one-way lookup table.
+// remapEnumOp rewrites a scalar field's value through a precompiled
+// one-way lookup table. Keys are canonicalized so string, integer, and
+// boolean enums share the same machinery.
 type remapEnumOp struct {
 	path       FieldPath
-	table      map[string]string
+	table      map[string]any
 	onUnmapped UnknownKeyPolicy
 }
 
@@ -291,18 +293,28 @@ func (o remapEnumOp) apply(ctx *execContext) error {
 	if !ok {
 		return nil
 	}
-	s, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("remapEnum: value at %q is not a string", o.path)
-	}
-	mapped, ok := o.table[s]
+	mapped, ok := o.table[enumKey(v)]
 	if !ok {
 		if o.onUnmapped == UnknownKeyError {
-			return fmt.Errorf("remapEnum: unmapped value %q at %q", s, o.path)
+			return fmt.Errorf("remapEnum: unmapped value %v at %q", v, o.path)
 		}
-		return nil // Drop: leave the field unset in output.
+		return nil
 	}
 	return setValue(ctx.output, o.path, mapped)
+}
+
+func enumKey(v any) string {
+	switch t := v.(type) {
+	case string:
+		return "s:" + t
+	case bool:
+		return "b:" + strconv.FormatBool(t)
+	default:
+		if f, ok := AsFloat64(v); ok {
+			return "n:" + formatNumber(f)
+		}
+		return fmt.Sprintf("x:%T:%v", v, v)
+	}
 }
 
 // injectDefaultOp writes a fixed default into a field that exists only on

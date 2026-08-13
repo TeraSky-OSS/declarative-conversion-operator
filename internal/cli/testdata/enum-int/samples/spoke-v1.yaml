@@ -1,0 +1,6 @@
+apiVersion: example.org/v1
+kind: XCode
+metadata:
+  name: demo
+spec:
+  statusCode: 4

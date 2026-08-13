@@ -212,7 +212,15 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 		}
 		mapping := make([]engine.EnumValueMapping, 0, len(r.EnumRemap.Mapping))
 		for _, m := range r.EnumRemap.Mapping {
-			mapping = append(mapping, engine.EnumValueMapping{Hub: m.Hub, Spoke: m.Spoke})
+			hub, err := jsonToAny(m.Hub)
+			if err != nil {
+				return nil, fmt.Errorf("enum mapping hub: %w", err)
+			}
+			spoke, err := jsonToAny(m.Spoke)
+			if err != nil {
+				return nil, fmt.Errorf("enum mapping spoke: %w", err)
+			}
+			mapping = append(mapping, engine.EnumValueMapping{Hub: hub, Spoke: spoke})
 		}
 		return engine.EnumRemapParams{
 			Path: engine.ParsePath(r.EnumRemap.Path), Mapping: mapping,

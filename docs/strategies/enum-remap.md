@@ -2,11 +2,11 @@
 
 ## What it does
 
-Bidirectionally maps a scalar field's enumerated values between what the hub calls them and what the spoke calls them — e.g. a hub `"Large"` that a spoke calls `"L"`.
+Bidirectionally maps a scalar field's enumerated values between what the hub calls them and what the spoke calls them — e.g. a hub `"Large"` that a spoke calls `"L"`, or a hub integer `200` that a spoke calls `2`.
 
 ## When to use it
 
-The *same field, same meaning*, has different string enum values on different versions — a common cosmetic API cleanup (`"Small"/"Medium"/"Large"` becoming `"S"/"M"/"L"`, or vice versa).
+The *same field, same meaning*, has different enum values on different versions — a common cosmetic API cleanup (`"Small"/"Medium"/"Large"` becoming `"S"/"M"/"L"`, integer status codes `200/404` becoming `2/4`, or booleans).
 
 !!! conditional-lossy "Depends on `onUnmappedHubValue`/`onUnmappedSpokeValue`, and whether the mapping is injective"
     Each direction is lossless only if every value that direction might encounter has an explicit mapping entry (`onUnmapped...Value: Error`, the default, fails validation otherwise — never silently passes an unknown value through). The **spoke → hub** direction has an extra condition: it's only lossless if the mapping is *injective* — no two hub values map to the same spoke value. If two hub values collapse to one spoke value, converting that spoke value back up is inherently ambiguous, and that direction requires `acknowledgeLossy: true`.
@@ -50,7 +50,18 @@ The hub's `size` enum values (`Small`/`Medium`/`Large`) map to the v2 spoke's ab
         spoke: L
 ```
 
-`path` is the same dotted path on both sides — `enumRemap` only makes sense when the field itself isn't renamed, just its values.
+`path` is the same dotted path on both sides — `enumRemap` only makes sense when the field itself isn't renamed, just its values. Mapping entries may be strings, integers, numbers, or booleans:
+
+```yaml
+- strategy: EnumRemap
+  enumRemap:
+    path: spec.statusCode
+    mapping:
+      - hub: 200
+        spoke: 2
+      - hub: 404
+        spoke: 4
+```
 
 ### Objects
 

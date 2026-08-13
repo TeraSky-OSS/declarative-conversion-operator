@@ -97,7 +97,7 @@ func wellFormedRules() map[Strategy]ConversionRule {
 			Strategy: StrategyEnumRemap,
 			EnumRemap: &EnumRemapParams{
 				Path:    "spec.tier",
-				Mapping: []EnumValueMapping{{Hub: "Standard", Spoke: "std"}, {Hub: "Premium", Spoke: "prem"}},
+				Mapping: []EnumValueMapping{{Hub: rawJSON(`"Standard"`), Spoke: rawJSON(`"std"`)}, {Hub: rawJSON(`"Premium"`), Spoke: rawJSON(`"prem"`)}},
 			},
 		},
 		StrategyDefaultValue: {
