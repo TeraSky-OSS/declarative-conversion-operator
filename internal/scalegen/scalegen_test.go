@@ -99,31 +99,89 @@ func TestBuildTargets_AnalyzeAndConvert(t *testing.T) {
 				t.Fatalf("Analyze errors: %+v", report.SpokeReports)
 			}
 			obj := tgt.Instance("dco-scale", 0).Object
+			var v1Plan, v2Plan *engine.Plan
 			for _, rs := range ruleSets {
-				if rs.SpokeVersion != V1 {
-					continue
-				}
 				hub := versionSchema(t, tgt, HubVersion)
-				spoke := versionSchema(t, tgt, V1)
+				spoke := versionSchema(t, tgt, rs.SpokeVersion)
 				plan, diags, err := engine.Compile(rs, hub, spoke)
 				if err != nil {
 					t.Fatal(err)
 				}
 				for _, d := range diags {
 					if d.Severity == engine.SeverityError {
-						t.Fatalf("compile: %s", d.Message)
+						t.Fatalf("compile %s: %s", rs.SpokeVersion, d.Message)
 					}
 				}
-				hubObj, err := engine.Convert(engine.ConvertInput{Plan: plan, Direction: engine.SpokeToHub, Object: obj})
-				if err != nil {
-					t.Fatalf("spoke→hub: %v", err)
+				switch rs.SpokeVersion {
+				case V1:
+					v1Plan = plan
+				case V2:
+					v2Plan = plan
 				}
-				if _, err := engine.Convert(engine.ConvertInput{Plan: plan, Direction: engine.HubToSpoke, Object: hubObj}); err != nil {
-					t.Fatalf("hub→spoke: %v", err)
-				}
+			}
+			if v1Plan == nil || v2Plan == nil {
+				t.Fatal("missing compiled plans")
+			}
+			hubObj, err := engine.Convert(engine.ConvertInput{Plan: v1Plan, Direction: engine.SpokeToHub, Object: obj})
+			if err != nil {
+				t.Fatalf("v1→hub: %v", err)
+			}
+			if _, err := engine.Convert(engine.ConvertInput{Plan: v1Plan, Direction: engine.HubToSpoke, Object: hubObj}); err != nil {
+				t.Fatalf("hub→v1: %v", err)
+			}
+			if _, err := engine.Convert(engine.ConvertInput{Plan: v2Plan, Direction: engine.HubToSpoke, Object: hubObj}); err != nil {
+				t.Fatalf("hub→v2 (object created at v1): %v; v2 strategies=%v", err, strategyNames(tgt.V2Slots))
 			}
 		})
 	}
+}
+
+func TestBuildTargets_V1CreateThenReadV2_AllHundred(t *testing.T) {
+	t.Parallel()
+	targets, err := BuildTargets(100, 3, 10, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failed int
+	for _, tgt := range targets {
+		ruleSets, err := tgt.Config.ToRuleSets()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plans := map[string]*engine.Plan{}
+		for _, rs := range ruleSets {
+			hub, spoke := versionSchema(t, tgt, HubVersion), versionSchema(t, tgt, rs.SpokeVersion)
+			plan, diags, err := engine.Compile(rs, hub, spoke)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range diags {
+				if d.Severity == engine.SeverityError {
+					t.Fatalf("%s compile %s: %s", tgt.CRDName, rs.SpokeVersion, d.Message)
+				}
+			}
+			plans[rs.SpokeVersion] = plan
+		}
+		hubObj, err := engine.Convert(engine.ConvertInput{Plan: plans[V1], Direction: engine.SpokeToHub, Object: tgt.Instance("dco-scale", 0).Object})
+		if err != nil {
+			t.Fatalf("%s v1→hub: %v", tgt.CRDName, err)
+		}
+		if _, err := engine.Convert(engine.ConvertInput{Plan: plans[V2], Direction: engine.HubToSpoke, Object: hubObj}); err != nil {
+			failed++
+			t.Errorf("%s hub→v2: %v; v2=%v", tgt.CRDName, err, strategyNames(tgt.V2Slots))
+		}
+	}
+	if failed > 0 {
+		t.Fatalf("%d/%d targets failed hub→v2 after a v1 create", failed, len(targets))
+	}
+}
+
+func strategyNames(slots []Slot) []v1a.Strategy {
+	out := make([]v1a.Strategy, len(slots))
+	for i, s := range slots {
+		out[i] = s.Name
+	}
+	return out
 }
 
 func TestRun_DryRun(t *testing.T) {

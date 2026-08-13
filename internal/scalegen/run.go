@@ -65,11 +65,12 @@ type Options struct {
 
 // Stats is latency for one operation class (get or list).
 type Stats struct {
-	N      int
-	Errors int
-	P50    time.Duration
-	P99    time.Duration
-	Max    time.Duration
+	N       int
+	Errors  int
+	P50     time.Duration
+	P99     time.Duration
+	Max     time.Duration
+	Samples []string
 }
 
 // Result is printed at the end of a run.
@@ -278,6 +279,9 @@ func printResult(w io.Writer, r *Result) {
 func printStats(w io.Writer, name string, s Stats) {
 	fmt.Fprintf(w, "%s: n=%d errors=%d p50=%s p99=%s max=%s\n",
 		name, s.N, s.Errors, s.P50.Round(time.Millisecond), s.P99.Round(time.Millisecond), s.Max.Round(time.Millisecond))
+	for _, e := range s.Samples {
+		fmt.Fprintf(w, "  sample error: %s\n", e)
+	}
 }
 
 func restConfig(kubeconfig string, qps float32, burst int) (*rest.Config, error) {
@@ -505,14 +509,17 @@ func runErrPool(ctx context.Context, parallel int, jobs []func() error) error {
 func summarize(in []timed) Stats {
 	ds := make([]time.Duration, 0, len(in))
 	errs := 0
+	seen := map[string]int{}
 	for _, t := range in {
 		if t.err != nil {
 			errs++
+			msg := t.err.Error()
+			seen[msg]++
 			continue
 		}
 		ds = append(ds, t.d)
 	}
-	s := Stats{N: len(in), Errors: errs}
+	s := Stats{N: len(in), Errors: errs, Samples: uniqueSamples(seen, 5)}
 	if len(ds) == 0 {
 		return s
 	}
@@ -521,6 +528,31 @@ func summarize(in []timed) Stats {
 	s.P99 = pct(ds, 99)
 	s.Max = ds[len(ds)-1]
 	return s
+}
+
+func uniqueSamples(seen map[string]int, n int) []string {
+	type kv struct {
+		msg string
+		n   int
+	}
+	all := make([]kv, 0, len(seen))
+	for msg, c := range seen {
+		all = append(all, kv{msg, c})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].n != all[j].n {
+			return all[i].n > all[j].n
+		}
+		return all[i].msg < all[j].msg
+	})
+	if len(all) > n {
+		all = all[:n]
+	}
+	out := make([]string, len(all))
+	for i, x := range all {
+		out[i] = fmt.Sprintf("%dx %s", x.n, x.msg)
+	}
+	return out
 }
 
 func pct(ds []time.Duration, p float64) time.Duration {

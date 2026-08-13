@@ -174,8 +174,8 @@ func slots() []Slot {
 		{Name: v1a.StrategyJSONPatch,
 			HubProps: map[string]extv1.JSONSchemaProps{"flag": strProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"flag": strProp()},
 			Rule: lossy(v1a.ConversionRule{Strategy: v1a.StrategyJSONPatch, JSONPatch: &v1a.JSONPatchParams{
-				HubToSpoke: []v1a.JSONPatchOp{{Op: "replace", Path: "/spec/flag", Value: pj(`"spoke"`)}},
-				SpokeToHub: []v1a.JSONPatchOp{{Op: "replace", Path: "/spec/flag", Value: pj(`"hub"`)}},
+				HubToSpoke: []v1a.JSONPatchOp{{Op: "add", Path: "/spec/flag", Value: pj(`"spoke"`)}},
+				SpokeToHub: []v1a.JSONPatchOp{{Op: "add", Path: "/spec/flag", Value: pj(`"hub"`)}},
 			}}),
 			SpokeSpec: map[string]any{"flag": "spoke"}},
 		{Name: v1a.StrategyScalarToFields,
@@ -196,8 +196,8 @@ func slots() []Slot {
 			HubProps: map[string]extv1.JSONSchemaProps{"packed": intProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"bitHigh": intProp(), "bitLow": intProp()},
 			Rule: lossy(v1a.ConversionRule{Strategy: v1a.StrategyCEL, CEL: &v1a.CELParams{
 				HubPaths: []string{"spec.packed"}, SpokePaths: []string{"spec.bitHigh", "spec.bitLow"},
-				HubToSpoke: `{"spec.bitHigh": int(object.spec.packed) / 256, "spec.bitLow": int(object.spec.packed) % 256}`,
-				SpokeToHub: `{"spec.packed": int(object.spec.bitHigh) * 256 + int(object.spec.bitLow)}`,
+				HubToSpoke: `has(object.spec) && has(object.spec.packed) ? {"spec.bitHigh": int(object.spec.packed) / 256, "spec.bitLow": int(object.spec.packed) % 256} : {}`,
+				SpokeToHub: `has(object.spec) && has(object.spec.bitHigh) && has(object.spec.bitLow) ? {"spec.packed": int(object.spec.bitHigh) * 256 + int(object.spec.bitLow)} : {}`,
 			}}),
 			SpokeSpec: map[string]any{"bitHigh": 4, "bitLow": 1}},
 	}

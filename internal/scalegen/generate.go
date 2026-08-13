@@ -88,6 +88,13 @@ func BuildTargets(targets, minN, maxN int, seed int64) ([]Target, error) {
 			mergeProps(v2Props, s.SpokeProps)
 			v2Rules = append(v2Rules, s.Rule)
 		}
+		// Identical on every version so leftover-scan auto-covers it. Guarantees
+		// spec exists on hub after a v1 create, so v2 JSONPatch add /spec/flag
+		// has a parent path.
+		hubProps["fixture"] = strProp()
+		v1Props["fixture"] = strProp()
+		v2Props["fixture"] = strProp()
+		spokeSpec["fixture"] = "ok"
 		crd := &extv1.CustomResourceDefinition{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "apiextensions.k8s.io/v1", Kind: "CustomResourceDefinition"},
 			ObjectMeta: metav1.ObjectMeta{Name: name},
