@@ -41,10 +41,11 @@ func arrPropMax1(item extv1.JSONSchemaProps) extv1.JSONSchemaProps {
 	p.MaxItems = &n
 	return p
 }
-func mapProp() extv1.JSONSchemaProps {
-	allow := true
-	return extv1.JSONSchemaProps{Type: "object", AdditionalProperties: &extv1.JSONSchemaPropsOrBool{Allows: allow}}
+func mapOf(item extv1.JSONSchemaProps) extv1.JSONSchemaProps {
+	cp := item
+	return extv1.JSONSchemaProps{Type: "object", AdditionalProperties: &extv1.JSONSchemaPropsOrBool{Allows: true, Schema: &cp}}
 }
+func strMapProp() extv1.JSONSchemaProps { return mapOf(strProp()) }
 
 func pj(s string) *extv1.JSON { j := extv1.JSON{Raw: []byte(s)}; return &j }
 
@@ -100,15 +101,15 @@ func slots() []Slot {
 			Rule:      lossy(v1a.ConversionRule{Strategy: v1a.StrategyDuration, Duration: &v1a.DurationParams{HubPath: "spec.timeout", SpokePath: "spec.timeoutSeconds"}}),
 			SpokeSpec: map[string]any{"timeoutSeconds": 5}},
 		{Name: v1a.StrategyMapKeyRename,
-			HubProps: map[string]extv1.JSONSchemaProps{"extra": mapProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"extra": mapProp()},
+			HubProps: map[string]extv1.JSONSchemaProps{"extra": strMapProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"extra": strMapProp()},
 			Rule:      v1a.ConversionRule{Strategy: v1a.StrategyMapKeyRename, MapKeyRename: &v1a.MapKeyRenameParams{HubPath: "spec.extra", SpokePath: "spec.extra", Renames: map[string]string{"app": "application"}}},
 			SpokeSpec: map[string]any{"extra": map[string]any{"application": "w", "keep": "yes"}}},
 		{Name: v1a.StrategyArrayToMapByKey,
-			HubProps: map[string]extv1.JSONSchemaProps{"zones": arrProp(item)}, SpokeProps: map[string]extv1.JSONSchemaProps{"zones": mapProp()},
+			HubProps: map[string]extv1.JSONSchemaProps{"zones": arrProp(item)}, SpokeProps: map[string]extv1.JSONSchemaProps{"zones": mapOf(objProp(map[string]extv1.JSONSchemaProps{"cidr": strProp()}))},
 			Rule:      lossy(v1a.ConversionRule{Strategy: v1a.StrategyArrayToMapByKey, ArrayToMapByKey: &v1a.ArrayToMapByKeyParams{HubPath: "spec.zones", SpokePath: "spec.zones", KeyField: "name"}}),
 			SpokeSpec: map[string]any{"zones": map[string]any{"a": map[string]any{"cidr": "10.0.0.0/24"}}}},
 		{Name: v1a.StrategyMapToArrayByKey,
-			HubProps: map[string]extv1.JSONSchemaProps{"limits": mapProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"limits": arrProp(item)},
+			HubProps: map[string]extv1.JSONSchemaProps{"limits": mapOf(objProp(map[string]extv1.JSONSchemaProps{"cidr": strProp()}))}, SpokeProps: map[string]extv1.JSONSchemaProps{"limits": arrProp(item)},
 			Rule:      lossy(v1a.ConversionRule{Strategy: v1a.StrategyMapToArrayByKey, MapToArrayByKey: &v1a.MapToArrayByKeyParams{HubPath: "spec.limits", SpokePath: "spec.limits", KeyField: "name"}}),
 			SpokeSpec: map[string]any{"limits": []any{map[string]any{"name": "a", "cidr": "10.0.0.0/24"}}}},
 		{Name: v1a.StrategyForEach,
@@ -135,11 +136,11 @@ func slots() []Slot {
 			Rule:      v1a.ConversionRule{Strategy: v1a.StrategyObjectToSingletonArray, ObjectToSingletonArray: &v1a.ObjectToSingletonArrayParams{HubPath: "spec.primary", SpokePath: "spec.primaries"}},
 			SpokeSpec: map[string]any{"primaries": []any{map[string]any{"name": "a"}}}},
 		{Name: v1a.StrategyFieldsToMap,
-			HubProps: map[string]extv1.JSONSchemaProps{"env": strProp(), "team": strProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"labels": mapProp()},
+			HubProps: map[string]extv1.JSONSchemaProps{"env": strProp(), "team": strProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"labels": strMapProp()},
 			Rule:      v1a.ConversionRule{Strategy: v1a.StrategyFieldsToMap, FieldsToMap: &v1a.FieldsToMapParams{HubPaths: []string{"spec.env", "spec.team"}, SpokeMapPath: "spec.labels", KeyNames: map[string]string{"spec.env": "env", "spec.team": "team"}}},
 			SpokeSpec: map[string]any{"labels": map[string]any{"env": "dev", "team": "core"}}},
 		{Name: v1a.StrategyMapToFields,
-			HubProps: map[string]extv1.JSONSchemaProps{"meta": mapProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"owner": strProp(), "group": strProp()},
+			HubProps: map[string]extv1.JSONSchemaProps{"meta": strMapProp()}, SpokeProps: map[string]extv1.JSONSchemaProps{"owner": strProp(), "group": strProp()},
 			Rule:      v1a.ConversionRule{Strategy: v1a.StrategyMapToFields, MapToFields: &v1a.MapToFieldsParams{HubMapPath: "spec.meta", SpokePaths: []string{"spec.owner", "spec.group"}, KeyNames: map[string]string{"spec.owner": "owner", "spec.group": "group"}}},
 			SpokeSpec: map[string]any{"owner": "a", "group": "b"}},
 		{Name: v1a.StrategyToAnnotation,

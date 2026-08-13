@@ -31,6 +31,7 @@ import (
 
 func main() {
 	opts := scalegen.Options{Out: os.Stdout}
+	var qps float64
 	flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "kubeconfig path (default: KUBECONFIG / in-cluster)")
 	flag.StringVar(&opts.Namespace, "namespace", "dco-scale", "namespace for generated CRs")
 	flag.IntVar(&opts.Targets, "targets", 4, "number of CRDs to generate (each has 3 versions)")
@@ -42,8 +43,12 @@ func main() {
 	flag.DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "overall run timeout")
 	flag.IntVar(&opts.ListRepeats, "list-repeats", 3, "List calls per CRD per spoke version")
 	flag.IntVar(&opts.GetRepeats, "get-repeats", 1, "Get calls per instance per spoke version")
+	flag.Float64Var(&qps, "qps", 100, "client-go QPS (default 5 is too low for 10k creates)")
+	flag.IntVar(&opts.Burst, "burst", 200, "client-go burst")
+	flag.BoolVar(&opts.Reset, "reset", false, "delete previously generated CRDs in this group before applying")
 	flag.BoolVar(&opts.DryRun, "dry-run", false, "print strategy coverage without talking to a cluster")
 	flag.Parse()
+	opts.QPS = float32(qps)
 
 	if _, err := scalegen.Run(context.Background(), opts); err != nil {
 		fmt.Fprintf(os.Stderr, "scalegen: %v\n", err)

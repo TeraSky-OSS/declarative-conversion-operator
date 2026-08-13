@@ -192,9 +192,9 @@ make test-e2e-scale
 # 100 CRDs × 100 CRs × 3 versions, 32 parallel Get/List workers
 TARGETS=100 INSTANCES=100 PARALLEL=32 make test-e2e-scale
 
-# skip kind teardown while iterating
+# skip kind teardown while iterating; --reset drops old generated CRDs
 KEEP_CLUSTER=1 TARGETS=20 INSTANCES=20 make test-e2e-scale
-go run ./cmd/scalegen --targets 20 --instances 20 --parallel 16 --namespace dco-scale
+go run ./cmd/scalegen --reset --targets 20 --instances 20 --parallel 16 --qps 100 --namespace dco-scale
 ```
 
 | Flag / env | Default | Meaning |
@@ -204,6 +204,9 @@ go run ./cmd/scalegen --targets 20 --instances 20 --parallel 16 --namespace dco-
 | `--strategies-min` / `STRATEGIES_MIN` | 3 | Min strategies per spoke |
 | `--strategies-max` / `STRATEGIES_MAX` | 10 | Max strategies per spoke |
 | `--parallel` / `PARALLEL` | 8 | Concurrent create/get/list workers |
+| `--qps` / `QPS` | 100 | client-go QPS (client-go's default of 5 throttles 10k creates) |
+| `--burst` / `BURST` | 200 | client-go burst |
+| `--reset` / `RESET` | true in `e2e-scale.sh` | Delete previously generated CRDs in this group before apply |
 | `--seed` / `SEED` | 1 | Strategy assignment RNG |
 | `--list-repeats` / `LIST_REPEATS` | 3 | List calls per CRD per spoke version |
 | `--get-repeats` / `GET_REPEATS` | 1 | Get calls per instance per spoke version |

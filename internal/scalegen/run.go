@@ -22,7 +22,9 @@ import (
 	"io"
 	"math"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -54,6 +56,9 @@ type Options struct {
 	Timeout       time.Duration
 	ListRepeats   int
 	GetRepeats    int
+	QPS           float32
+	Burst         int
+	Reset         bool
 	DryRun        bool
 	Out           io.Writer
 }
@@ -107,6 +112,12 @@ func (o Options) withDefaults() Options {
 	if o.GetRepeats <= 0 {
 		o.GetRepeats = 1
 	}
+	if o.QPS <= 0 {
+		o.QPS = 100
+	}
+	if o.Burst <= 0 {
+		o.Burst = 200
+	}
 	if o.Out == nil {
 		o.Out = io.Discard
 	}
@@ -135,10 +146,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return &Result{Targets: len(targets), Instances: opts.Instances, Coverage: cov}, nil
 	}
 
-	cfg, err := restConfig(opts.Kubeconfig)
+	cfg, err := restConfig(opts.Kubeconfig, opts.QPS, opts.Burst)
 	if err != nil {
 		return nil, err
 	}
+	opts.logf("kube client QPS=%.0f burst=%d", opts.QPS, opts.Burst)
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		return nil, err
@@ -163,6 +175,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	if err := ensureNamespace(ctx, c, opts.Namespace); err != nil {
 		return nil, err
+	}
+	if opts.Reset {
+		opts.logf("reset: deleting previously generated CRDs in group %s", Group)
+		if err := resetGenerated(ctx, c); err != nil {
+			return nil, err
+		}
 	}
 	opts.logf("applying %d CRDs", len(targets))
 	for _, t := range targets {
@@ -196,7 +214,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	opts.logf("creating %d instances × %d types in %s", opts.Instances, len(targets), opts.Namespace)
 	createStart := time.Now()
-	createJobs := make([]func() error, 0, len(targets)*opts.Instances)
+	total := int64(len(targets) * opts.Instances)
+	var created atomic.Int64
+	createJobs := make([]func() error, 0, total)
 	for _, t := range targets {
 		t := t
 		gvr := t.GVR(V1)
@@ -204,14 +224,20 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			n := n
 			createJobs = append(createJobs, func() error {
 				obj := t.Instance(opts.Namespace, n)
-				create := func() error {
+				err := retryTransient(ctx, func() error {
 					_, err := dyn.Resource(gvr).Namespace(opts.Namespace).Create(ctx, obj, metav1.CreateOptions{})
 					if apierrors.IsAlreadyExists(err) {
 						return nil
 					}
 					return err
+				})
+				if err != nil {
+					return err
 				}
-				return retryNoMatch(ctx, create)
+				if n := created.Add(1); n%500 == 0 || n == total {
+					opts.logf("  created %d/%d", n, total)
+				}
+				return nil
 			})
 		}
 	}
@@ -253,12 +279,18 @@ func printStats(w io.Writer, name string, s Stats) {
 		name, s.N, s.Errors, s.P50.Round(time.Millisecond), s.P99.Round(time.Millisecond), s.Max.Round(time.Millisecond))
 }
 
-func restConfig(kubeconfig string) (*rest.Config, error) {
+func restConfig(kubeconfig string, qps float32, burst int) (*rest.Config, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
 		rules.ExplicitPath = kubeconfig
 	}
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	cfg.QPS = qps
+	cfg.Burst = burst
+	return cfg, nil
 }
 
 func ensureNamespace(ctx context.Context, c client.Client, name string) error {
@@ -304,20 +336,69 @@ func waitCRDWebhook(ctx context.Context, c client.Client, name string) error {
 	})
 }
 
-func retryNoMatch(ctx context.Context, fn func() error) error {
+func retryTransient(ctx context.Context, fn func() error) error {
+	backoff := 200 * time.Millisecond
 	var err error
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 30; i++ {
 		err = fn()
-		if err == nil || !meta.IsNoMatchError(err) {
+		if err == nil {
+			return nil
+		}
+		retry := meta.IsNoMatchError(err) || apierrors.IsTooManyRequests(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err)
+		if !retry {
 			return err
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(backoff):
+		}
+		if backoff < 5*time.Second {
+			backoff *= 2
 		}
 	}
 	return err
+}
+
+func resetGenerated(ctx context.Context, c client.Client) error {
+	var cfgs v1a.CRDConversionConfigList
+	if err := c.List(ctx, &cfgs); err != nil {
+		return fmt.Errorf("list CRDConversionConfigs: %w", err)
+	}
+	for i := range cfgs.Items {
+		cfg := &cfgs.Items[i]
+		if !strings.HasSuffix(cfg.Spec.TargetCRD.Name, "."+Group) {
+			continue
+		}
+		if err := c.Delete(ctx, cfg); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete config %s: %w", cfg.Name, err)
+		}
+	}
+	var crds extv1.CustomResourceDefinitionList
+	if err := c.List(ctx, &crds); err != nil {
+		return fmt.Errorf("list CRDs: %w", err)
+	}
+	for i := range crds.Items {
+		crd := &crds.Items[i]
+		if crd.Spec.Group != Group {
+			continue
+		}
+		if err := c.Delete(ctx, crd); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete CRD %s: %w", crd.Name, err)
+		}
+	}
+	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
+		var left extv1.CustomResourceDefinitionList
+		if err := c.List(ctx, &left); err != nil {
+			return false, nil
+		}
+		for _, crd := range left.Items {
+			if crd.Spec.Group == Group {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
 }
 
 type timed struct {

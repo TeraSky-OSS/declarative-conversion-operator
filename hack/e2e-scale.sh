@@ -31,6 +31,9 @@ STRATEGIES_MAX="${STRATEGIES_MAX:-10}"
 PARALLEL="${PARALLEL:-8}"
 SEED="${SEED:-1}"
 SCALE_NS="${SCALE_NS:-dco-scale}"
+QPS="${QPS:-100}"
+BURST="${BURST:-200}"
+RESET="${RESET:-1}"
 LIST_REPEATS="${LIST_REPEATS:-3}"
 GET_REPEATS="${GET_REPEATS:-1}"
 
@@ -51,16 +54,23 @@ install_operator \
 log "Waiting for the default ConversionWebhookServer to become Available"
 kubectl wait --for=condition=Available --timeout=180s conversionwebhookserver/default
 
-log "Running scalegen (targets=${TARGETS} instances=${INSTANCES} parallel=${PARALLEL})"
-go run "${REPO_ROOT}/cmd/scalegen" \
-  --targets "${TARGETS}" \
-  --instances "${INSTANCES}" \
-  --strategies-min "${STRATEGIES_MIN}" \
-  --strategies-max "${STRATEGIES_MAX}" \
-  --parallel "${PARALLEL}" \
-  --seed "${SEED}" \
-  --namespace "${SCALE_NS}" \
-  --list-repeats "${LIST_REPEATS}" \
+log "Running scalegen (targets=${TARGETS} instances=${INSTANCES} parallel=${PARALLEL} qps=${QPS})"
+SCALE_ARGS=(
+  --targets "${TARGETS}"
+  --instances "${INSTANCES}"
+  --strategies-min "${STRATEGIES_MIN}"
+  --strategies-max "${STRATEGIES_MAX}"
+  --parallel "${PARALLEL}"
+  --seed "${SEED}"
+  --namespace "${SCALE_NS}"
+  --list-repeats "${LIST_REPEATS}"
   --get-repeats "${GET_REPEATS}"
+  --qps "${QPS}"
+  --burst "${BURST}"
+)
+if [ "${RESET}" != "0" ]; then
+  SCALE_ARGS+=(--reset)
+fi
+go run "${REPO_ROOT}/cmd/scalegen" "${SCALE_ARGS[@]}"
 
 log "Scale e2e finished"
