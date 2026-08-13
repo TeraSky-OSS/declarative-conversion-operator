@@ -1,45 +1,60 @@
-declarative-conversion-operator has been installed.
+declarative-conversion-operator {{ .Chart.Version }} is installed in {{ .Release.Namespace }}.
 
 {{- if not (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 
 ⚠️  cert-manager.io/v1 was not detected in this cluster's API. Both this
     operator's own admission webhook and every ConversionWebhookServer
-    instance's conversion webhook depend on cert-manager for their TLS
-    certificates — install cert-manager (https://cert-manager.io/docs/installation/)
-    before continuing, or the manager and webhook-server pods will not
-    become Ready.
+    instance's conversion webhook depend on cert-manager to issue their TLS
+    certificates. Install cert-manager first
+    (https://cert-manager.io/docs/installation/) — this chart does not
+    vendor it. See the install matrix:
+    https://terasky-oss.github.io/declarative-conversion-operator/installation/#cert-manager-install-matrix
 {{- end }}
 
-1. Wait for the default ConversionWebhookServer instance to become Ready:
+1. Wait for the manager and the default ConversionWebhookServer to become Ready:
 
-     kubectl wait --for=condition=Available conversionwebhookserver/{{ .Values.conversionWebhookServer.name }} --timeout=120s
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "declarative-conversion-operator.fullname" . }}-manager
+{{- if .Values.conversionWebhookServer.create }}
+     kubectl wait --for=condition=Available conversionwebhookserver/{{ .Values.conversionWebhookServer.name }} --timeout=180s
      kubectl get conversionwebhookserver {{ .Values.conversionWebhookServer.name }} -o wide
+{{- else }}
 
-2. Create your first XRDConversionConfig, pointing spec.targetXRD.name at an
-   existing Crossplane CompositeResourceDefinition with more than one
-   version. See config/samples/terasky_v1alpha1_xrdconversionconfig.yaml in
-   the repository for a starting example, and check its status once applied:
+     (conversionWebhookServer.create is false — create a ConversionWebhookServer
+      CR yourself before applying conversion configs.)
+{{- end }}
+
+2. Prove a mapping offline with `convctl` (same engine the webhook uses)
+   before it touches the cluster. From a clone of the repository:
+
+     go run ./cmd/convctl test --xrd my-xrd.yaml --config my-xrdconversionconfig.yaml --samples ./samples/
+
+   Full command reference:
+   https://terasky-oss.github.io/declarative-conversion-operator/cli/
+
+3. Apply your first conversion config. Copy a gallery example, or use the
+   kitchen-sink fixture (every built-in strategy in one XRDConversionConfig):
+
+     https://terasky-oss.github.io/declarative-conversion-operator/examples/
+     https://terasky-oss.github.io/declarative-conversion-operator/examples/kitchen-sink/
 
      kubectl apply -f my-xrdconversionconfig.yaml
      kubectl get xrdconversionconfig my-config -o yaml
 
-   The `status.conditions` and `status.spokeStatuses` fields explain exactly
-   what's blocking it if it isn't reaching phase=Applied — most commonly
-   Validated=False (a lossy field needs `acknowledgeLossy: true`), or
-   WebhookServerReady=False (the ConversionWebhookServer instance isn't
-   Available yet).
-
-3. Test conversions offline before applying, using the convctl CLI:
-
-     convctl test --xrd my-xrd.yaml --config my-xrdconversionconfig.yaml --samples ./samples/
+   status.conditions and status.spokeStatuses explain a stall. Common causes:
+   Validated=False (a lossy field needs acknowledgeLossy: true), or
+   WebhookServerReady=False (the ConversionWebhookServer is not Available yet).
 
 {{- if .Values.crds.install }}
 
-NOTE: This chart's CRDs are installed from the crds/ directory, which Helm
-      applies once at install time and never touches again on `helm upgrade`
-      or `helm uninstall` (Helm's standard, safest CRD-handling convention).
-      If a future chart upgrade changes the CRD schema, apply the new CRDs
-      manually first:
+NOTE: Helm applies this chart's CRDs from crds/ once at install and never
+      again on helm upgrade or helm uninstall. Before upgrading to a chart
+      version that changes the CRD schema, diff/apply them first:
 
-        helm show crds {{ .Chart.Name }} | kubectl apply -f -
+        make helm-upgrade-crds
+        # or, from a release:
+        ./hack/upgrade-crds.sh \
+          --chart oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
+          --version <new-version> --apply
+
+      See https://terasky-oss.github.io/declarative-conversion-operator/operations/upgrade-runbook/
 {{- end }}
