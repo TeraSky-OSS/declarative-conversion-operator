@@ -7,7 +7,7 @@
     {
       "id": 1,
       "title": "Loaded on replicas",
-      "description": "1 if every scraped webhook replica has a compiled plan for this target. Aggregate max across pods.",
+      "description": "1 if every ready scraped webhook replica has a compiled plan for this target (ready pods missing the plan count as not loaded).",
       "type": "stat",
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -24,7 +24,7 @@
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
       "targets": [
         {
-          "expr": "max(dco_webhook_registry_entry_loaded{target=\"$target\"}) or vector(0)",
+          "expr": "(count((dco_webhook_ready == 1) unless on(pod) (dco_webhook_registry_entry_loaded{target=\"$target\"} == 1)) or vector(0)) == bool 0",
           "legendFormat": "loaded",
           "refId": "A"
         }

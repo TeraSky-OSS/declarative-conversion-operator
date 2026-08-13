@@ -493,8 +493,19 @@ func TestFromLabel_RejectsJSONSerialization(t *testing.T) {
 		}},
 	}}
 	_, diags, _ := Compile(rs, &hub, &spoke)
-	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+	errs := diagMessages(diags, SeverityError)
+	if len(errs) == 0 {
 		t.Fatal("expected error rejecting FromLabel serialization=JSON")
+	}
+	found := false
+	for _, msg := range errs {
+		if strings.Contains(msg, "serialization=JSON") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostic mentioning serialization=JSON, got %v", errs)
 	}
 }
 

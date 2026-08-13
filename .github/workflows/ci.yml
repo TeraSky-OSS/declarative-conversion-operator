@@ -204,6 +204,19 @@ jobs:
               exit 1
               ;;
           esac
+          for name in \
+            conversionwebhookservers.terasky.com \
+            crdconversionconfigs.terasky.com \
+            xrdconversionconfigs.terasky.com
+          do
+            case "$out" in
+              *"name: ${name}"*) ;;
+              *)
+                echo "FAIL: upgrade-crds --print missing CRD name ${name}" >&2
+                exit 1
+                ;;
+            esac
+          done
 
       - name: promtool test rules
         run: make test-prometheus

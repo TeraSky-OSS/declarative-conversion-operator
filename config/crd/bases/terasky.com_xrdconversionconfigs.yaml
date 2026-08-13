@@ -303,9 +303,9 @@ spec:
                             type: object
                           fromAnnotation:
                             description: |-
-                              FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
-                              geometry of ToMetadataParams. The schema field lives on the spoke; hub
-                              metadata holds the stash key.
+                              FromMetadataParams backs FromAnnotation — the inverse geometry of
+                              ToMetadataParams. The schema field lives on the spoke; hub metadata holds
+                              the stash key. Defaults to JSON serialization.
                             properties:
                               key:
                                 type: string
@@ -325,16 +325,16 @@ spec:
                             type: object
                           fromLabel:
                             description: |-
-                              FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
-                              geometry of ToMetadataParams. The schema field lives on the spoke; hub
-                              metadata holds the stash key.
+                              FromLabelParams backs FromLabel. Serialization is String-only: JSON-quoted
+                              values are not valid Kubernetes label values, and sharing FromMetadataParams
+                              would CRD-default omitted serialization to JSON (which admission then
+                              rejects). A dedicated type defaults and validates String at the schema layer.
                             properties:
                               key:
                                 type: string
                               serialization:
-                                default: JSON
+                                default: String
                                 enum:
-                                - JSON
                                 - String
                                 type: string
                               spokePath:

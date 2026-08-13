@@ -195,20 +195,30 @@ type ToMetadataParams struct {
 	RestoreOnReverse bool `json:"restoreOnReverse,omitempty"`
 }
 
-// FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
-// geometry of ToMetadataParams. The schema field lives on the spoke; hub
-// metadata holds the stash key.
-//
-// For FromLabel, serialization must be String (JSON produces quoted values
-// that are not valid Kubernetes label values). The admission webhook and
-// engine reject serialization=JSON for FromLabel; the default when unset is
-// String. FromAnnotation still defaults to JSON.
+// FromMetadataParams backs FromAnnotation — the inverse geometry of
+// ToMetadataParams. The schema field lives on the spoke; hub metadata holds
+// the stash key. Defaults to JSON serialization.
 type FromMetadataParams struct {
 	SpokePath string `json:"spokePath"`
 	Key       string `json:"key"`
 	// +optional
 	// +kubebuilder:validation:Enum=JSON;String
 	// +kubebuilder:default=JSON
+	Serialization string `json:"serialization,omitempty"`
+	// +optional
+	StashOnReverse bool `json:"stashOnReverse,omitempty"`
+}
+
+// FromLabelParams backs FromLabel. Serialization is String-only: JSON-quoted
+// values are not valid Kubernetes label values, and sharing FromMetadataParams
+// would CRD-default omitted serialization to JSON (which admission then
+// rejects). A dedicated type defaults and validates String at the schema layer.
+type FromLabelParams struct {
+	SpokePath string `json:"spokePath"`
+	Key       string `json:"key"`
+	// +optional
+	// +kubebuilder:validation:Enum=String
+	// +kubebuilder:default=String
 	Serialization string `json:"serialization,omitempty"`
 	// +optional
 	StashOnReverse bool `json:"stashOnReverse,omitempty"`
@@ -411,7 +421,7 @@ type ConversionRule struct {
 	// +optional
 	FromAnnotation *FromMetadataParams `json:"fromAnnotation,omitempty"`
 	// +optional
-	FromLabel *FromMetadataParams `json:"fromLabel,omitempty"`
+	FromLabel *FromLabelParams `json:"fromLabel,omitempty"`
 	// +optional
 	EnumRemap *EnumRemapParams `json:"enumRemap,omitempty"`
 	// +optional

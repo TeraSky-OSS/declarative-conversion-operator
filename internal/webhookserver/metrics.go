@@ -39,13 +39,16 @@ type Metrics struct {
 	Ready               prometheus.Gauge
 
 	// gatherer is the registry metrics were registered on, used by
-	// PlainMux's /metrics handler. Nil when NewMetrics was given a
-	// Registerer that is not also a Gatherer.
+	// PlainMux's /metrics handler. Must be the underlying Gatherer when
+	// reg is a WrapRegistererWith* wrapper (those implement Registerer only).
 	gatherer prometheus.Gatherer
 }
 
 // NewMetrics constructs and registers the full metric set on reg.
-func NewMetrics(reg prometheus.Registerer) *Metrics {
+// gatherer must be the registry that backs reg (pass the same *Registry for
+// both when not wrapping). A nil gatherer makes Handler refuse to serve the
+// process-wide default registry.
+func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metrics {
 	m := &Metrics{
 		ReviewDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "dco_webhook_conversion_review_duration_seconds",
@@ -88,9 +91,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dco_webhook_ready",
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
 		}),
-	}
-	if g, ok := reg.(prometheus.Gatherer); ok {
-		m.gatherer = g
+		gatherer: gatherer,
 	}
 	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
@@ -101,7 +102,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 // and would hide every series registered on the dedicated registry.
 func (m *Metrics) Handler() http.Handler {
 	if m == nil || m.gatherer == nil {
-		return promhttp.Handler()
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "metrics gatherer not configured", http.StatusServiceUnavailable)
+		})
 	}
 	return promhttp.HandlerFor(m.gatherer, promhttp.HandlerOpts{})
 }

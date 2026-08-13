@@ -91,7 +91,7 @@ func wellFormedRules() map[Strategy]ConversionRule {
 		},
 		StrategyFromLabel: {
 			Strategy:  StrategyFromLabel,
-			FromLabel: &FromMetadataParams{SpokePath: "spec.operatorTier", Key: "operator-tier", Serialization: "String"},
+			FromLabel: &FromLabelParams{SpokePath: "spec.operatorTier", Key: "operator-tier", Serialization: "String"},
 		},
 		StrategyEnumRemap: {
 			Strategy: StrategyEnumRemap,

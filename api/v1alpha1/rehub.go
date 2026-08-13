@@ -108,10 +108,19 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		if r.ToLabel == nil {
 			return out, fmt.Errorf("ToLabel: missing params")
 		}
+		// FromLabel is String-only; ToLabel may still carry JSON (or the
+		// CRD default). Refuse JSON so rehub does not emit an unschedulable rule.
+		ser := r.ToLabel.Serialization
+		if ser == "JSON" {
+			return out, fmt.Errorf("ToLabel with serialization=JSON cannot invert to FromLabel; use String")
+		}
+		if ser == "" {
+			ser = "String"
+		}
 		out.Strategy = StrategyFromLabel
-		out.FromLabel = &FromMetadataParams{
+		out.FromLabel = &FromLabelParams{
 			SpokePath: r.ToLabel.HubPath, Key: r.ToLabel.Key,
-			Serialization: r.ToLabel.Serialization, StashOnReverse: r.ToLabel.RestoreOnReverse,
+			Serialization: ser, StashOnReverse: r.ToLabel.RestoreOnReverse,
 		}
 	case StrategyFromAnnotation:
 		if r.FromAnnotation == nil {

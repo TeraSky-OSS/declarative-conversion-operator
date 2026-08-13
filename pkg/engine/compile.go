@@ -17,13 +17,15 @@ limitations under the License.
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 	"text/template"
 
-	"encoding/json"
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Compile resolves rules against hub and spoke schemas and produces an
@@ -527,6 +529,11 @@ func resolveToMetadata(idx int, strategy Strategy, p ToMetadataParams, hub *extv
 	if serialization == "" {
 		serialization = "JSON"
 	}
+	if metadataField == "labels" {
+		if msgs := k8svalidation.IsQualifiedName(p.Key); len(msgs) > 0 {
+			diags = append(diags, errorf(idx, "rule %d (%s): invalid label key %q: %s", idx, strategy, p.Key, strings.Join(msgs, "; ")))
+		}
+	}
 	h2s := stashAnnotationOp{hubPath: p.HubPath, metadataField: metadataField, key: p.Key, serialization: serialization}
 	var s2h Op
 	spokeToHubLossless := p.RestoreOnReverse
@@ -562,6 +569,11 @@ func resolveFromMetadata(idx int, strategy Strategy, p FromMetadataParams, spoke
 		}
 	} else if serialization == "" {
 		serialization = "JSON"
+	}
+	if metadataField == "labels" {
+		if msgs := k8svalidation.IsQualifiedName(p.Key); len(msgs) > 0 {
+			diags = append(diags, errorf(idx, "rule %d (%s): invalid label key %q: %s", idx, strategy, p.Key, strings.Join(msgs, "; ")))
+		}
 	}
 	// Hub→spoke: restore the spoke field from hub metadata.
 	h2s := restoreAnnotationOp{hubPath: p.SpokePath, metadataField: metadataField, key: p.Key, serialization: serialization}

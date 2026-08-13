@@ -32,8 +32,13 @@ import (
 // newTestRegisterer returns a fresh, isolated Prometheus registry so
 // multiple tests can each construct their own Metrics without colliding
 // on the global default registry's metric names.
-func newTestRegisterer() prometheus.Registerer {
+func newTestRegisterer() *prometheus.Registry {
 	return prometheus.NewRegistry()
+}
+
+func newTestMetrics() *Metrics {
+	reg := newTestRegisterer()
+	return NewMetrics(reg, reg)
 }
 
 func newScheme() *runtime.Scheme {

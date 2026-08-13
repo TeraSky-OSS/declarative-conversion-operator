@@ -232,6 +232,9 @@ func (o stashAnnotationOp) apply(ctx *execContext) error {
 		strVal = string(b)
 	}
 	if o.metadataField == "labels" {
+		if msgs := k8svalidation.IsQualifiedName(o.key); len(msgs) > 0 {
+			return fmt.Errorf("stashAnnotation: label key %q is invalid: %s", o.key, strings.Join(msgs, "; "))
+		}
 		if msgs := k8svalidation.IsValidLabelValue(strVal); len(msgs) > 0 {
 			return fmt.Errorf("stashAnnotation: label value for key %q is invalid: %s", o.key, strings.Join(msgs, "; "))
 		}
