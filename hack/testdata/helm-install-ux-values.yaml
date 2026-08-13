@@ -1,0 +1,25 @@
+# Fixture for CI `helm template` coverage of Phase 6 install-UX knobs.
+# Not a recommended production values file.
+commonLabels:
+  env: ci
+manager:
+  priorityClassName: system-cluster-critical
+  podLabels:
+    team: platform
+  podAnnotations:
+    foo: bar
+  extraEnv:
+    - name: FOO
+      value: bar
+conversionWebhookServer:
+  priorityClassName: system-cluster-critical
+  podLabels:
+    tenant: a
+  extraArgs:
+    - --cert-reload-interval=1m
+  extraEnv:
+    - name: TENANT
+      value: a
+  cacheSelector:
+    matchLabels:
+      tenant: a

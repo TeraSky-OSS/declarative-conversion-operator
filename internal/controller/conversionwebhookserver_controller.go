@@ -310,6 +310,30 @@ func podLabels(server string) map[string]string {
 	}
 }
 
+func templateLabels(server string, extra map[string]string) map[string]string {
+	out := podLabels(server)
+	for k, v := range extra {
+		if _, reserved := out[k]; reserved {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// cacheSelectorArg returns the operator-managed --cache-label-selector flag,
+// or "" when the selector is unset/empty (watch every config).
+func cacheSelectorArg(sel *metav1.LabelSelector) (string, error) {
+	if sel == nil || (len(sel.MatchLabels) == 0 && len(sel.MatchExpressions) == 0) {
+		return "", nil
+	}
+	raw, err := json.Marshal(sel)
+	if err != nil {
+		return "", fmt.Errorf("encoding cacheSelector: %w", err)
+	}
+	return "--cache-label-selector=" + string(raw), nil
+}
+
 func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Context, server *teraskyv1alpha1.ConversionWebhookServer, namespace string) error {
 	image := r.DefaultImage
 	if image == "" {
@@ -359,6 +383,11 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		fmt.Sprintf("--enable-xrd-support=%t", r.EnableXRDSupport),
 		fmt.Sprintf("--enable-crd-support=%t", r.EnableCRDSupport),
 	}
+	if arg, err := cacheSelectorArg(server.Spec.CacheSelector); err != nil {
+		return err
+	} else if arg != "" {
+		args = append(args, arg)
+	}
 	args = append(args, server.Spec.ExtraArgs...)
 
 	// PSS restricted: non-root, no privilege escalation, drop all caps,
@@ -401,6 +430,20 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	if pullPolicy != "" {
 		container = container.WithImagePullPolicy(pullPolicy)
 	}
+	for _, e := range server.Spec.ExtraEnv {
+		ec, err := viaJSON[applycorev1.EnvVarApplyConfiguration](e)
+		if err != nil {
+			return fmt.Errorf("converting extraEnv: %w", err)
+		}
+		container = container.WithEnv(ec)
+	}
+	for _, m := range server.Spec.ExtraVolumeMounts {
+		mc, err := viaJSON[applycorev1.VolumeMountApplyConfiguration](m)
+		if err != nil {
+			return fmt.Errorf("converting extraVolumeMounts: %w", err)
+		}
+		container = container.WithVolumeMounts(mc)
+	}
 
 	podSpec := applycorev1.PodSpec().
 		WithServiceAccountName(saName).
@@ -416,6 +459,20 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	}
 	if server.Spec.PriorityClassName != "" {
 		podSpec = podSpec.WithPriorityClassName(server.Spec.PriorityClassName)
+	}
+	for _, v := range server.Spec.ExtraVolumes {
+		vc, err := viaJSON[applycorev1.VolumeApplyConfiguration](v)
+		if err != nil {
+			return fmt.Errorf("converting extraVolumes: %w", err)
+		}
+		podSpec = podSpec.WithVolumes(vc)
+	}
+	for _, tsc := range server.Spec.TopologySpreadConstraints {
+		tc, err := viaJSON[applycorev1.TopologySpreadConstraintApplyConfiguration](tsc)
+		if err != nil {
+			return fmt.Errorf("converting topologySpreadConstraints: %w", err)
+		}
+		podSpec = podSpec.WithTopologySpreadConstraints(tc)
 	}
 	// Tolerations/Affinity are converted from their concrete API types (as
 	// stored verbatim in spec) to ApplyConfigurations via a JSON round trip
@@ -435,11 +492,15 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		podSpec = podSpec.WithAffinity(ac)
 	}
 
+	podTemplate := applycorev1.PodTemplateSpec().
+		WithLabels(templateLabels(server.Name, server.Spec.PodLabels)).
+		WithSpec(podSpec)
+	if len(server.Spec.PodAnnotations) > 0 {
+		podTemplate = podTemplate.WithAnnotations(server.Spec.PodAnnotations)
+	}
 	depSpec := applyappsv1.DeploymentSpec().
 		WithSelector(applymetav1.LabelSelector().WithMatchLabels(podLabels(server.Name))).
-		WithTemplate(applycorev1.PodTemplateSpec().
-			WithLabels(podLabels(server.Name)).
-			WithSpec(podSpec))
+		WithTemplate(podTemplate)
 	if replicas != nil {
 		depSpec = depSpec.WithReplicas(*replicas)
 	}

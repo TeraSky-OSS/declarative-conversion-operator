@@ -13,8 +13,18 @@ spec:
       {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.manager.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 8 }}
+        {{- with .Values.manager.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- range $k, $v := .Values.commonLabels }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "declarative-conversion-operator.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
@@ -49,6 +59,9 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- with .Values.manager.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: webhook-server
               containerPort: 9443
@@ -85,6 +98,9 @@ spec:
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
             {{- end }}
+            {{- with .Values.manager.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -93,6 +109,12 @@ spec:
           secret:
             secretName: {{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
         {{- end }}
+        {{- with .Values.manager.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.manager.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.manager.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -103,6 +125,10 @@ spec:
       {{- end }}
       {{- with .Values.manager.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.manager.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 10

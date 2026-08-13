@@ -1,5 +1,8 @@
 nameOverride: ""
 fullnameOverride: ""
+# Labels merged onto every chart-templated resource (not CWS child pods;
+# those are owned by the ConversionWebhookServer controller).
+commonLabels: {}
 imagePullSecrets: []
 
 image:
@@ -20,8 +23,9 @@ image:
 # applied once at `helm install`, never touched by `helm upgrade` or
 # `helm uninstall`. This is the safest default for a CRD-heavy chart — no
 # accidental data loss from a schema change — at the cost of requiring a
-# manual `kubectl apply -f charts/declarative-conversion-operator/crds/` step
-# whenever the CRD schema changes across an upgrade. See NOTES.txt.
+# manual CRD apply whenever the schema changes across an upgrade.
+# Use `make helm-upgrade-crds` (or hack/upgrade-crds.sh) to diff/apply;
+# see NOTES.txt and docs/operations/upgrade-runbook.md.
 crds:
   install: true
 
@@ -56,9 +60,16 @@ manager:
     limits:
       memory: 256Mi
   extraArgs: []
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  podLabels: {}
+  podAnnotations: {}
   podDisruptionBudget:
     enabled: false
     minAvailable: 1
@@ -100,16 +111,25 @@ certManager:
 # templates exactly ONE ConversionWebhookServer custom resource (never a
 # raw Deployment/Service/HPA/PDB directly) — the operator's own controller
 # reconciles that CR into the real child resources, so templating them here
-# too would fight the controller's reconciliation loop. Create additional
-# instances directly as ConversionWebhookServer CRs for scale-out/tenancy.
-# Pod-level knobs that aren't listed below (notably spec.extraArgs) are set
-# on the ConversionWebhookServer CR itself — see docs/configuration/conversionwebhookserver.md.
+# too would fight the controller's reconciliation loop. Keys below are
+# passed through to that CR. Create additional instances directly as
+# ConversionWebhookServer CRs for scale-out/tenancy — see
+# docs/configuration/conversionwebhookserver.md.
 conversionWebhookServer:
   create: true
   name: default
   default: true
   namespace: ""
   replicaCount: 2
+  extraArgs: []
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  podLabels: {}
+  podAnnotations: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  cacheSelector: {}
   autoscaling:
     enabled: false
     minReplicas: 2

@@ -30,7 +30,7 @@ func TestValidateWebhookServerExtraArgs(t *testing.T) {
 		{name: "equals form managed", args: []string{"--webhook-server-name=evil"}, wantErr: true},
 		{name: "two-token managed", args: []string{"--tls-cert-dir", "/evil"}, wantErr: true},
 		{name: "bool managed bare", args: []string{"--enable-xrd-support=false"}, wantErr: true},
-		{name: "bind address managed", args: []string{"--metrics-bind-address=:9999"}, wantErr: true},
+		{name: "cache selector managed", args: []string{"--cache-label-selector=tenant=a"}, wantErr: true},
 		{name: "value looks like flag name", args: []string{"--cert-reload-interval", "webhook-server-name"}},
 		{name: "mixed optional then managed", args: []string{"--zap-devel=true", "--conversion-bind-address=:1"}, wantErr: true},
 	}

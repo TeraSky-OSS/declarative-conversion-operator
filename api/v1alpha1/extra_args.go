@@ -32,6 +32,7 @@ var operatorManagedWebhookServerFlagNames = map[string]struct{}{
 	"metrics-bind-address":    {},
 	"enable-xrd-support":      {},
 	"enable-crd-support":      {},
+	"cache-label-selector":    {},
 }
 
 // ValidateWebhookServerExtraArgs rejects ExtraArgs entries that name an

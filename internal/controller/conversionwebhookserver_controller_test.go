@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -99,6 +100,142 @@ func TestCWSReconcile_ExtraArgs_AppendedToDeployment(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("args[%d]=%q, want %q (full got=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestCWSReconcile_PodKnobs_AndExtras(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace: "operator-ns",
+			Certificate: teraskyv1alpha1.CertificateSpec{
+				IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"},
+			},
+			PriorityClassName: "high-priority",
+			PodLabels: map[string]string{
+				"tenant":                 "a",
+				"app.kubernetes.io/name": "hijack",
+			},
+			PodAnnotations: map[string]string{"prometheus.io/scrape": "true"},
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           1,
+				TopologyKey:       "kubernetes.io/hostname",
+				WhenUnsatisfiable: corev1.DoNotSchedule,
+				LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/instance": "srv"}},
+			}},
+			ExtraEnv: []corev1.EnvVar{{Name: "TENANT", Value: "a"}},
+			ExtraVolumes: []corev1.Volume{{
+				Name:         "extra",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			}},
+			ExtraVolumeMounts: []corev1.VolumeMount{{Name: "extra", MountPath: "/extra"}},
+			CacheSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"tenant": "a"}},
+			ExtraArgs:         []string{"--cert-reload-interval=1m"},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{
+		Client:           c,
+		Scheme:           newScheme(),
+		DefaultNamespace: "operator-ns",
+		DefaultImage:     "test/image:v1",
+		EnableXRDSupport: true,
+		EnableCRDSupport: true,
+	}
+	if _, err := reconcileCWS(t, r, "srv"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var dep appsv1.Deployment
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv-webhook-server", Namespace: "operator-ns"}, &dep); err != nil {
+		t.Fatalf("expected a Deployment: %v", err)
+	}
+	pod := dep.Spec.Template
+	if pod.Labels["tenant"] != "a" {
+		t.Fatalf("expected tenant=a pod label, got %+v", pod.Labels)
+	}
+	if pod.Labels["app.kubernetes.io/name"] != "declarative-conversion-webhook-server" {
+		t.Fatalf("reserved selector label must not be overridden, got %q", pod.Labels["app.kubernetes.io/name"])
+	}
+	if dep.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != "declarative-conversion-webhook-server" {
+		t.Fatalf("selector must stay on reserved labels, got %+v", dep.Spec.Selector.MatchLabels)
+	}
+	if pod.Annotations["prometheus.io/scrape"] != "true" {
+		t.Fatalf("expected pod annotation, got %+v", pod.Annotations)
+	}
+	if pod.Spec.PriorityClassName != "high-priority" {
+		t.Fatalf("priorityClassName=%q", pod.Spec.PriorityClassName)
+	}
+	if len(pod.Spec.TopologySpreadConstraints) != 1 || pod.Spec.TopologySpreadConstraints[0].TopologyKey != "kubernetes.io/hostname" {
+		t.Fatalf("unexpected topologySpreadConstraints: %+v", pod.Spec.TopologySpreadConstraints)
+	}
+	ctr := pod.Spec.Containers[0]
+	foundEnv := false
+	for _, e := range ctr.Env {
+		if e.Name == "TENANT" && e.Value == "a" {
+			foundEnv = true
+		}
+	}
+	if !foundEnv {
+		t.Fatalf("expected extraEnv TENANT=a, got %+v", ctr.Env)
+	}
+	foundVol, foundMount := false, false
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "extra" {
+			foundVol = true
+		}
+	}
+	for _, m := range ctr.VolumeMounts {
+		if m.Name == "extra" && m.MountPath == "/extra" {
+			foundMount = true
+		}
+	}
+	if !foundVol || !foundMount {
+		t.Fatalf("expected extra volume+mount, volumes=%+v mounts=%+v", pod.Spec.Volumes, ctr.VolumeMounts)
+	}
+
+	wantPrefix := []string{
+		"--webhook-server-name=srv",
+		"--tls-cert-dir=/tls",
+		"--conversion-bind-address=:9443",
+		"--metrics-bind-address=:8443",
+		"--enable-xrd-support=true",
+		"--enable-crd-support=true",
+		`--cache-label-selector={"matchLabels":{"tenant":"a"}}`,
+		"--cert-reload-interval=1m",
+	}
+	if len(ctr.Args) != len(wantPrefix) {
+		t.Fatalf("args length: got %v, want %v", ctr.Args, wantPrefix)
+	}
+	for i := range wantPrefix {
+		if ctr.Args[i] != wantPrefix[i] {
+			t.Fatalf("args[%d]=%q, want %q (full got=%v)", i, ctr.Args[i], wantPrefix[i], ctr.Args)
+		}
+	}
+}
+
+func TestCWSReconcile_EmptyCacheSelector_OmitsFlag(t *testing.T) {
+	server := &teraskyv1alpha1.ConversionWebhookServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "srv"},
+		Spec: teraskyv1alpha1.ConversionWebhookServerSpec{
+			Namespace:     "operator-ns",
+			Certificate:   teraskyv1alpha1.CertificateSpec{IssuerRef: teraskyv1alpha1.CertificateIssuerRef{Name: "ca-issuer"}},
+			CacheSelector: &metav1.LabelSelector{},
+		},
+	}
+	c := newFakeClient(server).Build()
+	r := &ConversionWebhookServerReconciler{Client: c, Scheme: newScheme(), DefaultNamespace: "operator-ns", DefaultImage: "test/image:v1"}
+	if _, err := reconcileCWS(t, r, "srv"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var dep appsv1.Deployment
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "srv-webhook-server", Namespace: "operator-ns"}, &dep); err != nil {
+		t.Fatalf("expected a Deployment: %v", err)
+	}
+	for _, a := range dep.Spec.Template.Spec.Containers[0].Args {
+		if strings.HasPrefix(a, "--cache-label-selector") {
+			t.Fatalf("empty cacheSelector must not inject the flag, got %v", dep.Spec.Template.Spec.Containers[0].Args)
 		}
 	}
 }
@@ -572,6 +709,21 @@ func TestPodLabels(t *testing.T) {
 	labels := podLabels("srv")
 	if labels["app.kubernetes.io/instance"] != "srv" {
 		t.Fatalf("unexpected labels: %+v", labels)
+	}
+}
+
+func TestTemplateLabels_IgnoresReservedKeys(t *testing.T) {
+	got := templateLabels("srv", map[string]string{
+		"tenant":                       "a",
+		"app.kubernetes.io/instance":   "hijack",
+		"app.kubernetes.io/name":       "hijack",
+		"app.kubernetes.io/managed-by": "hijack",
+	})
+	if got["tenant"] != "a" {
+		t.Fatalf("expected extra label to merge, got %+v", got)
+	}
+	if got["app.kubernetes.io/instance"] != "srv" || got["app.kubernetes.io/name"] != "declarative-conversion-webhook-server" || got["app.kubernetes.io/managed-by"] != "declarative-conversion-operator" {
+		t.Fatalf("reserved keys must be kept, got %+v", got)
 	}
 }
 
