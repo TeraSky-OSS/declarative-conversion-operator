@@ -127,6 +127,25 @@ func BenchmarkConvert_JSONPatch(b *testing.B) {
 			}
 		}
 	})
+
+	largeHub := nLeafSchema(100)
+	largePlan := mustCompilePlan(RuleSet{
+		HubVersion: "v2", SpokeVersion: "v1",
+		Rules: []Rule{
+			jsonPatchReplaceRule("f0", "x", "y"),
+			jsonPatchReplaceRule("f1", "x", "y"),
+			jsonPatchReplaceRule("f2", "x", "y"),
+		},
+	}, &largeHub, &largeHub)
+	largeObj := nLeafObject(100)
+	b.Run("ops=3/leaves=100", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := Convert(ConvertInput{Plan: largePlan, Direction: HubToSpoke, Object: largeObj}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func BenchmarkRouter_SpokeToSpoke_vs_HubHop(b *testing.B) {

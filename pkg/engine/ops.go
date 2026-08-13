@@ -390,7 +390,7 @@ type jsonPatchOp struct {
 }
 
 func (o jsonPatchOp) apply(ctx *execContext) error {
-	b, err := json.Marshal(ctx.input)
+	b, err := ctx.marshalInput()
 	if err != nil {
 		return fmt.Errorf("jsonPatch: marshal input: %w", err)
 	}
@@ -415,6 +415,20 @@ func (o jsonPatchOp) apply(ctx *execContext) error {
 		}
 	}
 	return nil
+}
+
+func (ctx *execContext) marshalInput() ([]byte, error) {
+	if ctx.inputJSON != nil {
+		return ctx.inputJSON, nil
+	}
+	// encoding/json already pools encodeState; caching the result is what
+	// avoids a second marshal when several jsonPatch ops share a Convert.
+	b, err := json.Marshal(ctx.input)
+	if err != nil {
+		return nil, err
+	}
+	ctx.inputJSON = b
+	return b, nil
 }
 
 // forEachOp applies a nested list of Ops to each element of a hub array and

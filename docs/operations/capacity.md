@@ -39,16 +39,24 @@ A 1000-element array is still sub-millisecond per object. Pathological arrays
 (tens of thousands of elements) would show up as data-shape problems, not
 "need more replicas."
 
-## JSONPatch (baseline)
+## JSONPatch marshal cost
 
-Each `jsonPatch` op marshals the whole input, applies the patch, and unmarshals.
-Three independent ops on the same object cost ~3.3× one op (5.2 µs vs 17 µs) —
-the marshal round-trip is paid per op, not per Convert.
+Each `jsonPatch` op applies an RFC 6902 patch to a marshaled copy of the
+input, then unmarshals and copies touched paths into the output. Convert
+caches that marshaled input on the per-request context so a second op does
+not re-marshal the same object (`encoding/json` already pools its encoder
+state).
 
-| JSONPatch ops | ns/op | allocs/op |
-|---|---:|---:|
-| 1 | 5.2k | 64 |
-| 3 | 17k | 186 |
+| JSONPatch ops | before (ns/op) | after (ns/op) | allocs after |
+|---|---:|---:|---:|
+| 1 (tiny object) | 5.2k | 5.5k | 64 |
+| 3 (tiny object) | 17k | 13.5k | 170 |
+| 3 (100-leaf object) | — | 330k | 4.6k |
+
+The 1-op path is unchanged (marshal once either way). The 3-op path dropped
+~20% and is now ~2.5× one op instead of ~3.3×. Remaining cost is
+apply+unmarshal per op, which is inherent to json-patch. Prefer fewer, larger
+patch documents over many tiny ones.
 
 ## Spoke-to-spoke vs hub hop
 

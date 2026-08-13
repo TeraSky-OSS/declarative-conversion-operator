@@ -39,6 +39,10 @@ func (d Direction) String() string {
 type execContext struct {
 	input  map[string]any
 	output map[string]any
+	// inputJSON is a lazily marshaled copy of input, shared by jsonPatch
+	// ops in the same Convert so a multi-op patch plan does not re-marshal
+	// the same object.
+	inputJSON []byte
 }
 
 // Op is one precompiled, resolved-path conversion step. Concrete Op
