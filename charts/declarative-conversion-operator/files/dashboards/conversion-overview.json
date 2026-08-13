@@ -56,7 +56,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum by (target, reason) (rate(xrdconv_webhook_registry_compile_errors_total[5m]))",
+          "expr": "sum by (target, reason) (rate(xrdconv_webhook_registry_compile_errors_total[5m])) or vector(0)",
           "legendFormat": "{{target}} {{reason}}",
           "refId": "A"
         }
@@ -100,7 +100,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum by (config_kind, target, reason) (rate(xrdconv_manager_analyze_failures_total[5m]))",
+          "expr": "sum by (config_kind, target, reason) (rate(xrdconv_manager_analyze_failures_total[5m])) or vector(0)",
           "legendFormat": "{{config_kind}} {{target}} {{reason}}",
           "refId": "A"
         }
@@ -129,7 +129,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum by (config_kind, from_phase, to_phase, reason) (rate(xrdconv_manager_phase_transitions_total[5m]))",
+          "expr": "sum by (config_kind, from_phase, to_phase, reason) (rate(xrdconv_manager_phase_transitions_total[5m])) or vector(0)",
           "legendFormat": "{{config_kind}} {{from_phase}}→{{to_phase}} ({{reason}})",
           "refId": "A"
         }
