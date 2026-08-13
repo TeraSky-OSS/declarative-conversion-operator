@@ -157,14 +157,23 @@ make helm-lint helm-template
 
 ### End-to-end tests
 
-Three scripts, all built on shared setup in `hack/e2e-common.sh`, prove the conversion webhook works against a real `kube-apiserver`, not just `pkg/engine` offline — each creates a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's `manager`/`webhook-server` images and loads them straight into the cluster (no registry push), and installs the operator via its own Helm chart:
+The three correctness scripts plus an optional load script, all built on
+shared setup in `hack/e2e-common.sh`, prove the conversion webhook works
+against a real `kube-apiserver`, not just `pkg/engine` offline — each creates
+a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
+`manager`/`webhook-server` images and loads them straight into the cluster
+(no registry push), and installs the operator via its own Helm chart:
 
 - `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 29 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
 - `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
 - `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
 - `make test-e2e-load` (`hack/e2e-load.sh`) — native-CRD kind cluster, then synthetic `ConversionReview` batches of varying object count/size against the live webhook-server; prints latency/throughput for [Capacity planning](docs/operations/capacity.md).
 
-Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; all three run identically in CI (`.github/workflows/e2e.yml`, as a matrix) and locally. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
+Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`. The three
+correctness scripts run identically in CI (`.github/workflows/e2e.yml`, as a
+matrix) and locally. `make test-e2e-load` is a local/capacity target (also
+needs `python3` and `curl`) and is not in that matrix. Set `KEEP_CLUSTER=1`
+to skip teardown for local debugging.
 
 ## License
 

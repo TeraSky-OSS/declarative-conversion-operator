@@ -121,18 +121,9 @@ func TestCacheSelector_LargeSyntheticReduction(t *testing.T) {
 	if unscoped != total || scoped != matching {
 		t.Fatalf("unscoped=%d scoped=%d, want %d/%d", unscoped, scoped, total, matching)
 	}
-
-	// Informer RAM scales with matched objects, not cluster-wide count.
-	// 8KiB/object is a conservative stand-in for one cached config.
-	const bytesPer = 8 << 10
-	unscopedMem := int64(unscoped) * bytesPer
-	scopedMem := int64(scoped) * bytesPer
-	if scopedMem*50 > unscopedMem {
-		t.Fatalf("expected ~100x memory reduction, unscoped=%d scoped=%d", unscopedMem, scopedMem)
-	}
-	t.Logf("watch count %d → %d (%.1f%%); memory proxy %d KiB → %d KiB",
-		unscoped, scoped, 100*float64(scoped)/float64(unscoped),
-		unscopedMem/1024, scopedMem/1024)
+	// ByObject label selectors shrink the informer *store* (objects held),
+	// not the number of watches (still one list/watch per GVK). Memory then
+	// scales with matched objects; this test only asserts the match ratio.
 }
 
 func BenchmarkCountMatchingLabels(b *testing.B) {

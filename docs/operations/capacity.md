@@ -80,18 +80,20 @@ spoke remains the only routing mode.
 `ConversionWebhookServer.spec.cacheSelector` is implemented (Phase 6): webhook
 replicas pass `--cache-label-selector` and controller-runtime scopes
 XRDConversionConfig / CRDConversionConfig informers with `cache.ByObject`.
-Non-matching objects are never listed or cached.
+Non-matching objects are never listed or stored. There is still one watch
+per GVK; the selector cuts the **store size** (and therefore cache RAM), not
+the watch count.
 
 At 10,000 synthetic configs with a selector matching 1% (`tenant=a`):
 
-| Scope | Watches (objects held) | Memory proxy (8 KiB/object) |
-|---|---:|---:|
-| Unscoped (default) | 10,000 | 80 MiB |
-| `matchLabels: {tenant: a}` | 100 | 0.8 MiB |
+| Scope | Objects the informer would hold |
+|---|---:|
+| Unscoped (default) | 10,000 |
+| `matchLabels: {tenant: a}` | 100 |
 
-That is a 99% reduction in both watch count and cache RAM. Use a selector per
-tenant (or per team) when one cluster holds many configs but each webhook
-instance only serves a slice.
+That is a 99% reduction in cached objects. Memory scales with that store, so
+the same ratio applies to RAM. Use a selector per tenant (or per team) when
+one cluster holds many configs but each webhook instance only serves a slice.
 
 ## Registry copy-on-write at 100+ entries
 

@@ -7,7 +7,7 @@ You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
 
-    10|Unless required by applicable law or agreed to in writing, software
+Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
@@ -155,7 +155,9 @@ func BenchmarkRouter_SpokeToSpoke_vs_HubHop(b *testing.B) {
 		"name":   strSchema(),
 		"sizeMi": intSchema(),
 	}), nil)})
-	v1 := mustCompilePlan(forEachVolumeRules(), &hubSchema, &v1Spoke)
+	v1Rules := forEachVolumeRules()
+	v1Rules.HubVersion = "v3"
+	v1 := mustCompilePlan(v1Rules, &hubSchema, &v1Spoke)
 	v2 := mustCompilePlan(RuleSet{
 		HubVersion: "v3", SpokeVersion: "v2",
 		Rules: []Rule{{

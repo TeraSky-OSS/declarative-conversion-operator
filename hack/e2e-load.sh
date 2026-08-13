@@ -21,12 +21,14 @@ CERT_MANAGER_VERSION="v1.21.1"
 RELEASE_NAME="declarative-conversion-operator"
 LOCAL_PORT="${LOCAL_PORT:-19443}"
 PF_PID=""
+PF_LOG="$(mktemp "${TMPDIR:-/tmp}/e2e-load-pf.XXXXXX")"
 
 load_cleanup() {
   local code=$?
   if [ -n "${PF_PID}" ]; then
     kill "${PF_PID}" >/dev/null 2>&1 || true
   fi
+  rm -f "${PF_LOG}"
   (exit "${code}")
   e2e_cleanup
 }
@@ -56,7 +58,7 @@ kubectl apply -f "${REPO_ROOT}/test/e2e/testdata/crdconversionconfig.yaml"
 kubectl wait --for=condition=Applied --timeout=120s crdconversionconfig/gadgets-e2e-conversion
 
 log "Port-forwarding webhook-server Service to localhost:${LOCAL_PORT}"
-kubectl -n "${NAMESPACE}" port-forward svc/default-webhook-server "${LOCAL_PORT}:443" >/tmp/e2e-load-pf.log 2>&1 &
+kubectl -n "${NAMESPACE}" port-forward svc/default-webhook-server "${LOCAL_PORT}:443" >"${PF_LOG}" 2>&1 &
 PF_PID=$!
 
 URL="https://127.0.0.1:${LOCAL_PORT}/convert/gadgets.nativecrd.example.org"
@@ -68,8 +70,8 @@ for i in $(seq 1 30); do
     break
   fi
   if [ "${i}" -eq 30 ]; then
-    echo "FAIL: webhook port-forward never accepted connections (see /tmp/e2e-load-pf.log)"
-    cat /tmp/e2e-load-pf.log || true
+    echo "FAIL: webhook port-forward never accepted connections (see ${PF_LOG})"
+    cat "${PF_LOG}" || true
     exit 1
   fi
   sleep 1

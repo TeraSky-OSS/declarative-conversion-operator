@@ -9,6 +9,7 @@ end-to-end, see [Adding a strategy](docs/contributing/adding-a-strategy.md).
 - Go matching `go.mod`
 - Docker (for image builds / e2e)
 - `kubectl`, `kind`, and `helm` for e2e targets
+- `python3` and `curl` for `make test-e2e-load`
 
 ## Development loop
 
