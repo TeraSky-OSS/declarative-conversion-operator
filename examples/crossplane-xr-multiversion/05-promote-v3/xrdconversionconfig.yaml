@@ -1,0 +1,25 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v3
+  spokes:
+    - version: v2
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.name
+            spokePath: spec.widgetName
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.name
+            spokePath: spec.widgetName
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.capacity
+            spokePath: spec.size

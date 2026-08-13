@@ -1,0 +1,20 @@
+# INTENTIONALLY WRONG — v3 is served but the widgetName ↔ name rename is
+# missing. spec.capacity is identical on v2 and v3 (no rule needed); spec.name
+# is not.
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.capacity
+            spokePath: spec.size
+    - version: v3
+      rules: []

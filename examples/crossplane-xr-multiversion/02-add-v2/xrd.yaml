@@ -1,0 +1,52 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xwidgets.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XWidget
+    plural: xwidgets
+  versions:
+    - name: v1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [widgetName, size]
+              properties:
+                widgetName:
+                  type: string
+                size:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+    # New API version: served so clients can use it, but not the hub yet.
+    - name: v2
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [widgetName, capacity]
+              properties:
+                widgetName:
+                  type: string
+                capacity:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string

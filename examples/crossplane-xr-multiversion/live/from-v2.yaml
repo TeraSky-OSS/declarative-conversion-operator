@@ -1,0 +1,8 @@
+apiVersion: example.org/v2
+kind: XWidget
+metadata:
+  name: from-v2
+  namespace: default
+spec:
+  widgetName: from-v2
+  capacity: Large

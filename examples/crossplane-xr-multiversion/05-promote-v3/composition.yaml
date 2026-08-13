@@ -1,0 +1,33 @@
+# New Composition: spec.compositeTypeRef is immutable, so the v2
+# Composition (xwidgets-v2.example.org) cannot be patched to target v3.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xwidgets-v3.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: example.org/v3
+    kind: XWidget
+  mode: Pipeline
+  pipeline:
+    - step: render-configmap
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation "settings" }}
+              name: {{ .observed.composite.resource.metadata.name }}-settings
+            data:
+              name: {{ .observed.composite.resource.spec.name | quote }}
+              capacity: {{ .observed.composite.resource.spec.capacity | quote }}
+    - step: automatically-detect-ready
+      functionRef:
+        name: function-auto-ready

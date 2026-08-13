@@ -1,0 +1,14 @@
+# INTENTIONALLY WRONG — empty rules for a spoke whose schema diverged.
+# v2 renamed spec.size → spec.capacity. Fail-closed coverage rejects this
+# before the webhook would start dropping fields.
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xwidgets-conversion
+spec:
+  targetXRD:
+    name: xwidgets.example.org
+  hubVersion: v1
+  spokes:
+    - version: v2
+      rules: []

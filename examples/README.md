@@ -1,16 +1,18 @@
 # Examples
 
-Five self-contained conversion stories, smallest first. Each directory holds a
-schema (an XRD or a CRD), the conversion config for it, and a `samples/`
-directory of objects at each served version — everything `convctl` needs to
-validate and test the mapping offline, with no cluster involved.
+Five conversion stories, smallest first. Most directories hold a schema, a
+conversion config, and `samples/` — everything `convctl` needs offline.
+[`crossplane-xr-multiversion/`](crossplane-xr-multiversion/) is a **staged**
+walkthrough (XRD + Composition that writes a ConfigMap) rather than a single
+end-state snapshot. [`demo.sh`](crossplane-xr-multiversion/demo.sh) runs the
+full lifecycle on a live cluster.
 
 | Example | Story | Strategies |
 |---|---|---|
 | [`field-rename/`](field-rename/) | One field was renamed between two versions. | `FieldRename` |
 | [`enum-remap/`](enum-remap/) | The same field's allowed values were abbreviated. | `EnumRemap` |
 | [`for-each/`](for-each/) | Each element of an array changed shape. | `ForEach` + `FieldRename` |
-| [`crossplane-xr-multiversion/`](crossplane-xr-multiversion/) | A three-version XRD with a hub and two spokes, including one acknowledged lossy field. | `FieldRename`, `ScalarToObject`, `EnumRemap`, `SingletonArrayToObject`, `ToAnnotation`, `Delete` |
+| [`crossplane-xr-multiversion/`](crossplane-xr-multiversion/) | Staged XRD lifecycle: v1 + ConfigMap Composition, add v2, promote the hub, add v3, promote v3 as the standard, deprecate v1. | `FieldRename` |
 | [`native-crd/`](native-crd/) | The same model against a plain Kubernetes CRD instead of a Crossplane XRD. | `FieldRename`, `Delete` |
 
 Every example runs the same two commands (paths differ per directory — each

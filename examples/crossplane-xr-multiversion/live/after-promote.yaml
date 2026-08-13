@@ -1,0 +1,8 @@
+apiVersion: example.org/v2
+kind: XWidget
+metadata:
+  name: after-promote
+  namespace: default
+spec:
+  widgetName: after-promote
+  capacity: Large

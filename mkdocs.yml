@@ -77,6 +77,7 @@ nav:
       - ConversionWebhookServer: configuration/conversionwebhookserver.md
   - Examples:
       - examples/index.md
+      - Crossplane XR lifecycle: examples/xr-lifecycle.md
       - Kitchen sink (every strategy): examples/kitchen-sink.md
   - Architecture: architecture.md
   - Observability: observability.md

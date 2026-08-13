@@ -1,0 +1,11 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/crossplane/compositionRef/name",
+    "value": "xwidgets-v3.example.org"
+  },
+  {
+    "op": "remove",
+    "path": "/spec/crossplane/compositionRevisionRef"
+  }
+]
