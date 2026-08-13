@@ -85,6 +85,10 @@ type LeafField struct {
 	// A rule must claim an opaque field wholesale; partial-field reasoning
 	// inside it is out of scope for v1.
 	Opaque bool
+	// Construct names a JSON Schema combinator ($ref, oneOf, anyOf, allOf)
+	// that caused the engine to stop flattening here. Empty for ordinary
+	// leaves. Used to make uncovered-field diagnostics explicit.
+	Construct string
 	// Required mirrors the schema's required-ness of this field at its
 	// immediate parent.
 	Required bool
@@ -113,6 +117,14 @@ func flattenSchema(schema *extv1.JSONSchemaProps) []LeafField {
 
 func flattenInto(schema *extv1.JSONSchemaProps, path FieldPath, requiredSet map[string]bool, out *[]LeafField) {
 	if schema == nil {
+		return
+	}
+	if c := schemaConstruct(schema); c != "" {
+		kind, _ := classify(schema)
+		*out = append(*out, LeafField{
+			Path: path.Clone(), Kind: kind, Schema: schema, Opaque: true,
+			Construct: c, Required: requiredSet[lastSegment(path)],
+		})
 		return
 	}
 	kind, opaque := classify(schema)
@@ -188,6 +200,27 @@ func classify(schema *extv1.JSONSchemaProps) (FieldKind, bool) {
 	default:
 		return FieldKindUnknown, true
 	}
+}
+
+// schemaConstruct reports a JSON Schema combinator the engine does not
+// flatten through. Empty means an ordinary typed node.
+func schemaConstruct(schema *extv1.JSONSchemaProps) string {
+	if schema == nil {
+		return ""
+	}
+	if schema.Ref != nil && *schema.Ref != "" {
+		return "$ref"
+	}
+	if len(schema.OneOf) > 0 {
+		return "oneOf"
+	}
+	if len(schema.AnyOf) > 0 {
+		return "anyOf"
+	}
+	if len(schema.AllOf) > 0 {
+		return "allOf"
+	}
+	return ""
 }
 
 // lookupPath walks schema following path's segments and returns the schema

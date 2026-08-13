@@ -259,6 +259,26 @@ func TestStatusFieldConversion(t *testing.T) {
 	}
 }
 
+func TestRunAnalyze_OneOfNamedInDiagnostics(t *testing.T) {
+	out, err := RunAnalyze("testdata/oneof/xrd.yaml", "", "testdata/oneof/config.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Spokes) == 0 {
+		t.Fatal("expected a spoke report")
+	}
+	found := false
+	for _, msg := range out.Spokes[0].Errors {
+		if strings.Contains(msg, "oneOf") && strings.Contains(msg, "payload") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected uncovered diagnostic naming oneOf, got %#v", out.Spokes[0].Errors)
+	}
+}
+
 func TestRunTest_WhenPredicate(t *testing.T) {
 	rep, err := RunTest(TestOptions{
 		XRDPath:    "testdata/when/xrd.yaml",

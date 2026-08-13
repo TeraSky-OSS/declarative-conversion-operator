@@ -81,6 +81,37 @@ func TestWhen_AppliesOnlyIfPredicateMatches(t *testing.T) {
 	}
 }
 
+func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
+	ref := "#/definitions/Payload"
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"payload": {OneOf: []extv1.JSONSchemaProps{strSchema(), {Type: "object"}}},
+		"blob":    {Ref: &ref},
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"other": strSchema(),
+	})
+	_, diags, err := Compile(RuleSet{Rules: nil}, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	errs := diagMessages(diags, SeverityError)
+	var sawOneOf, sawRef bool
+	for _, msg := range errs {
+		if strings.Contains(msg, "oneOf") && strings.Contains(msg, "payload") {
+			sawOneOf = true
+		}
+		if strings.Contains(msg, "$ref") && strings.Contains(msg, "blob") {
+			sawRef = true
+		}
+	}
+	if !sawOneOf {
+		t.Fatalf("expected uncovered diagnostic naming oneOf for payload, got %v", errs)
+	}
+	if !sawRef {
+		t.Fatalf("expected uncovered diagnostic naming $ref for blob, got %v", errs)
+	}
+}
+
 func TestFieldRename_LosslessRoundTrip(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"storageGB": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"storageSize": strSchema()})

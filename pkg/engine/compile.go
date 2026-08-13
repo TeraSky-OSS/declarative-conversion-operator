@@ -264,7 +264,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		if claimedHub[key] {
 			continue
 		}
-		if sl, ok := spokeByPath[key]; ok && !claimedSpoke[key] && sl.Kind == hl.Kind && sl.Opaque == hl.Opaque {
+		if sl, ok := spokeByPath[key]; ok && !claimedSpoke[key] && sl.Kind == hl.Kind && sl.Opaque == hl.Opaque && sl.Construct == hl.Construct {
 			// Identical shape on both sides: auto-covered, no rule needed.
 			p := hl.Path
 			h2sOps = append(h2sOps, identityOp{path: p})
@@ -279,7 +279,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		} else {
 			verdict.HubToSpoke = false
 		}
-		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideHub, key))
+		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideHub, key, hl.Construct))
 	}
 	for _, sl := range spokeLeaves {
 		key := sl.Path.String()
@@ -292,7 +292,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		} else {
 			verdict.SpokeToHub = false
 		}
-		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideSpoke, key))
+		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideSpoke, key, sl.Construct))
 	}
 
 	// A field the schema never declares at all (on either side) never
