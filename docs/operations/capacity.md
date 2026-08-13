@@ -185,7 +185,7 @@ apiserver Get/List (which invoke the conversion webhook) in parallel:
   category.
 
 Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars — this is
-**not** in the CI e2e matrix; 100×100 is a local capacity run.
+**not** in the CI e2e matrix; 100×100 and 100×1000 are local capacity runs.
 
 ```console
 # smoke (default)
@@ -193,6 +193,9 @@ make test-e2e-scale
 
 # 100 CRDs × 100 CRs × 3 versions, 32 parallel Get/List workers
 TARGETS=100 INSTANCES=100 PARALLEL=32 make test-e2e-scale
+
+# 100 CRDs × 1000 CRs (100k objects), 60 parallel workers
+TARGETS=100 INSTANCES=1000 PARALLEL=60 make test-e2e-scale
 
 # skip kind teardown while iterating; --reset drops old generated CRDs
 KEEP_CLUSTER=1 TARGETS=20 INSTANCES=20 make test-e2e-scale
@@ -219,6 +222,31 @@ A List of 100 objects is the same ~300 ms p50 as a single Get. Engine
 TLS hop dominate. Spoke v1 and v2 are indistinguishable. The 1s p99
 ConversionReview alert is ~3× this envelope. Re-run with
 `TARGETS=100 INSTANCES=100 PARALLEL=32 make test-e2e-scale` after changing
+the serving path.
+
+### 100×1000 on a single-node kind cluster
+
+Latest local run, same workstation and kind topology as 100×100 (Intel Core
+Ultra 9 285HX, WSL2, kindest/node v1.35, one control-plane node). 100 CRDs
+× 3 versions, 3–10 strategies per spoke (all 29 used across the fleet),
+1000 instances created at `v1` (**100,000** objects), then parallel
+Get/List at both spokes (`PARALLEL=60`, QPS 100 / burst 200). Create of
+100,000 objects took **16m38s**. Zero conversion errors.
+
+| Op | Calls | Objects / call | p50 | p99 | max | Errors |
+|---|---:|---:|---:|---:|---:|---:|
+| list v1 | 300 | 1000 | 613 ms | 897 ms | 995 ms | 0 |
+| list v2 | 300 | 1000 | 560 ms | 779 ms | 810 ms | 0 |
+| get v1 | 100,000 | 1 | 600 ms | 617 ms | 1.034 s | 0 |
+| get v2 | 100,000 | 1 | 0 s | 625 ms | 932 ms | 0 |
+
+Create scaled ~linearly with object count (~10× objects, ~10× wall time vs
+100×100). List/Get p50 only about doubled despite 10× instances per CRD, so
+the kind apiserver + etcd + TLS hop still dominate engine `Convert`. List
+v1 p99 (897 ms) and Get v1 max (1.034 s) now sit on the 1s p99
+ConversionReview alert — at this density the single-node kind control plane
+is the bottleneck, not conversion. Re-run with
+`TARGETS=100 INSTANCES=1000 PARALLEL=60 make test-e2e-scale` after changing
 the serving path.
 
 | Flag / env | Default | Meaning |
