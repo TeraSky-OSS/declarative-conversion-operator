@@ -1343,6 +1343,83 @@ func TestListSplit_IsStructuralMirror(t *testing.T) {
 	}
 }
 
+func TestQuantity_StringToMilliIsLossless_ReverseIsLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"cpuRequest": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"cpuMillis": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyQuantity, Params: QuantityParams{HubPath: ParsePath("cpuRequest"), SpokePath: ParsePath("cpuMillis")}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error: millivalue→canonical Quantity string is lossy and acknowledgeLossy is unset")
+	}
+
+	rs.Rules[0].AcknowledgeLossy = true
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors after acknowledgeLossy: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"cpuRequest": "500m"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if got, ok := AsFloat64(out["cpuMillis"]); !ok || got != 500 {
+		t.Fatalf("expected cpuMillis=500, got %#v", out["cpuMillis"])
+	}
+	// "0.5" and "500m" are the same Quantity; canonical formatting picks "500m".
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: map[string]any{"cpuMillis": float64(500)}})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["cpuRequest"] != "500m" {
+		t.Fatalf("expected canonical Quantity string 500m, got %#v", back["cpuRequest"])
+	}
+}
+
+func TestDuration_StringToSecondsIsLossless_ReverseIsLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"timeout": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"timeoutSeconds": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyDuration, Params: DurationParams{HubPath: ParsePath("timeout"), SpokePath: ParsePath("timeoutSeconds")}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"timeout": "5m"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if got, ok := AsFloat64(out["timeoutSeconds"]); !ok || got != 300 {
+		t.Fatalf("expected timeoutSeconds=300, got %#v", out["timeoutSeconds"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["timeout"] != "5m0s" {
+		t.Fatalf("expected canonical duration 5m0s, got %#v", back["timeout"])
+	}
+}
+
+func TestQuantity_BothStringsIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"cpu": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"cpu": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyQuantity, Params: QuantityParams{HubPath: ParsePath("cpu"), SpokePath: ParsePath("cpu")}, AcknowledgeLossy: true},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error when both sides are strings")
+	}
+}
+
 func TestDuplicateClaim_IsCompileError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": strSchema(), "c": strSchema()})

@@ -360,6 +360,22 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			Separator: r.ListSplit.Separator,
 		}, nil
 
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return nil, fmt.Errorf("requires quantity params")
+		}
+		return engine.QuantityParams{
+			HubPath: engine.ParsePath(r.Quantity.HubPath), SpokePath: engine.ParsePath(r.Quantity.SpokePath),
+		}, nil
+
+	case StrategyDuration:
+		if r.Duration == nil {
+			return nil, fmt.Errorf("requires duration params")
+		}
+		return engine.DurationParams{
+			HubPath: engine.ParsePath(r.Duration.HubPath), SpokePath: engine.ParsePath(r.Duration.SpokePath),
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", r.Strategy)
 	}

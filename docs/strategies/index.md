@@ -33,6 +33,8 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`numericScale`](numeric-scale.md) | Rescales a numeric field by a fixed factor. | :material-alert:{ style="color:#ef6c00" } Conditional (integer side) |
 | [`listJoin`](list-join-split.md) | Array of scalars ⇄ delimited string. | :material-check-all:{ style="color:#2e7d32" } Always |
 | [`listSplit`](list-join-split.md) | Delimited string ⇄ array of scalars. | :material-check-all:{ style="color:#2e7d32" } Always |
+| [`quantity`](quantity.md) | Kubernetes Quantity string ⇄ integer millivalue. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy |
+| [`duration`](duration.md) | Go duration string ⇄ integer seconds. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy |
 
 ## Reading the examples
 

@@ -1,0 +1,6 @@
+apiVersion: example.org/v1
+kind: XTimeout
+metadata:
+  name: demo
+spec:
+  timeoutSeconds: 60

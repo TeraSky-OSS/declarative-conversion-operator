@@ -43,3 +43,5 @@ spec:
   limitsByTier:
     bronze:
       limit: "100"
+  cpuRequest: "250m"
+  timeout: "1m"

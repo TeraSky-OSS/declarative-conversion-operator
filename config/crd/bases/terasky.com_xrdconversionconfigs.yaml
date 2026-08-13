@@ -176,6 +176,18 @@ spec:
                             - existsOn
                             - path
                             type: object
+                          duration:
+                            description: DurationParams converts between a Go duration
+                              string and integer seconds.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
                           enumRemap:
                             description: EnumRemapParams bidirectionally maps a scalar
                               field's enumerated values.
@@ -531,6 +543,19 @@ spec:
                             - hubPath
                             - spokePath
                             type: object
+                          quantity:
+                            description: |-
+                              QuantityParams converts between a Kubernetes resource.Quantity string
+                              and an integer millivalue. Compile infers which side is the string.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
                           reason:
                             type: string
                           scalarToFields:
@@ -631,6 +656,8 @@ spec:
                             - NumericScale
                             - ListJoin
                             - ListSplit
+                            - Quantity
+                            - Duration
                             type: string
                           toAnnotation:
                             description: ToMetadataParams backs both ToAnnotation
@@ -934,6 +961,8 @@ spec:
                             - NumericScale
                             - ListJoin
                             - ListSplit
+                            - Quantity
+                            - Duration
                             type: string
                           warnings:
                             items:

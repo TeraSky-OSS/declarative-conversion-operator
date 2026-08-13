@@ -109,6 +109,10 @@ spec:
                         type: string
                 allowedCIDRsCSV:
                   type: string
+                cpuRequest:
+                  type: string
+                timeout:
+                  type: string
             status:
               type: object
               properties:
@@ -212,6 +216,10 @@ spec:
                         type: string
                 allowedCIDRsCSV:
                   type: string
+                cpuRequest:
+                  type: string
+                timeout:
+                  type: string
             status:
               type: object
               properties:
@@ -287,6 +295,10 @@ spec:
                   type: array
                   items:
                     type: string
+                cpuMillis:
+                  type: integer
+                timeoutSeconds:
+                  type: integer
                 # -- mirrors of fields owned by the v2 spoke's rules, kept
                 # identical in shape so they're auto-covered here without a
                 # rule --

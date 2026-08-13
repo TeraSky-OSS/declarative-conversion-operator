@@ -46,3 +46,5 @@ spec:
     silver:
       limit: "500"
   allowedCIDRsCSV: "10.0.0.0/8,192.168.0.0/16"
+  cpuRequest: "500m"
+  timeout: "5m"

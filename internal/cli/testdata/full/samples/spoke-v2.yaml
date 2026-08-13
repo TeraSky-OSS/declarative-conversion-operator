@@ -40,6 +40,8 @@ spec:
   limitsByTier:
     bronze:
       limit: "100"
+  cpuRequest: "250m"
+  timeout: "1m"
 status:
   state: "Provisioning"
   observedGeneration: 2

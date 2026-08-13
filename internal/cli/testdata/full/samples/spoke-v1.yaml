@@ -43,6 +43,8 @@ spec:
   memoryMB: 2048
   dnsServers:
     - "10.0.0.53"
+  cpuMillis: 1000
+  timeoutSeconds: 30
 status:
   phase: "Pending"
   observedGeneration: 1

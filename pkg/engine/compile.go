@@ -204,6 +204,16 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			rr.HubPaths = []string{p.HubPath.String()}
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
+		case QuantityParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveQuantity(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case DurationParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveDuration(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
 		default:
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d: unknown or unset strategy params", idx))
 		}
@@ -1176,4 +1186,59 @@ func resolveListSplit(idx int, p ListSplitParams, hub, spoke *extv1.JSONSchemaPr
 	h2s := splitListOp{stringPath: p.HubPath, arrayPath: p.SpokePath, separator: p.Separator, itemKind: itemKind}
 	s2h := joinListOp{arrayPath: p.SpokePath, stringPath: p.HubPath, separator: p.Separator}
 	return h2s, s2h, LosslessVerdict{true, true}, diags
+}
+
+// resolveQuantity infers which side is the Quantity string from the
+// schemas. String→millivalue is lossless; millivalue→canonical Quantity
+// string is lossy ("0.5" and "500m" are the same Quantity).
+func resolveQuantity(idx int, p QuantityParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	return resolveStringIntegerPair(idx, "Quantity", p.HubPath, p.SpokePath, hub, spoke, claimedHub, claimedSpoke, func(src, dst FieldPath, toInteger bool) Op {
+		return quantityOp{src: src, dst: dst, toInteger: toInteger}
+	})
+}
+
+// resolveDuration infers which side is the duration string. String→seconds
+// is lossless; seconds→canonical duration string is lossy ("5m" vs "5m0s").
+func resolveDuration(idx int, p DurationParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	return resolveStringIntegerPair(idx, "Duration", p.HubPath, p.SpokePath, hub, spoke, claimedHub, claimedSpoke, func(src, dst FieldPath, toInteger bool) Op {
+		return durationOp{src: src, dst: dst, toInteger: toInteger}
+	})
+}
+
+// resolveStringIntegerPair is the shared compile path for Quantity and
+// Duration: exactly one side must be a string and the other an integer.
+// The string→integer direction is lossless; integer→canonical string is
+// not, because the formatter picks one of several equivalent spellings.
+func resolveStringIntegerPair(idx int, name string, hubPath, spokePath FieldPath, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, makeOp func(src, dst FieldPath, toInteger bool) Op) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	hubKind := FieldKindUnknown
+	if hubNode, err := lookupPath(hub, hubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): hub: %v", idx, name, err))
+	} else {
+		hubKind, _ = classify(hubNode)
+	}
+	spokeKind := FieldKindUnknown
+	if spokeNode, err := lookupPath(spoke, spokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): spoke: %v", idx, name, err))
+	} else {
+		spokeKind, _ = classify(spokeNode)
+	}
+	hubStr, hubInt := hubKind == FieldKindString, hubKind == FieldKindInteger
+	spokeStr, spokeInt := spokeKind == FieldKindString, spokeKind == FieldKindInteger
+	if !((hubStr && spokeInt) || (hubInt && spokeStr)) {
+		diags = append(diags, errorf(idx, "rule %d (%s): one side must be a string and the other an integer (hub %q is %s, spoke %q is %s)", idx, name, hubPath, hubKind, spokePath, spokeKind))
+	}
+	if d := claim(claimedHub, hubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, spokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	if hubStr && spokeInt {
+		return makeOp(hubPath, spokePath, true), makeOp(spokePath, hubPath, false), LosslessVerdict{HubToSpoke: true, SpokeToHub: false}, diags
+	}
+	if hubInt && spokeStr {
+		return makeOp(hubPath, spokePath, false), makeOp(spokePath, hubPath, true), LosslessVerdict{HubToSpoke: false, SpokeToHub: true}, diags
+	}
+	return nil, nil, LosslessVerdict{}, diags
 }

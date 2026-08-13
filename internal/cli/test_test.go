@@ -102,6 +102,7 @@ var allStrategies = []string{
 	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
 	"TypeCoerce", "ScalarToFields", "FieldsToScalar",
 	"ArrayToMapByKey", "MapToArrayByKey", "NumericScale", "ListJoin", "ListSplit",
+	"Quantity", "Duration",
 }
 
 // TestRunTest_FullCoverage_EndToEnd exercises a much richer fixture
@@ -264,6 +265,40 @@ func TestRunTest_IntegerEnumRemap(t *testing.T) {
 		XRDPath:    "testdata/enum-int/xrd.yaml",
 		ConfigPath: "testdata/enum-int/config.yaml",
 		SamplesDir: "testdata/enum-int/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_QuantityMilliRoundTrip(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/quantity/xrd.yaml",
+		ConfigPath: "testdata/quantity/config.yaml",
+		SamplesDir: "testdata/quantity/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_DurationSecondsRoundTrip(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/duration/xrd.yaml",
+		ConfigPath: "testdata/duration/config.yaml",
+		SamplesDir: "testdata/duration/samples",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

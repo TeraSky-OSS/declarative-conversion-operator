@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration
 type Strategy string
 
 const (
@@ -101,6 +101,8 @@ const (
 	StrategyNumericScale           Strategy = "NumericScale"
 	StrategyListJoin               Strategy = "ListJoin"
 	StrategyListSplit              Strategy = "ListSplit"
+	StrategyQuantity               Strategy = "Quantity"
+	StrategyDuration               Strategy = "Duration"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -400,6 +402,19 @@ type ListSplitParams struct {
 	Separator string `json:"separator"`
 }
 
+// QuantityParams converts between a Kubernetes resource.Quantity string
+// and an integer millivalue. Compile infers which side is the string.
+type QuantityParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+}
+
+// DurationParams converts between a Go duration string and integer seconds.
+type DurationParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+}
+
 // ConversionRule is one declarative conversion rule between the hub version
 // and a spoke version. Exactly one of the strategy-specific fields below
 // should be set, matching Strategy.
@@ -456,6 +471,10 @@ type ConversionRule struct {
 	ListJoin *ListJoinParams `json:"listJoin,omitempty"`
 	// +optional
 	ListSplit *ListSplitParams `json:"listSplit,omitempty"`
+	// +optional
+	Quantity *QuantityParams `json:"quantity,omitempty"`
+	// +optional
+	Duration *DurationParams `json:"duration,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).

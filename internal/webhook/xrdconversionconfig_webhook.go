@@ -269,6 +269,12 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.ListSplit != nil {
 		set++
 	}
+	if r.Quantity != nil {
+		set++
+	}
+	if r.Duration != nil {
+		set++
+	}
 	if set != 1 {
 		return fmt.Errorf("strategy %q requires exactly one matching params field to be set, found %d", r.Strategy, set)
 	}

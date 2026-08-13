@@ -169,6 +169,14 @@ func wellFormedRules() map[Strategy]ConversionRule {
 			Strategy:  StrategyListSplit,
 			ListSplit: &ListSplitParams{HubPath: "spec.tagsCSV", SpokePath: "spec.tags", Separator: ","},
 		},
+		StrategyQuantity: {
+			Strategy: StrategyQuantity,
+			Quantity: &QuantityParams{HubPath: "spec.cpuRequest", SpokePath: "spec.cpuMillis"},
+		},
+		StrategyDuration: {
+			Strategy: StrategyDuration,
+			Duration: &DurationParams{HubPath: "spec.timeout", SpokePath: "spec.timeoutSeconds"},
+		},
 	}
 }
 
@@ -203,6 +211,8 @@ func clearParams(rule ConversionRule) ConversionRule {
 	rule.NumericScale = nil
 	rule.ListJoin = nil
 	rule.ListSplit = nil
+	rule.Quantity = nil
+	rule.Duration = nil
 	return rule
 }
 

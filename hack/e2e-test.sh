@@ -79,6 +79,8 @@ assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='
 assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.limitsByTier.silver.limit}')" "20" "MapToArrayByKey (s2h): spec.tierLimits[] -> spec.limitsByTier (map)"
 assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.limitsByTier.bronze.limit}')" "10" "MapToArrayByKey (s2h): second tier preserved"
 assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.allowedCIDRsCSV}')" "10.1.0.0/16,10.2.0.0/16" "ListSplit (s2h): spec.allowedCIDRs -> spec.allowedCIDRsCSV"
+assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.cpuRequest}')" "1" "Quantity (s2h): spec.cpuMillis 1000 -> spec.cpuRequest 1"
+assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.timeout}')" "30s" "Duration (s2h): spec.timeoutSeconds 30 -> spec.timeout 30s"
 
 # --- v2 (spoke) -> v3 (hub): every v2-spoke strategy's spoke->hub direction ---
 log "Creating a composite resource at spoke version v2"
@@ -138,5 +140,7 @@ assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='
 assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.tierLimits[1].tier}')" "silver" "MapToArrayByKey (h2s): second tier, sorted after \"gold\""
 assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.allowedCIDRs[0]}')" "10.0.0.0/8" "ListSplit (h2s): spec.allowedCIDRsCSV -> spec.allowedCIDRs[]"
 assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.allowedCIDRs[1]}')" "192.168.0.0/16" "ListSplit (h2s): second CIDR element"
+assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.cpuMillis}')" "500" "Quantity (h2s): spec.cpuRequest 500m -> spec.cpuMillis 500"
+assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.timeoutSeconds}')" "300" "Duration (h2s): spec.timeout 5m -> spec.timeoutSeconds 300"
 
-log "All e2e conversion checks passed (every one of pkg/engine's 23 built-in strategies exercised against a real apiserver)"
+log "All e2e conversion checks passed (every one of pkg/engine's 27 built-in strategies exercised against a real apiserver)"

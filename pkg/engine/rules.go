@@ -45,6 +45,8 @@ const (
 	StrategyNumericScale           Strategy = "NumericScale"
 	StrategyListJoin               Strategy = "ListJoin"
 	StrategyListSplit              Strategy = "ListSplit"
+	StrategyQuantity               Strategy = "Quantity"
+	StrategyDuration               Strategy = "Duration"
 )
 
 // UnmappedFieldPolicy controls what happens when a field exists in a hub or
@@ -388,6 +390,26 @@ type ListSplitParams struct {
 }
 
 func (ListSplitParams) isRuleParams() {}
+
+// QuantityParams converts between a Kubernetes resource.Quantity string
+// (e.g. "500m") and an integer millivalue. Compile infers which side is
+// the string from the schemas. Integer→canonical Quantity string is
+// treated as lossy because "0.5" and "500m" are the same Quantity but
+// not the same string.
+type QuantityParams struct {
+	HubPath, SpokePath FieldPath
+}
+
+func (QuantityParams) isRuleParams() {}
+
+// DurationParams converts between a Go duration string ("5m", "1h30m")
+// and an integer number of seconds. Integer→canonical duration string
+// is treated as lossy ("5m" vs "5m0s").
+type DurationParams struct {
+	HubPath, SpokePath FieldPath
+}
+
+func (DurationParams) isRuleParams() {}
 
 // RuleSet is every rule declared for one hub<->spoke version pair.
 type RuleSet struct {

@@ -106,6 +106,8 @@ nav:
       - Array ⇄ Map by Key: strategies/array-map-key.md
       - Numeric Scale: strategies/numeric-scale.md
       - List Join / Split: strategies/list-join-split.md
+      - Quantity: strategies/quantity.md
+      - Duration: strategies/duration.md
   - Contributing:
       - Adding a strategy: contributing/adding-a-strategy.md
   - FAQ: faq.md

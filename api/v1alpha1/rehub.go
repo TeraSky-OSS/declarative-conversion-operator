@@ -264,6 +264,22 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.ListJoin = &ListJoinParams{
 			HubPath: r.ListSplit.SpokePath, SpokePath: r.ListSplit.HubPath, Separator: r.ListSplit.Separator,
 		}
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return out, fmt.Errorf("Quantity: missing params")
+		}
+		out.Strategy = StrategyQuantity
+		out.Quantity = &QuantityParams{
+			HubPath: r.Quantity.SpokePath, SpokePath: r.Quantity.HubPath,
+		}
+	case StrategyDuration:
+		if r.Duration == nil {
+			return out, fmt.Errorf("Duration: missing params")
+		}
+		out.Strategy = StrategyDuration
+		out.Duration = &DurationParams{
+			HubPath: r.Duration.SpokePath, SpokePath: r.Duration.HubPath,
+		}
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -413,6 +429,16 @@ func hubSpokePathPairs(r ConversionRule) ([]pathPair, error) {
 			return nil, fmt.Errorf("ListSplit: missing params")
 		}
 		return []pathPair{{r.ListSplit.HubPath, r.ListSplit.SpokePath}}, nil
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return nil, fmt.Errorf("Quantity: missing params")
+		}
+		return []pathPair{{r.Quantity.HubPath, r.Quantity.SpokePath}}, nil
+	case StrategyDuration:
+		if r.Duration == nil {
+			return nil, fmt.Errorf("Duration: missing params")
+		}
+		return []pathPair{{r.Duration.HubPath, r.Duration.SpokePath}}, nil
 	case StrategyArrayToMapByKey:
 		if r.ArrayToMapByKey == nil {
 			return nil, fmt.Errorf("ArrayToMapByKey: missing params")
@@ -745,6 +771,28 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		cp := *r.ListSplit
 		cp.HubPath = hp
 		out.ListSplit = &cp
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return out, fmt.Errorf("Quantity: missing params")
+		}
+		hp, err := mapPath(r.Quantity.HubPath)
+		if err != nil {
+			return out, err
+		}
+		cp := *r.Quantity
+		cp.HubPath = hp
+		out.Quantity = &cp
+	case StrategyDuration:
+		if r.Duration == nil {
+			return out, fmt.Errorf("Duration: missing params")
+		}
+		hp, err := mapPath(r.Duration.HubPath)
+		if err != nil {
+			return out, err
+		}
+		cp := *r.Duration
+		cp.HubPath = hp
+		out.Duration = &cp
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -866,6 +914,14 @@ func spokePathsOf(r ConversionRule) []string {
 	case StrategyListSplit:
 		if r.ListSplit != nil {
 			return []string{r.ListSplit.SpokePath}
+		}
+	case StrategyQuantity:
+		if r.Quantity != nil {
+			return []string{r.Quantity.SpokePath}
+		}
+	case StrategyDuration:
+		if r.Duration != nil {
+			return []string{r.Duration.SpokePath}
 		}
 	case StrategyTypeCoerce:
 		if r.TypeCoerce != nil {
