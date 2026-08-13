@@ -37,15 +37,15 @@ backlog only if you run hundreds of configs.
 ```promql
 # Serving latency (per target)
 histogram_quantile(0.99,
-  sum by (le, target) (rate(xrdconv_webhook_conversion_duration_seconds_bucket[5m])))
+  sum by (le, target) (rate(dco_webhook_conversion_duration_seconds_bucket[5m])))
 
 # Error ratio
-sum(rate(xrdconv_webhook_conversion_review_requests_total{result!="success"}[5m]))
+sum(rate(dco_webhook_conversion_review_requests_total{result!="success"}[5m]))
   /
-sum(rate(xrdconv_webhook_conversion_review_requests_total[5m]))
+sum(rate(dco_webhook_conversion_review_requests_total[5m]))
 
 # Compile cost after a config change (should be a spike, not a plateau)
-rate(xrdconv_webhook_registry_compile_duration_seconds_sum[5m])
+rate(dco_webhook_registry_compile_duration_seconds_sum[5m])
 ```
 
 If latency climbs while CPU is idle, look for oversized ConversionReview

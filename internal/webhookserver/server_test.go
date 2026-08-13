@@ -286,8 +286,8 @@ func TestPlainMux_ExposesDedicatedRegistryMetrics(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"xrdconv_webhook_ready 1",
-		"xrdconv_webhook_registry_size 3",
+		"dco_webhook_ready 1",
+		"dco_webhook_registry_size 3",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected /metrics to contain %q; body starts with:\n%.500s", want, body)

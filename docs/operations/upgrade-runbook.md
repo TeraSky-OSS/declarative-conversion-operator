@@ -145,12 +145,12 @@ rollout means every replica rebuilt its in-memory registry from scratch:
 
 ```promql
 # Ready replicas that have NOT loaded a plan for this target (empty = healthy)
-(xrdconv_webhook_ready == 1)
+(dco_webhook_ready == 1)
   unless on (pod)
-(xrdconv_webhook_registry_entry_loaded{target="xwidgets.example.org"} == 1)
+(dco_webhook_registry_entry_loaded{target="xwidgets.example.org"} == 1)
 
 # Conversion errors since the rollout
-sum by (target, result) (rate(xrdconv_webhook_conversion_review_requests_total{result!="success"}[5m]))
+sum by (target, result) (rate(dco_webhook_conversion_review_requests_total{result!="success"}[5m]))
 ```
 
 A real read through the apiserver is the final proof, since it exercises the
@@ -194,7 +194,7 @@ upgrade:
 - [ ] Every config is `Applied` — none `Invalid`, `Stale`, or `Failed`.
 - [ ] `ConversionWebhookServer` is `Available` with the expected `readyReplicas`.
 - [ ] Every ready replica has a loaded plan for every target.
-- [ ] No new `xrdconv_webhook_registry_compile_errors_total` since the rollout.
+- [ ] No new `dco_webhook_registry_compile_errors_total` since the rollout.
 - [ ] Conversion error ratio and p99 latency match pre-upgrade levels.
 - [ ] A real `kubectl get` at a non-storage version returns a correctly
       converted object.

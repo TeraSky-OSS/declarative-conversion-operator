@@ -32,7 +32,7 @@ import (
 
 var (
 	listErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "xrdconv_watch_map_list_errors_total",
+		Name: "dco_watch_map_list_errors_total",
 		Help: "Watch-mapping List failures that would otherwise look like an empty result (no related configs).",
 	}, []string{"map_func"})
 
@@ -49,7 +49,7 @@ func ensureRegistered() {
 	})
 }
 
-// ListError logs err, increments xrdconv_watch_map_list_errors_total for
+// ListError logs err, increments dco_watch_map_list_errors_total for
 // mapFunc, invokes ErrorHook if set, and returns an empty request slice.
 // Call this instead of a bare `return nil` when a watch-mapping List fails.
 func ListError(ctx context.Context, mapFunc string, err error) []reconcile.Request {

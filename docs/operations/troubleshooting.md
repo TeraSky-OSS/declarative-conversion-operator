@@ -72,15 +72,15 @@ writes.**
   that a given pod has loaded it — that state is per-pod:
 
   ```promql
-  (xrdconv_webhook_ready == 1)
+  (dco_webhook_ready == 1)
     unless on (pod)
-  (xrdconv_webhook_registry_entry_loaded{target="xwidgets.example.org"} == 1)
+  (dco_webhook_registry_entry_loaded{target="xwidgets.example.org"} == 1)
   ```
 
   An empty result is healthy. A pod in the result set is serving without a plan
   for that target and will answer `not_registered`.
 
-- Look at `xrdconv_webhook_registry_compile_errors_total{target=...}` and its
+- Look at `dco_webhook_registry_compile_errors_total{target=...}` and its
   `reason` label (`XRDNotFound`, `InvalidRules`, `AnalyzeFailed`,
   `ValidationErrors`, …). A compile failure leaves the previous plan in place
   rather than dropping it, so this can be true while conversions still work —
@@ -119,7 +119,7 @@ plan **keeps serving** — being `Stale` is a warning, not an outage — and
 
 ```promql
 sum by (config_kind, to_phase, reason)
-  (rate(xrdconv_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[5m]))
+  (rate(dco_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[5m]))
 ```
 
 Usual causes: someone added or changed a version on the XRD/CRD, or a field's

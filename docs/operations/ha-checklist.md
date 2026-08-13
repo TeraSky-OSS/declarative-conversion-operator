@@ -37,9 +37,9 @@ them leads to over-provisioning the wrong one.
       After any scale-out, restart, or node replacement:
 
       ```promql
-      (xrdconv_webhook_ready == 1)
+      (dco_webhook_ready == 1)
         unless on (pod)
-      (xrdconv_webhook_registry_entry_loaded{target="xwidgets.example.org"} == 1)
+      (dco_webhook_registry_entry_loaded{target="xwidgets.example.org"} == 1)
       ```
 
       An empty result means every ready replica can serve that target.
