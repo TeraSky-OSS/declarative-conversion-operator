@@ -54,11 +54,17 @@ func effectivePolicy(p UnmappedFieldPolicy) UnmappedFieldPolicy {
 	return p
 }
 
-const maxForEachDepth = 1
+// MaxForEachDepth is the maximum ForEach nesting allowed: a ForEach may
+// contain another ForEach (arrays-of-arrays), but a third level is
+// rejected at compile/admission time. Deeper nesting is not supported
+// because coverage analysis and the CRD's schemaless nested-rule list
+// would otherwise recurse without a bound, and real XR schemas rarely
+// need more than two array levels.
+const MaxForEachDepth = 2
 
 // resolveAndBuildOps is the shared core used both at the top level and
 // recursively for ForEach's nested rule list. depth tracks ForEach nesting
-// to enforce the depth-1 cap.
+// to enforce MaxForEachDepth.
 func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy UnmappedFieldPolicy, depth int) (h2sOps, s2hOps []Op, results []RuleResult, diags []Diagnostic, verdict LosslessVerdict) {
 	claimedHub := map[string]bool{}
 	claimedSpoke := map[string]bool{}
@@ -820,8 +826,8 @@ func parsePatch(ops []JSONPatchOp) (patch jsonpatch.Patch, destPaths, allPaths [
 
 func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, policy UnmappedFieldPolicy, depth int) (Op, Op, LosslessVerdict, []Diagnostic) {
 	var diags []Diagnostic
-	if depth >= maxForEachDepth {
-		diags = append(diags, errorf(idx, "rule %d (ForEach): nesting depth exceeds the supported maximum of %d", idx, maxForEachDepth))
+	if depth >= MaxForEachDepth {
+		diags = append(diags, errorf(idx, "rule %d (ForEach): nesting depth exceeds the supported maximum of %d", idx, MaxForEachDepth))
 		return nil, nil, LosslessVerdict{true, true}, diags
 	}
 	hubArray, err := lookupPath(hub, p.HubItemsPath)

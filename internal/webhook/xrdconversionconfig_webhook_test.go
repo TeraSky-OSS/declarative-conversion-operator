@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 func TestValidateStructure_RejectsSpokeEqualToHub(t *testing.T) {
@@ -60,24 +61,50 @@ func TestValidateStructure_RejectsAmbiguousRuleParams(t *testing.T) {
 	}
 }
 
-func TestValidateStructure_RejectsDeepForEachNesting(t *testing.T) {
+func TestValidateStructure_AcceptsDepth2ForEach(t *testing.T) {
 	inner := teraskyv1alpha1.ConversionRule{
 		Strategy: teraskyv1alpha1.StrategyForEach,
 		ForEach: &teraskyv1alpha1.ForEachParams{
-			HubItemsPath: "x", SpokeItemsPath: "y",
-			Rules: []teraskyv1alpha1.ConversionRule{{Strategy: teraskyv1alpha1.StrategyFieldRename, FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "a", SpokePath: "b"}}},
+			HubItemsPath: "disks", SpokeItemsPath: "disks",
+			Rules: []teraskyv1alpha1.ConversionRule{{Strategy: teraskyv1alpha1.StrategyFieldRename, FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "sizeGB", SpokePath: "size"}}},
 		},
 	}
 	outer := teraskyv1alpha1.ConversionRule{
 		Strategy: teraskyv1alpha1.StrategyForEach,
-		ForEach:  &teraskyv1alpha1.ForEachParams{HubItemsPath: "x", SpokeItemsPath: "y", Rules: []teraskyv1alpha1.ConversionRule{inner}},
+		ForEach:  &teraskyv1alpha1.ForEachParams{HubItemsPath: "volumes", SpokeItemsPath: "volumes", Rules: []teraskyv1alpha1.ConversionRule{inner}},
 	}
 	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
 		HubVersion: "v2",
 		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1", Rules: []teraskyv1alpha1.ConversionRule{outer}}},
 	}}
+	if err := ValidateStructure(cfg); err != nil {
+		t.Fatalf("depth-2 ForEach should be accepted: %v", err)
+	}
+}
+
+func TestValidateStructure_RejectsDeepForEachNesting(t *testing.T) {
+	leaf := teraskyv1alpha1.ConversionRule{
+		Strategy:    teraskyv1alpha1.StrategyFieldRename,
+		FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "a", SpokePath: "b"},
+	}
+	level3 := teraskyv1alpha1.ConversionRule{
+		Strategy: teraskyv1alpha1.StrategyForEach,
+		ForEach:  &teraskyv1alpha1.ForEachParams{HubItemsPath: "z", SpokeItemsPath: "z", Rules: []teraskyv1alpha1.ConversionRule{leaf}},
+	}
+	level2 := teraskyv1alpha1.ConversionRule{
+		Strategy: teraskyv1alpha1.StrategyForEach,
+		ForEach:  &teraskyv1alpha1.ForEachParams{HubItemsPath: "y", SpokeItemsPath: "y", Rules: []teraskyv1alpha1.ConversionRule{level3}},
+	}
+	level1 := teraskyv1alpha1.ConversionRule{
+		Strategy: teraskyv1alpha1.StrategyForEach,
+		ForEach:  &teraskyv1alpha1.ForEachParams{HubItemsPath: "x", SpokeItemsPath: "x", Rules: []teraskyv1alpha1.ConversionRule{level2}},
+	}
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion: "v2",
+		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1", Rules: []teraskyv1alpha1.ConversionRule{level1}}},
+	}}
 	if err := ValidateStructure(cfg); err == nil {
-		t.Fatalf("expected an error for ForEach nested more than one level deep")
+		t.Fatalf("expected an error for ForEach nested more than %d levels deep", engine.MaxForEachDepth)
 	}
 }
 

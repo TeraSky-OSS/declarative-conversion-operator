@@ -683,6 +683,105 @@ func TestForEach_NestedFieldRename(t *testing.T) {
 	}
 }
 
+func TestForEach_Depth2NestedArrays(t *testing.T) {
+	diskHub := objSchema(map[string]extv1.JSONSchemaProps{"sizeGB": strSchema()})
+	diskSpoke := objSchema(map[string]extv1.JSONSchemaProps{"size": strSchema()})
+	volHub := objSchema(map[string]extv1.JSONSchemaProps{
+		"name":  strSchema(),
+		"disks": arrSchema(diskHub, nil),
+	})
+	volSpoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"name":  strSchema(),
+		"disks": arrSchema(diskSpoke, nil),
+	})
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"volumes": arrSchema(volHub, nil)})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"volumes": arrSchema(volSpoke, nil)})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyForEach, Params: ForEachParams{
+			HubItemsPath: ParsePath("volumes"), SpokeItemsPath: ParsePath("volumes"),
+			Rules: []Rule{
+				{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("name"), SpokePath: ParsePath("name")}},
+				{Strategy: StrategyForEach, Params: ForEachParams{
+					HubItemsPath: ParsePath("disks"), SpokeItemsPath: ParsePath("disks"),
+					Rules: []Rule{
+						{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("sizeGB"), SpokePath: ParsePath("size")}},
+					},
+				}},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	in := map[string]any{"volumes": []any{
+		map[string]any{
+			"name": "data",
+			"disks": []any{
+				map[string]any{"sizeGB": "10"},
+				map[string]any{"sizeGB": "20"},
+			},
+		},
+	}}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	vols := out["volumes"].([]any)
+	disks := vols[0].(map[string]any)["disks"].([]any)
+	if disks[0].(map[string]any)["size"] != "10" || disks[1].(map[string]any)["size"] != "20" {
+		t.Fatalf("unexpected disks: %#v", disks)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	backDisks := back["volumes"].([]any)[0].(map[string]any)["disks"].([]any)
+	if backDisks[0].(map[string]any)["sizeGB"] != "10" {
+		t.Fatalf("round trip mismatch: %#v", back)
+	}
+}
+
+func TestForEach_Depth3RejectedAtCompile(t *testing.T) {
+	leaf := objSchema(map[string]extv1.JSONSchemaProps{"x": strSchema()})
+	l3 := objSchema(map[string]extv1.JSONSchemaProps{"c": arrSchema(leaf, nil)})
+	l2 := objSchema(map[string]extv1.JSONSchemaProps{"b": arrSchema(l3, nil)})
+	root := objSchema(map[string]extv1.JSONSchemaProps{"a": arrSchema(l2, nil)})
+	innerMost := Rule{Strategy: StrategyForEach, Params: ForEachParams{
+		HubItemsPath: ParsePath("c"), SpokeItemsPath: ParsePath("c"),
+		Rules: []Rule{{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("x"), SpokePath: ParsePath("x")}}},
+	}}
+	mid := Rule{Strategy: StrategyForEach, Params: ForEachParams{
+		HubItemsPath: ParsePath("b"), SpokeItemsPath: ParsePath("b"),
+		Rules: []Rule{innerMost},
+	}}
+	outer := Rule{Strategy: StrategyForEach, Params: ForEachParams{
+		HubItemsPath: ParsePath("a"), SpokeItemsPath: ParsePath("a"),
+		Rules: []Rule{mid},
+	}}
+	_, diags, err := Compile(RuleSet{Rules: []Rule{outer}}, &root, &root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	errs := diagMessages(diags, SeverityError)
+	if len(errs) == 0 {
+		t.Fatal("expected compile error for ForEach depth 3")
+	}
+	found := false
+	for _, msg := range errs {
+		if strings.Contains(msg, "nesting depth exceeds") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected nesting-depth error, got %v", errs)
+	}
+}
+
 func TestForEach_LengthMismatchIsHardError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{
 		"hubReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{"region": strSchema()}), nil),

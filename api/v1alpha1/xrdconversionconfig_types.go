@@ -296,7 +296,8 @@ type JSONPatchParams struct {
 
 // ForEachParams applies a nested rule list to each element of a hub array
 // and the corresponding spoke array. Nested rule paths are relative to a
-// single array element. Nesting is capped at depth 1.
+// single array element. Nesting is capped at depth 2 (a ForEach may wrap
+// another ForEach for arrays-of-arrays; a third level is rejected).
 type ForEachParams struct {
 	HubItemsPath   string `json:"hubItemsPath"`
 	SpokeItemsPath string `json:"spokeItemsPath"`

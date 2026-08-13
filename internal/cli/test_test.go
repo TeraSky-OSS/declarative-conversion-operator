@@ -259,6 +259,23 @@ func TestStatusFieldConversion(t *testing.T) {
 	}
 }
 
+func TestRunTest_NestedForEachDepth2(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/foreach-nested/xrd.yaml",
+		ConfigPath: "testdata/foreach-nested/config.yaml",
+		SamplesDir: "testdata/foreach-nested/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
 func TestRunTest_NoSamples_IsAnError(t *testing.T) {
 	dir := t.TempDir()
 	_, err := RunTest(TestOptions{XRDPath: "testdata/xrd.yaml", ConfigPath: "testdata/config.yaml", SamplesDir: dir})

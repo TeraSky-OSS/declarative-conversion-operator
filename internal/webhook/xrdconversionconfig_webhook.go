@@ -273,8 +273,8 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 		return fmt.Errorf("strategy %q requires exactly one matching params field to be set, found %d", r.Strategy, set)
 	}
 	if r.ForEach != nil {
-		if depth >= 1 {
-			return fmt.Errorf("ForEach nesting depth exceeds the supported maximum of 1")
+		if depth >= engine.MaxForEachDepth {
+			return fmt.Errorf("ForEach nesting depth exceeds the supported maximum of %d", engine.MaxForEachDepth)
 		}
 		if err := validateRules(r.ForEach.Rules, depth+1); err != nil {
 			return fmt.Errorf("forEach: %w", err)
