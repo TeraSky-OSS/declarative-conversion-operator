@@ -129,6 +129,6 @@ A contributor following this guide for a toy strategy should end up touching
 
 ## Related
 
-- [Contributing](../../CONTRIBUTING.md) — day-to-day `make` loop
+- [Contributing](https://github.com/TeraSky-OSS/declarative-conversion-operator/blob/main/CONTRIBUTING.md) — day-to-day `make` loop
 - [Strategy reference index](../strategies/index.md)
 - [Kitchen sink fixture](../examples/kitchen-sink.md) — every strategy in one place
