@@ -175,8 +175,11 @@ metrics:
     enabled: false
     labels: {}
 
-# Grafana sidecar ConfigMaps (label grafana_dashboard: "1"). Independent of
-# ServiceMonitor — you still need scrapes for panels to populate.
+# Grafana sidecar ConfigMaps (label grafana_dashboard: "1") for every JSON
+# file under files/dashboards/ (overview, per-target detail, platform
+# stability). Independent of ServiceMonitor — you still need scrapes for
+# panels to populate. Resource panels on the stability dashboard also need
+# kubelet cAdvisor + kube-state-metrics.
 dashboards:
   enabled: false
   labels: {}

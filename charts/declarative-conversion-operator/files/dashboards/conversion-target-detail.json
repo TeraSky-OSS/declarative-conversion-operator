@@ -2,7 +2,18 @@
   "annotations": { "list": [] },
   "editable": true,
   "graphTooltip": 1,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["conversion"],
+      "targetBlank": false,
+      "title": "Conversion dashboards",
+      "type": "dashboards"
+    }
+  ],
   "panels": [
     {
       "id": 1,

@@ -54,7 +54,7 @@ helm upgrade declarative-conversion-operator charts/declarative-conversion-opera
 | `conversionWebhookServer.autoscaling.enabled` | Use an HPA instead of a fixed replica count for the default instance | `false` |
 | `metrics.serviceMonitor.enabled` | Create Prometheus Operator `ServiceMonitor`s (opt-in; not auto-detected) | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in conversion/manager alerts | `false` |
-| `dashboards.enabled` | Create Grafana sidecar dashboard ConfigMaps (`grafana_dashboard: "1"`): Conversion Overview + Conversion Target Detail | `false` |
+| `dashboards.enabled` | Create Grafana sidecar dashboard ConfigMaps (`grafana_dashboard: "1"`): Conversion Overview, Conversion Target Detail, and Conversion Platform Stability | `false` |
 | `features.crossplane.enabled` | Enable `XRDConversionConfig` support for Crossplane XRDs. Requires Crossplane to be installed. | `true` |
 | `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support for plain native CustomResourceDefinitions. | `true` |
 

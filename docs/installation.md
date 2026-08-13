@@ -91,7 +91,7 @@ Both CRDs (`XRDConversionConfig`, `CRDConversionConfig`) are always installed re
 | `conversionWebhookServer.cacheSelector` | Optional label selector scoping that instance's config informers. | `{}` (unscoped) |
 | `metrics.serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor`. Opt-in by value, not capability-detected, so chart behavior doesn't change based on how it's rendered. | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in alerts. | `false` |
-| `dashboards.enabled` | Create Grafana sidecar ConfigMaps labeled `grafana_dashboard: "1"` (Conversion Overview + per-target Conversion Target Detail). | `false` |
+| `dashboards.enabled` | Create Grafana sidecar ConfigMaps labeled `grafana_dashboard: "1"` (Conversion Overview, per-target Conversion Target Detail, and Conversion Platform Stability). | `false` |
 | `features.crossplane.enabled` | Enable `XRDConversionConfig` support. Requires Crossplane installed. | `true` |
 | `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support. | `true` |
 | `crds.install` | Install the two CRDs from `crds/`. Disable if you manage CRDs separately (e.g. a dedicated CRD-management pipeline). | `true` |

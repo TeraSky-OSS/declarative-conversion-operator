@@ -58,6 +58,15 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 histogram_quantile(0.99,
   sum by (le, target) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))
 
+# Objects converted per second (fleet)
+sum(rate(dco_webhook_conversion_objects_total[5m]))
+
+# ConversionReview RPCs per second (fleet)
+sum(rate(dco_webhook_conversion_review_requests_total[5m]))
+
+# Objects /s by target and result
+sum by (target, result) (rate(dco_webhook_conversion_objects_total[5m]))
+
 # Error ratio by target
 sum by (target) (rate(dco_webhook_conversion_review_requests_total{result="error"}[5m]))
 /
@@ -158,6 +167,15 @@ The chart ships:
   `charts/declarative-conversion-operator/files/dashboards/`:
   - [`conversion-overview.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-overview.json) — fleet-wide overview
   - [`conversion-target-detail.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-target-detail.json) — one XRD/CRD via the `target` dropdown (`target` label)
+  - [`conversion-stability.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-stability.json) — platform stability deep dive: conversions/s, failure rate, latency, registry, manager control plane, and webhook/manager pod CPU/memory/restarts (kubelet cAdvisor + kube-state-metrics)
+
+  All three share the Grafana tag `conversion` so the dashboard header links
+  between them. Resource panels on the stability dashboard need kubelet
+  cAdvisor and kube-state-metrics (kube-prometheus-stack provides both);
+  conversion/manager panels only need this chart's `ServiceMonitor`s.
+  Webhook process Go collectors are **not** on `/metrics` (dedicated
+  registry) — use cAdvisor for webhook CPU/memory. The manager scrape
+  still exposes `go_goroutines` / `process_*`.
 
 ---
 

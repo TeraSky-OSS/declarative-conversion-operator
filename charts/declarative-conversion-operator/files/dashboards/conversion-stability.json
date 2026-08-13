@@ -1,0 +1,2976 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Deep-dive platform stability for declarative-conversion-operator: conversion throughput and failure rate, the same webhook/manager series as Conversion Overview, registry readiness, and kubelet/kube-state-metrics resource usage of webhook-server and manager pods.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "conversion"
+      ],
+      "title": "Conversion dashboards",
+      "type": "dashboards",
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Platform SLIs",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "title": "Objects /s",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(dco_webhook_conversion_objects_total[5m])) or vector(0)",
+          "legendFormat": "objects/s",
+          "refId": "A"
+        }
+      ],
+      "description": "Individual objects converted inside ConversionReviews (not reviews). This is the conversion throughput SLI."
+    },
+    {
+      "id": 3,
+      "title": "Reviews /s",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(dco_webhook_conversion_review_requests_total[5m])) or vector(0)",
+          "legendFormat": "reviews/s",
+          "refId": "A"
+        }
+      ],
+      "description": "apiserver ConversionReview RPCs. A review may contain many objects (List/watch conversion)."
+    },
+    {
+      "id": 4,
+      "title": "Failure rate",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(dco_webhook_conversion_review_requests_total{result!=\"success\"}[5m])) or vector(0)) / clamp_min(sum(rate(dco_webhook_conversion_review_requests_total[5m])) or vector(0), 1e-9)",
+          "legendFormat": "failure",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of ConversionReviews whose result is not success (error, bad_request, not_registered, panic). Chart alert ConversionWebhookErrorRatio fires at result=error >5% per target; this panel is fleet-wide across all non-success results."
+    },
+    {
+      "id": 5,
+      "title": "Error ratio (alert)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(dco_webhook_conversion_review_requests_total{result=\"error\"}[5m])) or vector(0)) / clamp_min(sum(rate(dco_webhook_conversion_review_requests_total[5m])) or vector(0), 1e-9)",
+          "legendFormat": "error",
+          "refId": "A"
+        }
+      ],
+      "description": "Fleet-wide result=error ratio \u2014 same result filter as alert ConversionWebhookErrorRatio (threshold 5% per target)."
+    },
+    {
+      "id": 6,
+      "title": "Review p99",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        }
+      ],
+      "description": "End-to-end ConversionReview latency p99. Alert ConversionWebhookHighLatency fires above 1s per target."
+    },
+    {
+      "id": 7,
+      "title": "Ready replicas",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(dco_webhook_ready) or vector(0)",
+          "legendFormat": "ready",
+          "refId": "A"
+        }
+      ],
+      "description": "Webhook replicas whose registry finished initial sync (dco_webhook_ready=1). Alert ConversionWebhookNotReady fires when none are ready."
+    },
+    {
+      "id": 8,
+      "title": "Review p50",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        }
+      ],
+      "description": "Median ConversionReview latency. Compare with p99 to spot tail latency."
+    },
+    {
+      "id": 9,
+      "title": "Lossy /s",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1e-07
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(dco_webhook_lossy_conversion_total[5m])) or vector(0)",
+          "legendFormat": "lossy/s",
+          "refId": "A"
+        }
+      ],
+      "description": "Conversions on a direction statically marked lossy. Alert ConversionWebhookLossyRate fires above 0.01/s per target+direction."
+    },
+    {
+      "id": 10,
+      "title": "Compile errors (15m)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1e-07
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dco_webhook_registry_compile_errors_total[15m])) or vector(0)",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ],
+      "description": "Compile failures that left a stale or absent plan. Alert ConversionWebhookRegistryCompileErrors fires on any increase over 15m."
+    },
+    {
+      "id": 11,
+      "title": "Registry size",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "max(dco_webhook_registry_size) or vector(0)",
+          "legendFormat": "entries",
+          "refId": "A"
+        }
+      ],
+      "description": "Max compiled-or-placeholder registry entries across scraped webhook replicas (includes error-only placeholders)."
+    },
+    {
+      "id": 12,
+      "title": "Stale/Failed (15m)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1e-07
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dco_manager_phase_transitions_total{to_phase=~\"Stale|Failed\"}[15m])) or vector(0)",
+          "legendFormat": "events",
+          "refId": "A"
+        }
+      ],
+      "description": "Config phase transitions into Stale (KeepServingStale) or Failed (typically FailClosed revert). Matches alert ManagerPhaseStaleOrFailClosed."
+    },
+    {
+      "id": 13,
+      "title": "Watch-map errors (15m)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1e-07
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dco_watch_map_list_errors_total[15m])) or vector(0)",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ],
+      "description": "Secondary watch map List failures. Transient misses recover via RequeueAfter; a sustained rise means the manager cannot see related configs."
+    },
+    {
+      "id": 20,
+      "title": "Per-target snapshot",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "title": "Per-target conversion SLIs",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "objects/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reviews/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "error ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.01
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.05
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p99"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.1
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lossy/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "expr": "sum by (target) (rate(dco_webhook_conversion_objects_total[5m]))",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "sum by (target) (rate(dco_webhook_conversion_review_requests_total[5m]))",
+          "legendFormat": "",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "(sum by (target) (rate(dco_webhook_conversion_review_requests_total{result!=\"success\"}[5m]))) / clamp_min(sum by (target) (rate(dco_webhook_conversion_review_requests_total[5m])), 1e-9)",
+          "legendFormat": "",
+          "refId": "C",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, target) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "",
+          "refId": "D",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "sum by (target) (rate(dco_webhook_lossy_conversion_total[5m]))",
+          "legendFormat": "",
+          "refId": "E",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (target) (dco_webhook_registry_entry_loaded)",
+          "legendFormat": "",
+          "refId": "F",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time #A": true,
+              "Time #B": true,
+              "Time #C": true,
+              "Time #D": true,
+              "Time #E": true,
+              "Time #F": true
+            },
+            "renameByName": {
+              "Value #A": "objects/s",
+              "Value #B": "reviews/s",
+              "Value #C": "error ratio",
+              "Value #D": "p99",
+              "Value #E": "lossy/s",
+              "Value #F": "loaded (max replica)"
+            },
+            "indexByName": {
+              "target": 0,
+              "objects/s": 1,
+              "reviews/s": 2,
+              "error ratio": 3,
+              "p99": 4,
+              "lossy/s": 5,
+              "loaded (max replica)": 6
+            }
+          }
+        }
+      ],
+      "description": "Instant fleet snapshot by XRD/CRD name. Error ratio red at 5% (alert threshold); p99 red at 1s. Open Conversion Target Detail for a single target."
+    },
+    {
+      "id": 30,
+      "title": "Conversion traffic",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "panels": []
+    },
+    {
+      "id": 31,
+      "title": "Objects converted /s by target and result",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (target, result) (rate(dco_webhook_conversion_objects_total[5m]))",
+          "legendFormat": "{{target}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Object-level throughput. result=success is healthy traffic; anything else is dropped or failed conversion of an object inside a review."
+    },
+    {
+      "id": 32,
+      "title": "Reviews /s by result",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(dco_webhook_conversion_review_requests_total[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "ConversionReview RPC rate stacked by result: success, error, bad_request, not_registered, panic. Panic should stay at zero."
+    },
+    {
+      "id": 33,
+      "title": "Objects /s by from \u2192 to version",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (from_version, to_version, result) (rate(dco_webhook_conversion_objects_total[5m]))",
+          "legendFormat": "{{from_version}}\u2192{{to_version}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Spoke/hub version pair traffic. Sudden new pairs usually mean a schema promotion or a client still on an old version."
+    },
+    {
+      "id": 34,
+      "title": "Objects per review (batch size)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(dco_webhook_conversion_objects_total[5m])) or vector(0)) / clamp_min(sum(rate(dco_webhook_conversion_review_requests_total[5m])) or vector(0), 1e-9)",
+          "legendFormat": "objects/review",
+          "refId": "A"
+        }
+      ],
+      "description": "Mean objects inside each ConversionReview. List/watch conversion drives this up; Get stays near 1. High batch size plus high p99 often means a large List hitting the webhook."
+    },
+    {
+      "id": 40,
+      "title": "Latency",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "id": 41,
+      "title": "Review latency p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "description": "Fleet-wide ConversionReview latency percentiles. Webhook is on the apiserver critical path \u2014 sustained p99 above ~100ms is worth investigating; 1s matches the chart alert."
+    },
+    {
+      "id": 42,
+      "title": "Review p99 by target",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, target) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{target}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Same query as Conversion Overview. Isolate which XRD/CRD is on the tail."
+    },
+    {
+      "id": 43,
+      "title": "Review p99 by direction",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, direction) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "description": "direction is a version pair (e.g. v1\u2192v3). Hub-bound vs spoke-bound paths can differ when CEL/JSONPatch is one-way."
+    },
+    {
+      "id": 44,
+      "title": "Review latency heatmap",
+      "type": "heatmap",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "scheme": "Spectral",
+          "steps": 64
+        },
+        "yAxis": {
+          "unit": "s",
+          "decimals": 4
+        },
+        "tooltip": {
+          "show": true,
+          "yHistogram": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{le}}",
+          "refId": "A",
+          "format": "heatmap"
+        }
+      ],
+      "description": "Distribution over histogram buckets (100\u00b5s \u2026 5s). A mass shifting right is saturation even if p99 has not crossed 1s yet."
+    },
+    {
+      "id": 50,
+      "title": "Failures, lossy conversions, compile errors",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "panels": []
+    },
+    {
+      "id": 51,
+      "title": "Failure rate by target",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum by (target) (rate(dco_webhook_conversion_review_requests_total{result!=\"success\"}[5m]))) / clamp_min(sum by (target) (rate(dco_webhook_conversion_review_requests_total[5m])), 1e-9)",
+          "legendFormat": "{{target}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Non-success review ratio per target. Alert ConversionWebhookErrorRatio uses result=error only at 5%."
+    },
+    {
+      "id": 52,
+      "title": "Non-success reviews /s by target and result",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (target, result) (rate(dco_webhook_conversion_review_requests_total{result!=\"success\"}[5m]))",
+          "legendFormat": "{{target}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Absolute failure QPS. not_registered means the replica has no compiled plan; panic is a process bug; bad_request is a malformed ConversionReview."
+    },
+    {
+      "id": 53,
+      "title": "Compile errors /s by target and reason",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 61
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (target, reason) (rate(dco_webhook_registry_compile_errors_total[5m])) or vector(0)",
+          "legendFormat": "{{target}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Reasons include XRDNotFound, CRDNotFound, InvalidRules, AnalyzeFailed, ValidationErrors. Serving may continue on a stale plan."
+    },
+    {
+      "id": 54,
+      "title": "Lossy conversions /s",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 61
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (target, direction) (rate(dco_webhook_lossy_conversion_total[5m])) or vector(0)",
+          "legendFormat": "{{target}} {{direction}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Known-lossy directions (CEL always-lossy, irreversible maps). Unexpected rate means clients converting the wrong way after a promote."
+    },
+    {
+      "id": 55,
+      "title": "Ready replicas missing a loaded plan",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 61
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "count((dco_webhook_ready == 1) unless on(pod) (dco_webhook_registry_entry_loaded == 1)) or vector(0)",
+          "legendFormat": "ready without any loaded plan",
+          "refId": "A"
+        },
+        {
+          "expr": "count(dco_webhook_ready == 1) or vector(0)",
+          "legendFormat": "ready replicas",
+          "refId": "B"
+        },
+        {
+          "expr": "count(dco_webhook_registry_entry_loaded == 1) or vector(0)",
+          "legendFormat": "loaded target\u00d7replica series",
+          "refId": "C"
+        }
+      ],
+      "description": "A ready replica with no loaded plans cannot convert anything (not_registered). Per-target gaps: (ready==1) unless on(pod) (entry_loaded{target=X}==1)."
+    },
+    {
+      "id": 60,
+      "title": "Registry and replica readiness",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "panels": []
+    },
+    {
+      "id": 61,
+      "title": "Webhook ready by pod",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 70
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "dco_webhook_ready",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "1 after initial registry sync. 0 for 5m trips ConversionWebhookReplicaNotReady. New pods should flip to 1 quickly after cache sync."
+    },
+    {
+      "id": 62,
+      "title": "Registry size by pod",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 70
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "dco_webhook_registry_size",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Entries including error-only placeholders. Divergence across replicas means an informer lag or cacheSelector mismatch."
+    },
+    {
+      "id": 63,
+      "title": "Registry reloads /s",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 70
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (target, result) (rate(dco_webhook_registry_reload_total[5m]))",
+          "legendFormat": "{{target}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Compile attempts. A storm of reloads usually means the config or XRD/CRD schema is thrashing."
+    },
+    {
+      "id": 64,
+      "title": "Registry entry loaded (1=servable plan)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 78
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "dco_webhook_registry_entry_loaded",
+          "legendFormat": "{{pod}} {{target}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Per replica \u00d7 target. 0 is an error-only placeholder \u2014 that replica will return not_registered for the target."
+    },
+    {
+      "id": 65,
+      "title": "Seconds since last successful compile",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 78
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - dco_webhook_registry_last_reload_timestamp_seconds",
+          "legendFormat": "{{pod}} {{target}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Age of the serving plan. Large age is normal when configs are stable; a jump to zero is a reload."
+    },
+    {
+      "id": 70,
+      "title": "Manager control plane",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 86
+      },
+      "panels": []
+    },
+    {
+      "id": 71,
+      "title": "Manager analyze failures /s",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 87
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (config_kind, target, reason) (rate(dco_manager_analyze_failures_total[5m])) or vector(0)",
+          "legendFormat": "{{config_kind}} {{target}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Analyze/compile validation failures during config reconcile. Matches alert ManagerReconcileAnalyzeFailures."
+    },
+    {
+      "id": 72,
+      "title": "Manager apply latency p50 / p99",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 87
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, config_kind, result) (rate(dco_manager_apply_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{config_kind}} {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, config_kind, result) (rate(dco_manager_apply_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{config_kind}} {{result}}",
+          "refId": "B"
+        }
+      ],
+      "description": "SSA patch applying conversion webhook config onto the XRD/CRD. Slow apply delays schema promotions, not live ConversionReviews."
+    },
+    {
+      "id": 73,
+      "title": "Phase transitions /s",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 95
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (config_kind, from_phase, to_phase, reason) (rate(dco_manager_phase_transitions_total[5m])) or vector(0)",
+          "legendFormat": "{{config_kind}} {{from_phase}}\u2192{{to_phase}} ({{reason}})",
+          "refId": "A"
+        }
+      ],
+      "description": "Applied\u2192Stale is KeepServingStale after drift; Applied\u2192Failed is typically FailClosed revert. Pending\u2192Applied is healthy first apply."
+    },
+    {
+      "id": 74,
+      "title": "Watch-map List errors /s",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 95
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (map_func) (rate(dco_watch_map_list_errors_total[5m])) or vector(0)",
+          "legendFormat": "{{map_func}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Watch-mapping List failures (API timeout, etc.). Configs still self-reconcile; a sustained rate means secondary watches are blind."
+    },
+    {
+      "id": 75,
+      "title": "Manager reconcile rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 103
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (controller, result) (rate(controller_runtime_reconcile_total{pod=~\".*-manager-.*\"}[5m]))",
+          "legendFormat": "{{controller}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "controller-runtime reconcile counters on manager pods. result=error should stay near zero. Series come from the manager scrape, not the webhook dedicated registry."
+    },
+    {
+      "id": 76,
+      "title": "Manager workqueue depth",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 103
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (name, pod) (workqueue_depth{pod=~\".*-manager-.*\"})",
+          "legendFormat": "{{pod}} {{name}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Workqueue backlog on the manager. A climbing depth means reconcile cannot keep up (apiserver latency or a hot loop)."
+    },
+    {
+      "id": 80,
+      "title": "Webhook pod resources (cAdvisor + kube-state-metrics)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 111
+      },
+      "panels": []
+    },
+    {
+      "id": 81,
+      "title": "Webhook CPU vs request / limit",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 112
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{container=\"webhook-server\", namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{pod}} usage",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_requests{container=\"webhook-server\", resource=\"cpu\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} request",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_limits{container=\"webhook-server\", resource=\"cpu\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} limit",
+          "refId": "C"
+        }
+      ],
+      "description": "container=webhook-server (operator-owned name). Usage from kubelet cAdvisor; request/limit from kube-state-metrics. ConversionReviews are CPU-bound on CEL/JSONPatch paths \u2014 saturation here raises p99."
+    },
+    {
+      "id": 82,
+      "title": "Webhook memory working set vs request / limit",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 112
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"webhook-server\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} working set",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_requests{container=\"webhook-server\", resource=\"memory\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} request",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_limits{container=\"webhook-server\", resource=\"memory\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} limit",
+          "refId": "C"
+        }
+      ],
+      "description": "Working set for webhook-server. Registry of compiled plans plus ConversionReview payloads. Growth without traffic usually means a leak; OOMKill shows up as a restart spike."
+    },
+    {
+      "id": 83,
+      "title": "Webhook CPU as fraction of request",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 120
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum by (pod) (rate(container_cpu_usage_seconds_total{container=\"webhook-server\", namespace=~\"$namespace\"}[5m]))) / clamp_min(sum by (pod) (kube_pod_container_resource_requests{container=\"webhook-server\", resource=\"cpu\", namespace=~\"$namespace\"}), 1e-9)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": ">1 means usage above request (throttling risk if a limit is set, or noisy-neighbor if not). HPA on CPU uses this ratio."
+    },
+    {
+      "id": 84,
+      "title": "Webhook memory as fraction of request",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 120
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum by (pod) (container_memory_working_set_bytes{container=\"webhook-server\", namespace=~\"$namespace\"})) / clamp_min(sum by (pod) (kube_pod_container_resource_requests{container=\"webhook-server\", resource=\"memory\", namespace=~\"$namespace\"}), 1e-9)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Working set / request. Approaching 1 with a memory limit is OOM risk."
+    },
+    {
+      "id": 85,
+      "title": "Webhook container restarts (1h)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 120
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{container=\"webhook-server\", namespace=~\"$namespace\"}[1h]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Restarts of webhook-server. Correlate with OOM, liveness failures, or cert/TLS crashes. Each restart drops in-memory registry until InitialSync completes (ready=0)."
+    },
+    {
+      "id": 86,
+      "title": "Webhook CPU CFS throttle",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 128
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_seconds_total{container=\"webhook-server\", namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Seconds spent throttled by CFS. Non-zero with high p99 means the CPU limit is too low for conversion load."
+    },
+    {
+      "id": 87,
+      "title": "Webhook pod network",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 128
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(container_network_receive_bytes_total{namespace=~\"$namespace\"}[5m]) and on(namespace, pod) kube_pod_container_info{container=\"webhook-server\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} rx",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (pod) (rate(container_network_transmit_bytes_total{namespace=~\"$namespace\"}[5m]) and on(namespace, pod) kube_pod_container_info{container=\"webhook-server\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} tx",
+          "refId": "B"
+        }
+      ],
+      "description": "Pod-level network (cAdvisor network series are not on the app container). ConversionReviews are small JSON; a tx spike with object rate is expected."
+    },
+    {
+      "id": 88,
+      "title": "Webhook HPA replicas",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 128
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~\".*-webhook-server\", namespace=~\"$namespace\"}",
+          "legendFormat": "{{horizontalpodautoscaler}} current",
+          "refId": "A"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler=~\".*-webhook-server\", namespace=~\"$namespace\"}",
+          "legendFormat": "{{horizontalpodautoscaler}} desired",
+          "refId": "B"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_min_replicas{horizontalpodautoscaler=~\".*-webhook-server\", namespace=~\"$namespace\"}",
+          "legendFormat": "{{horizontalpodautoscaler}} min",
+          "refId": "C"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~\".*-webhook-server\", namespace=~\"$namespace\"}",
+          "legendFormat": "{{horizontalpodautoscaler}} max",
+          "refId": "D"
+        }
+      ],
+      "description": "Empty unless conversionWebhookServer.autoscaling is enabled. Current vs desired lag means the HPA cannot scale (pending pods or maxReplicas)."
+    },
+    {
+      "id": 90,
+      "title": "Manager pod resources",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 136
+      },
+      "panels": []
+    },
+    {
+      "id": 91,
+      "title": "Manager CPU vs request / limit",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 137
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{container=\"manager\", namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{pod}} usage",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_requests{container=\"manager\", resource=\"cpu\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} request",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_limits{container=\"manager\", resource=\"cpu\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} limit",
+          "refId": "C"
+        }
+      ],
+      "description": "container=manager. Manager is not on the ConversionReview path; CPU here is reconcile/SSA/watch. Saturation delays config apply and phase updates, not live conversions."
+    },
+    {
+      "id": 92,
+      "title": "Manager memory working set vs request / limit",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 137
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (container_memory_working_set_bytes{container=\"manager\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} working set",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_requests{container=\"manager\", resource=\"memory\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} request",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (pod) (kube_pod_container_resource_limits{container=\"manager\", resource=\"memory\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}} limit",
+          "refId": "C"
+        }
+      ],
+      "description": "Manager working set. Growth with XRD/CRD count is expected (informers). Leader-election standby replicas should be flatter."
+    },
+    {
+      "id": 93,
+      "title": "Manager CPU as fraction of request",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 145
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum by (pod) (rate(container_cpu_usage_seconds_total{container=\"manager\", namespace=~\"$namespace\"}[5m]))) / clamp_min(sum by (pod) (kube_pod_container_resource_requests{container=\"manager\", resource=\"cpu\", namespace=~\"$namespace\"}), 1e-9)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 94,
+      "title": "Manager memory as fraction of request",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 145
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum by (pod) (container_memory_working_set_bytes{container=\"manager\", namespace=~\"$namespace\"})) / clamp_min(sum by (pod) (kube_pod_container_resource_requests{container=\"manager\", resource=\"memory\", namespace=~\"$namespace\"}), 1e-9)",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 95,
+      "title": "Manager container restarts (1h)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 145
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{container=\"manager\", namespace=~\"$namespace\"}[1h]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Manager restarts drop leadership and pause apply until the new leader is elected. Live conversion continues on webhook pods."
+    },
+    {
+      "id": 96,
+      "title": "Manager goroutines",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 153
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (go_goroutines{pod=~\".*-manager-.*\"})",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Go runtime goroutines from the manager process scrape (webhook /metrics is a dedicated registry without Go collectors). A monotonic climb is a leak."
+    },
+    {
+      "id": 97,
+      "title": "Manager RSS",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 153
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (process_resident_memory_bytes{pod=~\".*-manager-.*\"})",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Process RSS from the manager scrape. Compare with cAdvisor working set above; a large gap can be mapped files or Go heap vs container working set."
+    },
+    {
+      "id": 98,
+      "title": "Manager process CPU",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 153
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (pod) (rate(process_cpu_seconds_total{pod=~\".*-manager-.*\"}[5m]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Process CPU from the manager scrape (user+system). Should track cAdvisor usage."
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "declarative-conversion-operator",
+    "conversion",
+    "stability"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "label": "Datasource",
+        "refresh": 1
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(kube_pod_container_info{container=~\"webhook-server|manager\"}, namespace)",
+        "query": "label_values(kube_pod_container_info{container=~\"webhook-server|manager\"}, namespace)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "label": "Namespace (pod resources)",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Conversion Platform Stability",
+  "uid": "dco-conversion-stability",
+  "version": 1
+}
