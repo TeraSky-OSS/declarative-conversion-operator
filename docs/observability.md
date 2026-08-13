@@ -147,9 +147,11 @@ The chart ships:
   fleet/replica not-ready, high latency, lossy rate, error ratio, manager
   analyze failures, and Stale/Failed phase transitions. Expressions are
   unit-tested under `hack/prometheus/` (`make test-prometheus`).
-- **Grafana dashboard ConfigMap** (`dashboards.enabled`) — labeled
-  `grafana_dashboard: "1"` for the Grafana sidecar; JSON lives at
-  `charts/declarative-conversion-operator/files/dashboards/conversion-overview.json`.
+- **Grafana dashboard ConfigMaps** (`dashboards.enabled`) — labeled
+  `grafana_dashboard: "1"` for the Grafana sidecar; JSON under
+  `charts/declarative-conversion-operator/files/dashboards/`:
+  - [`conversion-overview.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-overview.json) — fleet-wide overview
+  - [`conversion-target-detail.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-target-detail.json) — one XRD/CRD via the `target` dropdown (`target` label)
 
 ---
 
