@@ -935,9 +935,24 @@ func resolveTypeCoerce(idx int, p TypeCoerceParams, hub, spoke *extv1.JSONSchema
 	if d := claim(claimedSpoke, p.Path, idx, "spoke"); d != nil {
 		diags = append(diags, *d)
 	}
-	h2s := coerceOp{path: p.Path, toKind: spokeKind}
-	s2h := coerceOp{path: p.Path, toKind: hubKind}
-	return h2s, s2h, LosslessVerdict{true, true}, diags
+	frac := normalizeFractionalPolicy(p.OnFractionalInteger)
+	switch frac {
+	case FractionalIntegerError, FractionalIntegerTruncate, FractionalIntegerRound:
+	default:
+		diags = append(diags, errorf(idx, "rule %d (TypeCoerce): onFractionalInteger must be Error, Truncate, or Round, got %q", idx, p.OnFractionalInteger))
+	}
+	h2s := coerceOp{path: p.Path, toKind: spokeKind, frac: frac}
+	s2h := coerceOp{path: p.Path, toKind: hubKind, frac: frac}
+	lossless := LosslessVerdict{true, true}
+	if frac != FractionalIntegerError {
+		if spokeKind == FieldKindInteger {
+			lossless.HubToSpoke = false
+		}
+		if hubKind == FieldKindInteger {
+			lossless.SpokeToHub = false
+		}
+	}
+	return h2s, s2h, lossless, diags
 }
 
 // resolveScalarToFields and resolveFieldsToScalar share the same

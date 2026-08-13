@@ -25,7 +25,7 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`delete`](delete.md) | Intentionally drops a field that exists on only one side. | :material-close:{ style="color:#c62828" } Always requires acknowledgement |
 | [`jsonPatch`](json-patch.md) | Escape hatch: raw RFC 6902 JSON Patch per direction. | :material-close:{ style="color:#c62828" } Lossy unless `losslessOverride` |
 | [`forEach`](for-each.md) | Applies a nested rule list to each element of an array. | Depends on nested rules |
-| [`typeCoerce`](type-coerce.md) | Converts a scalar's JSON type (string/int/number/bool). | :material-check-all:{ style="color:#2e7d32" } Always |
+| [`typeCoerce`](type-coerce.md) | Converts a scalar's JSON type (string/int/number/bool). | :material-alert:{ style="color:#ef6c00" } Conditional (`onFractionalInteger`) |
 | [`scalarToFields`](scalar-fields.md) | Decomposes one scalar into several fields via regex + template. | :material-close:{ style="color:#c62828" } Lossy unless `losslessOverride` |
 | [`fieldsToScalar`](scalar-fields.md) | Joins several fields into one scalar via template + regex. | :material-close:{ style="color:#c62828" } Lossy unless `losslessOverride` |
 | [`arrayToMapByKey`](array-map-key.md) | Array of objects ⇄ map keyed by one of their fields. | :material-alert:{ style="color:#ef6c00" } Array→map yes, map→array no |

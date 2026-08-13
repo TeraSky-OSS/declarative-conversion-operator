@@ -114,6 +114,31 @@ func TestCoerceScalarValue_UncoercibleTypeErrors(t *testing.T) {
 	}
 }
 
+func TestCoerceScalarValue_FractionalIntegerPolicy(t *testing.T) {
+	if _, err := coerceScalarValue(1.7, FieldKindInteger); err == nil {
+		t.Fatal("default Error policy should reject 1.7 -> integer")
+	}
+	got, err := coerceScalarValueWithPolicy(1.7, FieldKindInteger, FractionalIntegerTruncate)
+	if err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	if got != float64(1) {
+		t.Fatalf("expected 1, got %#v", got)
+	}
+	got, err = coerceScalarValueWithPolicy(1.7, FieldKindInteger, FractionalIntegerRound)
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if got != float64(2) {
+		t.Fatalf("expected 2, got %#v", got)
+	}
+	// number destinations keep the fractional value
+	got, err = coerceScalarValue(1.7, FieldKindNumber)
+	if err != nil || got != 1.7 {
+		t.Fatalf("number dest should keep 1.7, got %#v err=%v", got, err)
+	}
+}
+
 func TestAsFloat64(t *testing.T) {
 	cases := []any{float64(7), int64(7), int(7), int32(7)}
 	for _, in := range cases {

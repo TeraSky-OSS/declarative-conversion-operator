@@ -36,17 +36,15 @@ func isCoercibleScalar(k FieldKind) bool {
 }
 
 // coerceScalarValue converts v (as decoded from JSON/YAML) into the
-// representation `to` expects. It never needs to know v's declared source
-// kind: it type-switches on the concrete Go value it was actually given,
-// which is enough to pick the right conversion in every direction.
-//
-// Numbers canonically end up as float64 (what encoding/json produces), but
-// AsFloat64 also accepts int/int32/int64: client-go's dynamic client (used
-// by `convctl test --live`) decodes whole JSON numbers via apimachinery's
-// unstructured scheme, which hands back int64 rather than float64 — a
-// divergence from the real admission-webhook path (plain encoding/json)
-// that this function must tolerate rather than reject.
+// representation `to` expects. Integer destinations use the fail-closed
+// Error policy for fractional values; TypeCoerce passes an explicit policy
+// via coerceScalarValueWithPolicy.
 func coerceScalarValue(v any, to FieldKind) (any, error) {
+	return coerceScalarValueWithPolicy(v, to, FractionalIntegerError)
+}
+
+func coerceScalarValueWithPolicy(v any, to FieldKind, frac FractionalIntegerPolicy) (any, error) {
+	frac = normalizeFractionalPolicy(frac)
 	switch to {
 	case FieldKindString:
 		switch t := v.(type) {
@@ -70,25 +68,14 @@ func coerceScalarValue(v any, to FieldKind) (any, error) {
 			}
 			return nil, fmt.Errorf("cannot coerce %T to string", v)
 		}
-	case FieldKindInteger, FieldKindNumber:
-		if f, ok := AsFloat64(v); ok {
-			return f, nil
+	case FieldKindInteger:
+		f, err := numericAsFloat64(v)
+		if err != nil {
+			return nil, err
 		}
-		switch t := v.(type) {
-		case string:
-			f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
-			if err != nil {
-				return nil, fmt.Errorf("cannot coerce %q to a number: %w", t, err)
-			}
-			return f, nil
-		case bool:
-			if t {
-				return float64(1), nil
-			}
-			return float64(0), nil
-		default:
-			return nil, fmt.Errorf("cannot coerce %T to a number", v)
-		}
+		return applyFractionalInteger(f, frac)
+	case FieldKindNumber:
+		return numericAsFloat64(v)
 	case FieldKindBoolean:
 		switch t := v.(type) {
 		case bool:
@@ -104,6 +91,41 @@ func coerceScalarValue(v any, to FieldKind) (any, error) {
 		}
 	default:
 		return nil, fmt.Errorf("unsupported coercion target kind %q", to)
+	}
+}
+
+func numericAsFloat64(v any) (float64, error) {
+	if f, ok := AsFloat64(v); ok {
+		return f, nil
+	}
+	switch t := v.(type) {
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		if err != nil {
+			return 0, fmt.Errorf("cannot coerce %q to a number: %w", t, err)
+		}
+		return f, nil
+	case bool:
+		if t {
+			return 1, nil
+		}
+		return 0, nil
+	default:
+		return 0, fmt.Errorf("cannot coerce %T to a number", v)
+	}
+}
+
+func applyFractionalInteger(f float64, frac FractionalIntegerPolicy) (float64, error) {
+	if f == math.Trunc(f) {
+		return f, nil
+	}
+	switch frac {
+	case FractionalIntegerTruncate:
+		return math.Trunc(f), nil
+	case FractionalIntegerRound:
+		return math.Round(f), nil
+	default:
+		return 0, fmt.Errorf("cannot coerce %v to integer: fractional part is not allowed (onFractionalInteger=Error)", f)
 	}
 }
 

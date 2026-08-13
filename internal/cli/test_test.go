@@ -328,6 +328,37 @@ func TestRunTest_MapKeyRenamePassthrough(t *testing.T) {
 	}
 }
 
+func TestRunTest_TypeCoerceFractionalIntegerError(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/type-coerce-frac/xrd.yaml",
+		ConfigPath: "testdata/type-coerce-frac/config.yaml",
+		SamplesDir: "testdata/type-coerce-frac/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors == 0 {
+		t.Fatal("expected a conversion error for the 1.7 sample under onFractionalInteger=Error")
+	}
+}
+
+func TestRunTest_TypeCoerceFractionalIntegerTruncate(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/type-coerce-trunc/xrd.yaml",
+		ConfigPath: "testdata/type-coerce-trunc/config.yaml",
+		SamplesDir: "testdata/type-coerce-trunc/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
 func TestRunAnalyze_OneOfNamedInDiagnostics(t *testing.T) {
 	out, err := RunAnalyze("testdata/oneof/xrd.yaml", "", "testdata/oneof/config.yaml")
 	if err != nil {

@@ -491,6 +491,7 @@ func jsonValuesEqual(a, b any) bool {
 type coerceOp struct {
 	path   FieldPath
 	toKind FieldKind
+	frac   FractionalIntegerPolicy
 }
 
 func (o coerceOp) apply(ctx *execContext) error {
@@ -498,7 +499,7 @@ func (o coerceOp) apply(ctx *execContext) error {
 	if !ok {
 		return nil
 	}
-	coerced, err := coerceScalarValue(v, o.toKind)
+	coerced, err := coerceScalarValueWithPolicy(v, o.toKind, o.frac)
 	if err != nil {
 		return fmt.Errorf("typeCoerce: %q: %w", o.path, err)
 	}

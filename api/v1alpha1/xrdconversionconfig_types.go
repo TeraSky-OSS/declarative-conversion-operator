@@ -320,6 +320,12 @@ type ForEachParams struct {
 // becomes an integer in another.
 type TypeCoerceParams struct {
 	Path string `json:"path"`
+	// OnFractionalInteger is the policy when coercing a non-whole number
+	// into an integer-typed destination. Empty defaults to Error.
+	// +optional
+	// +kubebuilder:validation:Enum=Error;Truncate;Round
+	// +kubebuilder:default=Error
+	OnFractionalInteger string `json:"onFractionalInteger,omitempty"`
 }
 
 // ScalarToFieldsParams: the hub field is a single scalar string; Pattern

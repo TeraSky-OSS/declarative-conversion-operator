@@ -289,7 +289,10 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 		if r.TypeCoerce == nil {
 			return nil, fmt.Errorf("requires typeCoerce params")
 		}
-		return engine.TypeCoerceParams{Path: engine.ParsePath(r.TypeCoerce.Path)}, nil
+		return engine.TypeCoerceParams{
+			Path:                engine.ParsePath(r.TypeCoerce.Path),
+			OnFractionalInteger: engine.FractionalIntegerPolicy(r.TypeCoerce.OnFractionalInteger),
+		}, nil
 
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {

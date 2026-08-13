@@ -1013,6 +1013,76 @@ func TestTypeCoerce_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestTypeCoerce_FractionalIntegerError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"n": numSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"n": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("n")}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if _, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 1.7}}); err == nil {
+		t.Fatal("expected a conversion error coercing 1.7 to integer with onFractionalInteger=Error")
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 2.0}})
+	if err != nil {
+		t.Fatalf("whole number should succeed: %v", err)
+	}
+	if got, ok := AsFloat64(out["n"]); !ok || got != 2 {
+		t.Fatalf("expected 2, got %#v", out["n"])
+	}
+}
+
+func TestTypeCoerce_FractionalIntegerTruncateAndRound(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"n": numSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"n": intSchema()})
+	trunc := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("n"), OnFractionalInteger: FractionalIntegerTruncate}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(trunc, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 1.7}})
+	if err != nil {
+		t.Fatalf("truncate convert: %v", err)
+	}
+	if got, ok := AsFloat64(out["n"]); !ok || got != 1 {
+		t.Fatalf("expected truncate 1.7 -> 1, got %#v", out["n"])
+	}
+
+	round := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("n"), OnFractionalInteger: FractionalIntegerRound}},
+	}}
+	_, diags, _ = Compile(round, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected compile error: Round onto integer is lossy without acknowledgeLossy")
+	}
+	round.Rules[0].AcknowledgeLossy = true
+	plan, diags, err = Compile(round, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err = Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 1.7}})
+	if err != nil {
+		t.Fatalf("round convert: %v", err)
+	}
+	if got, ok := AsFloat64(out["n"]); !ok || got != 2 {
+		t.Fatalf("expected round 1.7 -> 2, got %#v", out["n"])
+	}
+}
+
 func TestTypeCoerce_NonCoercibleTypeIsCompileError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"tags": arrSchema(strSchema(), nil)})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tags": strSchema()})

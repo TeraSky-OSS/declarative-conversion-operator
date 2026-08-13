@@ -203,7 +203,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 			return out, fmt.Errorf("TypeCoerce: missing params")
 		}
 		out.Strategy = StrategyTypeCoerce
-		out.TypeCoerce = &TypeCoerceParams{Path: r.TypeCoerce.Path}
+		out.TypeCoerce = &TypeCoerceParams{Path: r.TypeCoerce.Path, OnFractionalInteger: r.TypeCoerce.OnFractionalInteger}
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {
 			return out, fmt.Errorf("ScalarToFields: missing params")
@@ -706,7 +706,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		if err != nil {
 			return out, err
 		}
-		out.TypeCoerce = &TypeCoerceParams{Path: hp}
+		out.TypeCoerce = &TypeCoerceParams{Path: hp, OnFractionalInteger: r.TypeCoerce.OnFractionalInteger}
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {
 			return out, fmt.Errorf("ScalarToFields: missing params")

@@ -726,6 +726,16 @@ spec:
                               declare at Path — e.g. a field that was a string in one version and
                               becomes an integer in another.
                             properties:
+                              onFractionalInteger:
+                                default: Error
+                                description: |-
+                                  OnFractionalInteger is the policy when coercing a non-whole number
+                                  into an integer-typed destination. Empty defaults to Error.
+                                enum:
+                                - Error
+                                - Truncate
+                                - Round
+                                type: string
                               path:
                                 type: string
                             required:

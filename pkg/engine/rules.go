@@ -285,15 +285,34 @@ func (ForEachParams) isRuleParams() {}
 // TypeCoerceParams converts a scalar field's JSON type (string, integer,
 // number, or boolean) between whatever the hub and spoke schemas each
 // declare at Path — e.g. a field that was a string in one version and
-// becomes an integer in another. Both directions are always treated as
-// lossless: canonically-formatted values round-trip exactly, though a
-// malformed value (a non-numeric string being coerced to a number, say)
-// is a runtime conversion error rather than a lossiness concern.
+// becomes an integer in another. Whole values round-trip exactly.
+// OnFractionalInteger controls a fractional number written into an
+// integer-typed destination: Error (default, fail-closed), Truncate, or
+// Round. Truncate and Round are lossy in the direction that lands on
+// integer.
 type TypeCoerceParams struct {
-	Path FieldPath // same path on both sides
+	Path                FieldPath
+	OnFractionalInteger FractionalIntegerPolicy
 }
 
 func (TypeCoerceParams) isRuleParams() {}
+
+// FractionalIntegerPolicy is how TypeCoerce handles a non-whole number
+// when the destination schema is integer.
+type FractionalIntegerPolicy string
+
+const (
+	FractionalIntegerError    FractionalIntegerPolicy = "Error"
+	FractionalIntegerTruncate FractionalIntegerPolicy = "Truncate"
+	FractionalIntegerRound    FractionalIntegerPolicy = "Round"
+)
+
+func normalizeFractionalPolicy(p FractionalIntegerPolicy) FractionalIntegerPolicy {
+	if p == "" {
+		return FractionalIntegerError
+	}
+	return p
+}
 
 // ScalarToFieldsParams: the hub field is a single scalar string; Pattern
 // (a regexp with named capture groups) decomposes it into SpokeFields
