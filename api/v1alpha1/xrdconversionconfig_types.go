@@ -458,6 +458,22 @@ type ConversionRule struct {
 	AcknowledgeLossy bool `json:"acknowledgeLossy,omitempty"`
 	// +optional
 	Reason string `json:"reason,omitempty"`
+
+	// When limits this rule to objects whose Path equals Equals (simple
+	// path-value comparison, not CEL). Coverage of the rule's target
+	// paths is partial — compile reports a warning, not an uncovered-field
+	// error, because the rule does not apply on every object.
+	// +optional
+	When *RuleWhen `json:"when,omitempty"`
+}
+
+// RuleWhen is a simple path-equals predicate evaluated against the
+// conversion input object.
+type RuleWhen struct {
+	Path string `json:"path"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Equals extv1.JSON `json:"equals"`
 }
 
 // WebhookServerRefField implements internal/assign's generic ConfigLike

@@ -33,6 +33,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 	out := ConversionRule{
 		AcknowledgeLossy: r.AcknowledgeLossy,
 		Reason:           r.Reason,
+		When:             r.When.DeepCopy(),
 	}
 	switch r.Strategy {
 	case StrategyFieldRename:

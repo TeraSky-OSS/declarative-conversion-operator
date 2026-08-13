@@ -86,6 +86,17 @@ type Rule struct {
 	// SourceIndex back-references the originating api/v1alpha1 rule index,
 	// so status/report entries can be correlated to spec.spokes[i].rules[j].
 	SourceIndex int
+
+	// When, if set, applies this rule only when the input object has
+	// Path equal to Equals. Coverage of the rule's target paths is
+	// reported as partial (a warning), not full.
+	When *RuleWhen
+}
+
+// RuleWhen is a simple path-equals predicate. It is not a CEL expression.
+type RuleWhen struct {
+	Path   FieldPath
+	Equals any
 }
 
 // RuleParams is implemented by every strategy's parameter struct.

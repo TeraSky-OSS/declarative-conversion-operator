@@ -683,6 +683,21 @@ spec:
                             required:
                             - path
                             type: object
+                          when:
+                            description: |-
+                              When limits this rule to objects whose Path equals Equals (simple
+                              path-value comparison, not CEL). Coverage of the rule's target
+                              paths is partial — compile reports a warning, not an uncovered-field
+                              error, because the rule does not apply on every object.
+                            properties:
+                              equals:
+                                x-kubernetes-preserve-unknown-fields: true
+                              path:
+                                type: string
+                            required:
+                            - equals
+                            - path
+                            type: object
                         required:
                         - strategy
                         type: object

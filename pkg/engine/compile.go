@@ -215,6 +215,20 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): spoke->hub conversion is lossy but acknowledgeLossy is not set", idx, rule.Strategy))
 		}
 
+		if rule.When != nil {
+			if len(rule.When.Path) == 0 {
+				ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path is required", idx, rule.Strategy))
+			} else {
+				ruleDiags = append(ruleDiags, warnf(idx, "rule %d (%s): applies only when %q equals %#v; coverage of its target paths is partial", idx, rule.Strategy, rule.When.Path, rule.When.Equals))
+				if h2sOp != nil {
+					h2sOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: h2sOp}
+				}
+				if s2hOp != nil {
+					s2hOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: s2hOp}
+				}
+			}
+		}
+
 		for _, d := range ruleDiags {
 			if d.Severity == SeverityError {
 				rr.Errors = append(rr.Errors, d.Message)

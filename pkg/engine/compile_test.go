@@ -24,6 +24,63 @@ import (
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
+func TestWhen_AppliesOnlyIfPredicateMatches(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"mode":           strSchema(),
+		"advancedOption": strSchema(),
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"mode":         strSchema(),
+		"advancedFlag": strSchema(),
+	})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("mode"), SpokePath: ParsePath("mode")}},
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("advancedOption"), SpokePath: ParsePath("advancedFlag")},
+			When: &RuleWhen{Path: ParsePath("mode"), Equals: "advanced"}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	warns := diagMessages(diags, SeverityWarning)
+	if len(warns) == 0 {
+		t.Fatal("expected a partial-coverage warning for the when-gated rule")
+	}
+	found := false
+	for _, w := range warns {
+		if strings.Contains(w, "partial") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected partial coverage warning, got %v", warns)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	applied, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{
+		"mode": "advanced", "advancedOption": "fast",
+	}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if applied["advancedFlag"] != "fast" {
+		t.Fatalf("expected rename when predicate matches, got %#v", applied)
+	}
+
+	skipped, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{
+		"mode": "basic", "advancedOption": "fast",
+	}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if _, ok := skipped["advancedFlag"]; ok {
+		t.Fatalf("expected rename to be skipped when predicate misses, got %#v", skipped)
+	}
+}
+
 func TestFieldRename_LosslessRoundTrip(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"storageGB": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"storageSize": strSchema()})

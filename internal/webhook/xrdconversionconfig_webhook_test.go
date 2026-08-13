@@ -20,9 +20,28 @@ import (
 	"strings"
 	"testing"
 
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
+
+func TestValidateStructure_WhenRequiresPath(t *testing.T) {
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion: "v2",
+		Spokes: []teraskyv1alpha1.SpokeVersionRules{{
+			Version: "v1",
+			Rules: []teraskyv1alpha1.ConversionRule{{
+				Strategy:    teraskyv1alpha1.StrategyFieldRename,
+				FieldRename: &teraskyv1alpha1.FieldRenameParams{HubPath: "a", SpokePath: "b"},
+				When:        &teraskyv1alpha1.RuleWhen{Equals: extv1.JSON{Raw: []byte(`"x"`)}},
+			}},
+		}},
+	}}
+	if err := ValidateStructure(cfg); err == nil {
+		t.Fatal("expected error for when without path")
+	}
+}
 
 func TestValidateStructure_RejectsSpokeEqualToHub(t *testing.T) {
 	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{

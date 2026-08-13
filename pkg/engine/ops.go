@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -443,6 +444,33 @@ func (o forEachOp) apply(ctx *execContext) error {
 		outArr[i] = elemCtx.output
 	}
 	return setValue(ctx.output, o.dstItemsPath, outArr)
+}
+
+// whenOp skips inner unless the input object has path equal to equals.
+type whenOp struct {
+	path   FieldPath
+	equals any
+	inner  Op
+}
+
+func (o whenOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.path)
+	if !ok || !jsonValuesEqual(v, o.equals) {
+		return nil
+	}
+	return o.inner.apply(ctx)
+}
+
+// jsonValuesEqual compares decoded JSON values, treating numeric types
+// that JSON/YAML might produce (float64 vs int64) as equal when they
+// represent the same number.
+func jsonValuesEqual(a, b any) bool {
+	if af, ok := AsFloat64(a); ok {
+		if bf, ok := AsFloat64(b); ok {
+			return af == bf
+		}
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // coerceOp reads a scalar and rewrites it as whatever JSON type toKind
