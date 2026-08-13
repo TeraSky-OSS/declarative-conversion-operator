@@ -9,6 +9,7 @@ end-to-end, see [Adding a strategy](docs/contributing/adding-a-strategy.md).
 - Go matching `go.mod`
 - Docker (for image builds / e2e)
 - `kubectl`, `kind`, and `helm` for e2e targets
+- `python3` and `curl` for `make test-e2e-load`
 
 ## Development loop
 
@@ -18,6 +19,7 @@ make manifests  # CRD + RBAC into config/
 make fmt
 make vet
 make test       # generate + manifests + fmt + vet + go test -race
+make bench      # pkg/engine + webhook-server microbenchmarks (see docs/operations/capacity.md)
 ```
 
 Useful extras:
@@ -26,6 +28,8 @@ Useful extras:
 make helm-sync          # copy generated CRDs into the Helm chart
 make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
+make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)
+make test-e2e-scale     # kind + generated CRD fleet + parallel Get/List (TARGETS/INSTANCES)
 make dev-up             # kind + cert-manager + Crossplane + kube-prometheus-stack + operator
 make dev-down           # delete the kind cluster from dev-up
 ```

@@ -102,6 +102,7 @@ var allStrategies = []string{
 	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
 	"TypeCoerce", "ScalarToFields", "FieldsToScalar",
 	"ArrayToMapByKey", "MapToArrayByKey", "NumericScale", "ListJoin", "ListSplit",
+	"Quantity", "Duration", "MapKeyRename", "CEL",
 }
 
 // TestRunTest_FullCoverage_EndToEnd exercises a much richer fixture
@@ -256,6 +257,173 @@ func TestStatusFieldConversion(t *testing.T) {
 	v1Status, ok := v1["status"].(map[string]any)
 	if !ok || v1Status["phase"] != "Ready" {
 		t.Fatalf("expected status.phase to pass through identically to v1, got %#v", v1["status"])
+	}
+}
+
+func TestRunTest_IntegerEnumRemap(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/enum-int/xrd.yaml",
+		ConfigPath: "testdata/enum-int/config.yaml",
+		SamplesDir: "testdata/enum-int/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_QuantityMilliRoundTrip(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/quantity/xrd.yaml",
+		ConfigPath: "testdata/quantity/config.yaml",
+		SamplesDir: "testdata/quantity/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_DurationSecondsRoundTrip(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/duration/xrd.yaml",
+		ConfigPath: "testdata/duration/config.yaml",
+		SamplesDir: "testdata/duration/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_MapKeyRenamePassthrough(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/map-key-rename/xrd.yaml",
+		ConfigPath: "testdata/map-key-rename/config.yaml",
+		SamplesDir: "testdata/map-key-rename/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_TypeCoerceFractionalIntegerError(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/type-coerce-frac/xrd.yaml",
+		ConfigPath: "testdata/type-coerce-frac/config.yaml",
+		SamplesDir: "testdata/type-coerce-frac/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors == 0 {
+		t.Fatal("expected a conversion error for the 1.7 sample under onFractionalInteger=Error")
+	}
+}
+
+func TestRunTest_TypeCoerceFractionalIntegerTruncate(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/type-coerce-trunc/xrd.yaml",
+		ConfigPath: "testdata/type-coerce-trunc/config.yaml",
+		SamplesDir: "testdata/type-coerce-trunc/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_CELIntegerPacking(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/cel/xrd.yaml",
+		ConfigPath: "testdata/cel/config.yaml",
+		SamplesDir: "testdata/cel/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunAnalyze_OneOfNamedInDiagnostics(t *testing.T) {
+	out, err := RunAnalyze("testdata/oneof/xrd.yaml", "", "testdata/oneof/config.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Spokes) == 0 {
+		t.Fatal("expected a spoke report")
+	}
+	found := false
+	for _, msg := range out.Spokes[0].Errors {
+		if strings.Contains(msg, "oneOf") && strings.Contains(msg, "payload") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected uncovered diagnostic naming oneOf, got %#v", out.Spokes[0].Errors)
+	}
+}
+
+func TestRunTest_WhenPredicate(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/when/xrd.yaml",
+		ConfigPath: "testdata/when/config.yaml",
+		SamplesDir: "testdata/when/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+}
+
+func TestRunTest_NestedForEachDepth2(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/foreach-nested/xrd.yaml",
+		ConfigPath: "testdata/foreach-nested/config.yaml",
+		SamplesDir: "testdata/foreach-nested/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
 	}
 }
 

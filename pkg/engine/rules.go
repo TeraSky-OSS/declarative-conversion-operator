@@ -45,6 +45,10 @@ const (
 	StrategyNumericScale           Strategy = "NumericScale"
 	StrategyListJoin               Strategy = "ListJoin"
 	StrategyListSplit              Strategy = "ListSplit"
+	StrategyQuantity               Strategy = "Quantity"
+	StrategyDuration               Strategy = "Duration"
+	StrategyMapKeyRename           Strategy = "MapKeyRename"
+	StrategyCEL                    Strategy = "CEL"
 )
 
 // UnmappedFieldPolicy controls what happens when a field exists in a hub or
@@ -86,6 +90,17 @@ type Rule struct {
 	// SourceIndex back-references the originating api/v1alpha1 rule index,
 	// so status/report entries can be correlated to spec.spokes[i].rules[j].
 	SourceIndex int
+
+	// When, if set, applies this rule only when the input object has
+	// Path equal to Equals. Coverage of the rule's target paths is
+	// reported as partial (a warning), not full.
+	When *RuleWhen
+}
+
+// RuleWhen is a simple path-equals predicate. It is not a CEL expression.
+type RuleWhen struct {
+	Path   FieldPath
+	Equals any
 }
 
 // RuleParams is implemented by every strategy's parameter struct.
@@ -197,7 +212,7 @@ type EnumRemapParams struct {
 func (EnumRemapParams) isRuleParams() {}
 
 type EnumValueMapping struct {
-	Hub, Spoke string
+	Hub, Spoke any
 }
 
 // DefaultValueParams injects a default for a field that exists only in one
@@ -271,15 +286,34 @@ func (ForEachParams) isRuleParams() {}
 // TypeCoerceParams converts a scalar field's JSON type (string, integer,
 // number, or boolean) between whatever the hub and spoke schemas each
 // declare at Path — e.g. a field that was a string in one version and
-// becomes an integer in another. Both directions are always treated as
-// lossless: canonically-formatted values round-trip exactly, though a
-// malformed value (a non-numeric string being coerced to a number, say)
-// is a runtime conversion error rather than a lossiness concern.
+// becomes an integer in another. Whole values round-trip exactly.
+// OnFractionalInteger controls a fractional number written into an
+// integer-typed destination: Error (default, fail-closed), Truncate, or
+// Round. Truncate and Round are lossy in the direction that lands on
+// integer.
 type TypeCoerceParams struct {
-	Path FieldPath // same path on both sides
+	Path                FieldPath
+	OnFractionalInteger FractionalIntegerPolicy
 }
 
 func (TypeCoerceParams) isRuleParams() {}
+
+// FractionalIntegerPolicy is how TypeCoerce handles a non-whole number
+// when the destination schema is integer.
+type FractionalIntegerPolicy string
+
+const (
+	FractionalIntegerError    FractionalIntegerPolicy = "Error"
+	FractionalIntegerTruncate FractionalIntegerPolicy = "Truncate"
+	FractionalIntegerRound    FractionalIntegerPolicy = "Round"
+)
+
+func normalizeFractionalPolicy(p FractionalIntegerPolicy) FractionalIntegerPolicy {
+	if p == "" {
+		return FractionalIntegerError
+	}
+	return p
+}
 
 // ScalarToFieldsParams: the hub field is a single scalar string; Pattern
 // (a regexp with named capture groups) decomposes it into SpokeFields
@@ -377,6 +411,52 @@ type ListSplitParams struct {
 }
 
 func (ListSplitParams) isRuleParams() {}
+
+// QuantityParams converts between a Kubernetes resource.Quantity string
+// (e.g. "500m") and an integer millivalue. Compile infers which side is
+// the string from the schemas. Integer→canonical Quantity string is
+// treated as lossy because "0.5" and "500m" are the same Quantity but
+// not the same string.
+type QuantityParams struct {
+	HubPath, SpokePath FieldPath
+}
+
+func (QuantityParams) isRuleParams() {}
+
+// DurationParams converts between a Go duration string ("5m", "1h30m")
+// and an integer number of seconds. Integer→canonical duration string
+// is treated as lossy ("5m" vs "5m0s").
+type DurationParams struct {
+	HubPath, SpokePath FieldPath
+}
+
+func (DurationParams) isRuleParams() {}
+
+// MapKeyRenameParams renames known keys inside a free-form map and
+// passes every other key through unchanged. The whole map is claimed so
+// coverage treats the remainder as intentional passthrough, not omission.
+// Renames must be injective (compile rejects two hub keys mapping to the
+// same spoke key). Both directions are lossless when that holds.
+type MapKeyRenameParams struct {
+	HubPath, SpokePath FieldPath
+	Renames            map[string]string // hub key -> spoke key
+}
+
+func (MapKeyRenameParams) isRuleParams() {}
+
+// CELParams is an always-lossy escape hatch: two CEL expressions rewrite
+// declared hub/spoke paths. Compile cannot prove the expressions inverse,
+// and losslessOverride is intentionally not offered — acknowledgeLossy is
+// required. HubPaths/SpokePaths are claimed for coverage even though the
+// expression bodies are opaque.
+type CELParams struct {
+	HubPaths   []FieldPath
+	SpokePaths []FieldPath
+	HubToSpoke string
+	SpokeToHub string
+}
+
+func (CELParams) isRuleParams() {}
 
 // RuleSet is every rule declared for one hub<->spoke version pair.
 type RuleSet struct {

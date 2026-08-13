@@ -1,0 +1,6 @@
+apiVersion: example.org/v2
+kind: XCPU
+metadata:
+  name: demo
+spec:
+  cpuRequest: "500m"

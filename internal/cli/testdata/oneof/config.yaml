@@ -1,0 +1,11 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xpayloads-conversion
+spec:
+  targetXRD:
+    name: xpayloads.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules: []

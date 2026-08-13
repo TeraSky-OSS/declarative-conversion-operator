@@ -1,0 +1,8 @@
+apiVersion: example.org/v2
+kind: XLabel
+metadata:
+  name: demo
+spec:
+  extraLabels:
+    app: widget
+    keep: "yes"

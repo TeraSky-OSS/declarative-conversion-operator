@@ -1,0 +1,35 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xtimeouts.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XTimeout
+    plural: xtimeouts
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                timeout:
+                  type: string
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                timeoutSeconds:
+                  type: integer

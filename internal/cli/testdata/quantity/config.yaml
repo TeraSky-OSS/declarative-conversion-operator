@@ -1,0 +1,17 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xcpus-conversion
+spec:
+  targetXRD:
+    name: xcpus.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: Quantity
+          quantity:
+            hubPath: spec.cpuRequest
+            spokePath: spec.cpuMillis
+          acknowledgeLossy: true
+          reason: "canonical Quantity spelling (500m) may differ from an equivalent input such as 0.5"

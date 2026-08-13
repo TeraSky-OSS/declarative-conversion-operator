@@ -59,15 +59,19 @@ func warnf(ruleIndex int, format string, args ...any) Diagnostic {
 // without an identical counterpart on the other side). FieldPath and
 // UncoveredSide are always set so Analyze can populate FieldCoverage for
 // both Error and Warn unmapped-field policies.
-func uncoveredFieldDiag(severity Severity, side UncoveredSide, path string) Diagnostic {
+func uncoveredFieldDiag(severity Severity, side UncoveredSide, path, construct string) Diagnostic {
 	var msg string
+	constructNote := ""
+	if construct != "" {
+		constructNote = fmt.Sprintf(" (sits inside a %s schema construct the engine treats opaquely)", construct)
+	}
 	switch side {
 	case UncoveredSideHub:
-		msg = fmt.Sprintf("hub field %q is not covered by any rule and has no identical counterpart in the spoke schema", path)
+		msg = fmt.Sprintf("hub field %q is not covered by any rule and has no identical counterpart in the spoke schema%s", path, constructNote)
 	case UncoveredSideSpoke:
-		msg = fmt.Sprintf("spoke field %q is not covered by any rule and has no identical counterpart in the hub schema", path)
+		msg = fmt.Sprintf("spoke field %q is not covered by any rule and has no identical counterpart in the hub schema%s", path, constructNote)
 	default:
-		msg = fmt.Sprintf("field %q is not covered by any rule", path)
+		msg = fmt.Sprintf("field %q is not covered by any rule%s", path, constructNote)
 	}
 	return Diagnostic{
 		Severity:      severity,

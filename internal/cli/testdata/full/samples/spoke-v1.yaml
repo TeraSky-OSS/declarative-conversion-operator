@@ -43,6 +43,13 @@ spec:
   memoryMB: 2048
   dnsServers:
     - "10.0.0.53"
+  cpuMillis: 1000
+  timeoutSeconds: 30
+  extraLabels:
+    application: "sandbox"
+    region: "eu-central-1"
+  bitHigh: 3
+  bitLow: 16
 status:
   phase: "Pending"
   observedGeneration: 1

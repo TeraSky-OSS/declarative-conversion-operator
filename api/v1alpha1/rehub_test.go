@@ -263,3 +263,118 @@ func TestRehubSpokes_JSONPatchPromoteFails(t *testing.T) {
 		t.Fatal("expected JSONPatch promote to fail closed")
 	}
 }
+
+func TestRehubSpokes_CELPromoteFails(t *testing.T) {
+	t.Parallel()
+	_, _, err := RehubSpokes("v1", "v2", []SpokeVersionRules{
+		{
+			Version: "v2",
+			Rules: []ConversionRule{{
+				Strategy: StrategyCEL,
+				CEL: &CELParams{
+					HubPaths:   []string{"spec.packed"},
+					SpokePaths: []string{"spec.blob"},
+					HubToSpoke: `{"spec.blob": object.spec.packed}`,
+					SpokeToHub: `{"spec.packed": object.spec.blob}`,
+				},
+				AcknowledgeLossy: true,
+			}},
+		},
+		{
+			Version: "v3",
+			Rules: []ConversionRule{{
+				Strategy:    StrategyFieldRename,
+				FieldRename: &FieldRenameParams{HubPath: "spec.packed", SpokePath: "spec.packedV3"},
+			}},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected CEL promote to fail closed so remaining spokes are not rewritten unsafely")
+	}
+}
+
+func TestInvertRule_AllStrategies(t *testing.T) {
+	t.Parallel()
+	rules := wellFormedRules()
+	if len(rules) != 29 {
+		t.Fatalf("wellFormedRules has %d strategies, want 29", len(rules))
+	}
+	for strategy, rule := range rules {
+		t.Run(string(strategy), func(t *testing.T) {
+			t.Parallel()
+			out, err := InvertRule(rule)
+			if err != nil {
+				t.Fatalf("InvertRule(%s): %v", strategy, err)
+			}
+			if out.Strategy == "" {
+				t.Fatalf("InvertRule(%s) produced empty strategy", strategy)
+			}
+			back, err := InvertRule(out)
+			if err != nil {
+				t.Fatalf("InvertRule(%s) round-trip: %v", strategy, err)
+			}
+			if back.Strategy != rule.Strategy {
+				t.Fatalf("round-trip strategy %s -> %s -> %s", rule.Strategy, out.Strategy, back.Strategy)
+			}
+		})
+	}
+}
+
+func TestInvertRule_ToLabelJSONFails(t *testing.T) {
+	t.Parallel()
+	_, err := InvertRule(ConversionRule{
+		Strategy: StrategyToLabel,
+		ToLabel:  &ToMetadataParams{HubPath: "spec.tier", Key: "tier", Serialization: "JSON"},
+	})
+	if err == nil {
+		t.Fatal("expected ToLabel JSON invert to fail")
+	}
+}
+
+func TestPathMapFromPromoteRules_AllStrategies(t *testing.T) {
+	t.Parallel()
+	for strategy, rule := range wellFormedRules() {
+		t.Run(string(strategy), func(t *testing.T) {
+			t.Parallel()
+			_, err := PathMapFromPromoteRules([]ConversionRule{rule})
+			switch strategy {
+			case StrategyCEL, StrategyJSONPatch:
+				if err == nil {
+					t.Fatalf("expected %s to fail closed in a hub path map", strategy)
+				}
+			default:
+				if err != nil {
+					t.Fatalf("PathMapFromPromoteRules(%s): %v", strategy, err)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeSpokeRules_JSONPatchRewriteFails(t *testing.T) {
+	t.Parallel()
+	_, err := ComposeSpokeRules([]ConversionRule{{
+		Strategy:  StrategyJSONPatch,
+		JSONPatch: &JSONPatchParams{HubToSpoke: []JSONPatchOp{{Op: "remove", Path: "/spec/x"}}},
+	}}, HubPathMap{"spec.x": "spec.y"}, nil)
+	if err == nil {
+		t.Fatal("expected JSONPatch hub-path rewrite to fail closed")
+	}
+}
+
+func TestComposeSpokeRules_CELRewriteFails(t *testing.T) {
+	t.Parallel()
+	_, err := ComposeSpokeRules([]ConversionRule{{
+		Strategy: StrategyCEL,
+		CEL: &CELParams{
+			HubPaths:   []string{"spec.packed"},
+			SpokePaths: []string{"spec.bitHigh"},
+			HubToSpoke: `{"spec.bitHigh": object.spec.packed}`,
+			SpokeToHub: `{"spec.packed": object.spec.bitHigh}`,
+		},
+		AcknowledgeLossy: true,
+	}}, HubPathMap{"spec.packed": "spec.blob"}, map[string]bool{"spec.bitHigh": true})
+	if err == nil {
+		t.Fatal("expected CEL hub-path rewrite to fail closed")
+	}
+}

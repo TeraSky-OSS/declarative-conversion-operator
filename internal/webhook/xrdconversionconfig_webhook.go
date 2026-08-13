@@ -269,16 +269,36 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.ListSplit != nil {
 		set++
 	}
+	if r.Quantity != nil {
+		set++
+	}
+	if r.Duration != nil {
+		set++
+	}
+	if r.MapKeyRename != nil {
+		set++
+	}
+	if r.CEL != nil {
+		set++
+	}
 	if set != 1 {
 		return fmt.Errorf("strategy %q requires exactly one matching params field to be set, found %d", r.Strategy, set)
 	}
 	if r.ForEach != nil {
-		if depth >= 1 {
-			return fmt.Errorf("ForEach nesting depth exceeds the supported maximum of 1")
+		if depth >= engine.MaxForEachDepth {
+			return fmt.Errorf("ForEach nesting depth exceeds the supported maximum of %d", engine.MaxForEachDepth)
 		}
 		if err := validateRules(r.ForEach.Rules, depth+1); err != nil {
 			return fmt.Errorf("forEach: %w", err)
 		}
+	}
+	if r.When != nil {
+		if strings.TrimSpace(r.When.Path) == "" {
+			return fmt.Errorf("when.path is required")
+		}
+	}
+	if r.Strategy == teraskyv1alpha1.StrategyCEL && !r.AcknowledgeLossy {
+		return fmt.Errorf("CEL is always treated as lossy; acknowledgeLossy must be true (losslessOverride is not supported)")
 	}
 	if r.Strategy == teraskyv1alpha1.StrategyFromLabel && r.FromLabel != nil && r.FromLabel.Serialization == "JSON" {
 		return fmt.Errorf("FromLabel does not support serialization=JSON; use String (labels cannot carry JSON-quoted values)")

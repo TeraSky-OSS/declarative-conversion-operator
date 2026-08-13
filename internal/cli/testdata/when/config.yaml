@@ -1,0 +1,18 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xmodes-conversion
+spec:
+  targetXRD:
+    name: xmodes.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.advancedOption
+            spokePath: spec.advancedFlag
+          when:
+            path: spec.mode
+            equals: advanced

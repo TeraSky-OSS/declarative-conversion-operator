@@ -24,6 +24,115 @@ import (
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
+func TestWhen_AppliesOnlyIfPredicateMatches(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"mode":           strSchema(),
+		"advancedOption": strSchema(),
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"mode":         strSchema(),
+		"advancedFlag": strSchema(),
+	})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("mode"), SpokePath: ParsePath("mode")}},
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("advancedOption"), SpokePath: ParsePath("advancedFlag")},
+			When: &RuleWhen{Path: ParsePath("mode"), Equals: "advanced"}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	warns := diagMessages(diags, SeverityWarning)
+	if len(warns) == 0 {
+		t.Fatal("expected a partial-coverage warning for the when-gated rule")
+	}
+	found := false
+	for _, w := range warns {
+		if strings.Contains(w, "partial") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected partial coverage warning, got %v", warns)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	applied, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{
+		"mode": "advanced", "advancedOption": "fast",
+	}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if applied["advancedFlag"] != "fast" {
+		t.Fatalf("expected rename when predicate matches, got %#v", applied)
+	}
+
+	skipped, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{
+		"mode": "basic", "advancedOption": "fast",
+	}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if _, ok := skipped["advancedFlag"]; ok {
+		t.Fatalf("expected rename to be skipped when predicate misses, got %#v", skipped)
+	}
+}
+
+func TestWhen_PathMustExistOnBothSchemas(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"mode": strSchema(), "name": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"name": strSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyFieldRename,
+		Params:   FieldRenameParams{HubPath: ParsePath("name"), SpokePath: ParsePath("name")},
+		When:     &RuleWhen{Path: ParsePath("mode"), Equals: "advanced"},
+	}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error when when.path is missing from the spoke schema")
+	}
+}
+
+func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
+	ref := "#/definitions/Payload"
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"payload": {OneOf: []extv1.JSONSchemaProps{strSchema(), {Type: "object"}}},
+		"blob":    {Ref: &ref},
+		"choice":  {AnyOf: []extv1.JSONSchemaProps{strSchema(), intSchema()}},
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"other": strSchema(),
+	})
+	_, diags, err := Compile(RuleSet{Rules: nil}, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	errs := diagMessages(diags, SeverityError)
+	var sawOneOf, sawRef, sawAnyOf bool
+	for _, msg := range errs {
+		if strings.Contains(msg, "oneOf") && strings.Contains(msg, "payload") {
+			sawOneOf = true
+		}
+		if strings.Contains(msg, "$ref") && strings.Contains(msg, "blob") {
+			sawRef = true
+		}
+		if strings.Contains(msg, "anyOf") && strings.Contains(msg, "choice") {
+			sawAnyOf = true
+		}
+	}
+	if !sawOneOf {
+		t.Fatalf("expected uncovered diagnostic naming oneOf for payload, got %v", errs)
+	}
+	if !sawRef {
+		t.Fatalf("expected uncovered diagnostic naming $ref for blob, got %v", errs)
+	}
+	if !sawAnyOf {
+		t.Fatalf("expected uncovered diagnostic naming anyOf for choice, got %v", errs)
+	}
+}
+
 func TestFieldRename_LosslessRoundTrip(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"storageGB": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"storageSize": strSchema()})
@@ -537,6 +646,76 @@ func TestEnumRemap_Bidirectional(t *testing.T) {
 	}
 }
 
+func TestEnumRemap_IntegerValues(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"code": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"code": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyEnumRemap, Params: EnumRemapParams{
+			Path: ParsePath("code"),
+			Mapping: []EnumValueMapping{
+				{Hub: float64(200), Spoke: float64(2)},
+				{Hub: float64(404), Spoke: float64(4)},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"code": float64(404)}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if got, ok := AsFloat64(out["code"]); !ok || got != 4 {
+		t.Fatalf("expected code=4, got %#v", out["code"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if got, ok := AsFloat64(back["code"]); !ok || got != 404 {
+		t.Fatalf("expected code=404, got %#v", back["code"])
+	}
+}
+
+func TestEnumRemap_BooleanValues(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"enabled": boolSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"enabled": boolSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyEnumRemap, Params: EnumRemapParams{
+			Path: ParsePath("enabled"),
+			Mapping: []EnumValueMapping{
+				{Hub: true, Spoke: false},
+				{Hub: false, Spoke: true},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"enabled": true}})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if out["enabled"] != false {
+		t.Fatalf("expected enabled=false, got %#v", out["enabled"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if back["enabled"] != true {
+		t.Fatalf("expected enabled=true, got %#v", back["enabled"])
+	}
+}
+
 func TestEnumRemap_NonInjectiveIsLossy(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})
@@ -683,6 +862,105 @@ func TestForEach_NestedFieldRename(t *testing.T) {
 	}
 }
 
+func TestForEach_Depth2NestedArrays(t *testing.T) {
+	diskHub := objSchema(map[string]extv1.JSONSchemaProps{"sizeGB": strSchema()})
+	diskSpoke := objSchema(map[string]extv1.JSONSchemaProps{"size": strSchema()})
+	volHub := objSchema(map[string]extv1.JSONSchemaProps{
+		"name":  strSchema(),
+		"disks": arrSchema(diskHub, nil),
+	})
+	volSpoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"name":  strSchema(),
+		"disks": arrSchema(diskSpoke, nil),
+	})
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"volumes": arrSchema(volHub, nil)})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"volumes": arrSchema(volSpoke, nil)})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyForEach, Params: ForEachParams{
+			HubItemsPath: ParsePath("volumes"), SpokeItemsPath: ParsePath("volumes"),
+			Rules: []Rule{
+				{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("name"), SpokePath: ParsePath("name")}},
+				{Strategy: StrategyForEach, Params: ForEachParams{
+					HubItemsPath: ParsePath("disks"), SpokeItemsPath: ParsePath("disks"),
+					Rules: []Rule{
+						{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("sizeGB"), SpokePath: ParsePath("size")}},
+					},
+				}},
+			},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	in := map[string]any{"volumes": []any{
+		map[string]any{
+			"name": "data",
+			"disks": []any{
+				map[string]any{"sizeGB": "10"},
+				map[string]any{"sizeGB": "20"},
+			},
+		},
+	}}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	vols := out["volumes"].([]any)
+	disks := vols[0].(map[string]any)["disks"].([]any)
+	if disks[0].(map[string]any)["size"] != "10" || disks[1].(map[string]any)["size"] != "20" {
+		t.Fatalf("unexpected disks: %#v", disks)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	backDisks := back["volumes"].([]any)[0].(map[string]any)["disks"].([]any)
+	if backDisks[0].(map[string]any)["sizeGB"] != "10" {
+		t.Fatalf("round trip mismatch: %#v", back)
+	}
+}
+
+func TestForEach_Depth3RejectedAtCompile(t *testing.T) {
+	leaf := objSchema(map[string]extv1.JSONSchemaProps{"x": strSchema()})
+	l3 := objSchema(map[string]extv1.JSONSchemaProps{"c": arrSchema(leaf, nil)})
+	l2 := objSchema(map[string]extv1.JSONSchemaProps{"b": arrSchema(l3, nil)})
+	root := objSchema(map[string]extv1.JSONSchemaProps{"a": arrSchema(l2, nil)})
+	innerMost := Rule{Strategy: StrategyForEach, Params: ForEachParams{
+		HubItemsPath: ParsePath("c"), SpokeItemsPath: ParsePath("c"),
+		Rules: []Rule{{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("x"), SpokePath: ParsePath("x")}}},
+	}}
+	mid := Rule{Strategy: StrategyForEach, Params: ForEachParams{
+		HubItemsPath: ParsePath("b"), SpokeItemsPath: ParsePath("b"),
+		Rules: []Rule{innerMost},
+	}}
+	outer := Rule{Strategy: StrategyForEach, Params: ForEachParams{
+		HubItemsPath: ParsePath("a"), SpokeItemsPath: ParsePath("a"),
+		Rules: []Rule{mid},
+	}}
+	_, diags, err := Compile(RuleSet{Rules: []Rule{outer}}, &root, &root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	errs := diagMessages(diags, SeverityError)
+	if len(errs) == 0 {
+		t.Fatal("expected compile error for ForEach depth 3")
+	}
+	found := false
+	for _, msg := range errs {
+		if strings.Contains(msg, "nesting depth exceeds") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected nesting-depth error, got %v", errs)
+	}
+}
+
 func TestForEach_LengthMismatchIsHardError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{
 		"hubReplicas": arrSchema(objSchema(map[string]extv1.JSONSchemaProps{"region": strSchema()}), nil),
@@ -788,6 +1066,76 @@ func TestTypeCoerce_RoundTrip(t *testing.T) {
 	}
 	if back["replicas"] != "3" {
 		t.Fatalf("expected replicas=\"3\" (string), got %#v", back["replicas"])
+	}
+}
+
+func TestTypeCoerce_FractionalIntegerError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"n": numSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"n": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("n")}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if _, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 1.7}}); err == nil {
+		t.Fatal("expected a conversion error coercing 1.7 to integer with onFractionalInteger=Error")
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 2.0}})
+	if err != nil {
+		t.Fatalf("whole number should succeed: %v", err)
+	}
+	if got, ok := AsFloat64(out["n"]); !ok || got != 2 {
+		t.Fatalf("expected 2, got %#v", out["n"])
+	}
+}
+
+func TestTypeCoerce_FractionalIntegerTruncateAndRound(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"n": numSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"n": intSchema()})
+	trunc := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("n"), OnFractionalInteger: FractionalIntegerTruncate}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(trunc, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 1.7}})
+	if err != nil {
+		t.Fatalf("truncate convert: %v", err)
+	}
+	if got, ok := AsFloat64(out["n"]); !ok || got != 1 {
+		t.Fatalf("expected truncate 1.7 -> 1, got %#v", out["n"])
+	}
+
+	round := RuleSet{Rules: []Rule{
+		{Strategy: StrategyTypeCoerce, Params: TypeCoerceParams{Path: ParsePath("n"), OnFractionalInteger: FractionalIntegerRound}},
+	}}
+	_, diags, _ = Compile(round, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected compile error: Round onto integer is lossy without acknowledgeLossy")
+	}
+	round.Rules[0].AcknowledgeLossy = true
+	plan, diags, err = Compile(round, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err = Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"n": 1.7}})
+	if err != nil {
+		t.Fatalf("round convert: %v", err)
+	}
+	if got, ok := AsFloat64(out["n"]); !ok || got != 2 {
+		t.Fatalf("expected round 1.7 -> 2, got %#v", out["n"])
 	}
 }
 
@@ -1118,6 +1466,230 @@ func TestListSplit_IsStructuralMirror(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out["tags"], []any{"a", "b"}) {
 		t.Fatalf("expected [a b], got %#v", out["tags"])
+	}
+}
+
+func TestQuantity_StringToMilliIsLossless_ReverseIsLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"cpuRequest": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"cpuMillis": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyQuantity, Params: QuantityParams{HubPath: ParsePath("cpuRequest"), SpokePath: ParsePath("cpuMillis")}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error: millivalue→canonical Quantity string is lossy and acknowledgeLossy is unset")
+	}
+
+	rs.Rules[0].AcknowledgeLossy = true
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors after acknowledgeLossy: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"cpuRequest": "500m"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if got, ok := AsFloat64(out["cpuMillis"]); !ok || got != 500 {
+		t.Fatalf("expected cpuMillis=500, got %#v", out["cpuMillis"])
+	}
+	// "0.5" and "500m" are the same Quantity; canonical formatting picks "500m".
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: map[string]any{"cpuMillis": float64(500)}})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["cpuRequest"] != "500m" {
+		t.Fatalf("expected canonical Quantity string 500m, got %#v", back["cpuRequest"])
+	}
+}
+
+func TestDuration_StringToSecondsIsLossless_ReverseIsLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"timeout": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"timeoutSeconds": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyDuration, Params: DurationParams{HubPath: ParsePath("timeout"), SpokePath: ParsePath("timeoutSeconds")}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"timeout": "5m"}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	if got, ok := AsFloat64(out["timeoutSeconds"]); !ok || got != 300 {
+		t.Fatalf("expected timeoutSeconds=300, got %#v", out["timeoutSeconds"])
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if back["timeout"] != "5m0s" {
+		t.Fatalf("expected canonical duration 5m0s, got %#v", back["timeout"])
+	}
+}
+
+func TestDuration_FractionalSecondsAreRejected(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"timeout": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"timeoutSeconds": intSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyDuration, Params: DurationParams{HubPath: ParsePath("timeout"), SpokePath: ParsePath("timeoutSeconds")}, AcknowledgeLossy: true},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if _, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"timeout": "1500ms"}}); err == nil {
+		t.Fatal("expected a conversion error for a duration that is not a whole number of seconds")
+	}
+}
+
+func TestQuantity_BothStringsIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"cpu": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"cpu": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyQuantity, Params: QuantityParams{HubPath: ParsePath("cpu"), SpokePath: ParsePath("cpu")}, AcknowledgeLossy: true},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error when both sides are strings")
+	}
+}
+
+func TestMapKeyRename_RenamesKnownKeyAndPassesOthers(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyMapKeyRename, Params: MapKeyRenameParams{
+			HubPath: ParsePath("labels"), SpokePath: ParsePath("labels"),
+			Renames: map[string]string{"app": "application"},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{
+		"labels": map[string]any{"app": "widget", "keep": "yes"},
+	}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	got, _ := out["labels"].(map[string]any)
+	if got["application"] != "widget" || got["keep"] != "yes" {
+		t.Fatalf("expected renamed app plus passthrough keep, got %#v", out["labels"])
+	}
+	if _, still := got["app"]; still {
+		t.Fatalf("expected hub key app to be renamed away, got %#v", got)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	backMap, _ := back["labels"].(map[string]any)
+	if backMap["app"] != "widget" || backMap["keep"] != "yes" {
+		t.Fatalf("expected reverse rename plus passthrough, got %#v", back["labels"])
+	}
+}
+
+func TestMapKeyRename_NonInjectiveIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyMapKeyRename, Params: MapKeyRenameParams{
+			HubPath: ParsePath("labels"), SpokePath: ParsePath("labels"),
+			Renames: map[string]string{"a": "x", "b": "x"},
+		}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error for non-injective renames")
+	}
+}
+
+func TestCEL_IntegerPackingRoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"packed": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"bitHigh": intSchema(), "bitLow": intSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyCEL,
+		Params: CELParams{
+			HubPaths:   []FieldPath{ParsePath("packed")},
+			SpokePaths: []FieldPath{ParsePath("bitHigh"), ParsePath("bitLow")},
+			HubToSpoke: `{"bitHigh": int(object.packed) / 256, "bitLow": int(object.packed) % 256}`,
+			SpokeToHub: `{"packed": int(object.bitHigh) * 256 + int(object.bitLow)}`,
+		},
+		AcknowledgeLossy: true,
+	}}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"packed": float64(1025)}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	high, _ := AsFloat64(out["bitHigh"])
+	low, _ := AsFloat64(out["bitLow"])
+	if high != 4 || low != 1 {
+		t.Fatalf("expected bitHigh=4 bitLow=1, got %#v", out)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if got, ok := AsFloat64(back["packed"]); !ok || got != 1025 {
+		t.Fatalf("expected packed=1025, got %#v", back["packed"])
+	}
+}
+
+func TestCEL_RequiresAcknowledgeLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": intSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyCEL,
+		Params: CELParams{
+			HubPaths:   []FieldPath{ParsePath("a")},
+			SpokePaths: []FieldPath{ParsePath("b")},
+			HubToSpoke: `{"b": object.a}`,
+			SpokeToHub: `{"a": object.b}`,
+		},
+	}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error when CEL is missing acknowledgeLossy")
+	}
+}
+
+func TestCEL_BadExpressionIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": intSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyCEL,
+		Params: CELParams{
+			HubPaths:   []FieldPath{ParsePath("a")},
+			SpokePaths: []FieldPath{ParsePath("b")},
+			HubToSpoke: `this is not cel`,
+			SpokeToHub: `{"a": object.b}`,
+		},
+		AcknowledgeLossy: true,
+	}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error for an invalid hubToSpoke expression")
 	}
 }
 

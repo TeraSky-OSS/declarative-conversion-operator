@@ -33,6 +33,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 	out := ConversionRule{
 		AcknowledgeLossy: r.AcknowledgeLossy,
 		Reason:           r.Reason,
+		When:             r.When.DeepCopy(),
 	}
 	switch r.Strategy {
 	case StrategyFieldRename:
@@ -202,7 +203,7 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 			return out, fmt.Errorf("TypeCoerce: missing params")
 		}
 		out.Strategy = StrategyTypeCoerce
-		out.TypeCoerce = &TypeCoerceParams{Path: r.TypeCoerce.Path}
+		out.TypeCoerce = &TypeCoerceParams{Path: r.TypeCoerce.Path, OnFractionalInteger: r.TypeCoerce.OnFractionalInteger}
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {
 			return out, fmt.Errorf("ScalarToFields: missing params")
@@ -262,6 +263,43 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.Strategy = StrategyListJoin
 		out.ListJoin = &ListJoinParams{
 			HubPath: r.ListSplit.SpokePath, SpokePath: r.ListSplit.HubPath, Separator: r.ListSplit.Separator,
+		}
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return out, fmt.Errorf("quantity: missing params")
+		}
+		out.Strategy = StrategyQuantity
+		out.Quantity = &QuantityParams{
+			HubPath: r.Quantity.SpokePath, SpokePath: r.Quantity.HubPath,
+		}
+	case StrategyDuration:
+		if r.Duration == nil {
+			return out, fmt.Errorf("duration: missing params")
+		}
+		out.Strategy = StrategyDuration
+		out.Duration = &DurationParams{
+			HubPath: r.Duration.SpokePath, SpokePath: r.Duration.HubPath,
+		}
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return out, fmt.Errorf("mapKeyRename: missing params")
+		}
+		rev := make(map[string]string, len(r.MapKeyRename.Renames))
+		for hubKey, spokeKey := range r.MapKeyRename.Renames {
+			rev[spokeKey] = hubKey
+		}
+		out.Strategy = StrategyMapKeyRename
+		out.MapKeyRename = &MapKeyRenameParams{
+			HubPath: r.MapKeyRename.SpokePath, SpokePath: r.MapKeyRename.HubPath, Renames: rev,
+		}
+	case StrategyCEL:
+		if r.CEL == nil {
+			return out, fmt.Errorf("cel: missing params")
+		}
+		out.Strategy = StrategyCEL
+		out.CEL = &CELParams{
+			HubPaths: append([]string(nil), r.CEL.SpokePaths...), SpokePaths: append([]string(nil), r.CEL.HubPaths...),
+			HubToSpoke: r.CEL.SpokeToHub, SpokeToHub: r.CEL.HubToSpoke,
 		}
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
@@ -412,6 +450,23 @@ func hubSpokePathPairs(r ConversionRule) ([]pathPair, error) {
 			return nil, fmt.Errorf("ListSplit: missing params")
 		}
 		return []pathPair{{r.ListSplit.HubPath, r.ListSplit.SpokePath}}, nil
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return nil, fmt.Errorf("quantity: missing params")
+		}
+		return []pathPair{{r.Quantity.HubPath, r.Quantity.SpokePath}}, nil
+	case StrategyDuration:
+		if r.Duration == nil {
+			return nil, fmt.Errorf("duration: missing params")
+		}
+		return []pathPair{{r.Duration.HubPath, r.Duration.SpokePath}}, nil
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return nil, fmt.Errorf("mapKeyRename: missing params")
+		}
+		return []pathPair{{r.MapKeyRename.HubPath, r.MapKeyRename.SpokePath}}, nil
+	case StrategyCEL:
+		return nil, fmt.Errorf("CEL cannot contribute to a hub path map; remaining spokes that depend on it must be rewritten by hand")
 	case StrategyArrayToMapByKey:
 		if r.ArrayToMapByKey == nil {
 			return nil, fmt.Errorf("ArrayToMapByKey: missing params")
@@ -641,6 +696,8 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		}
 	case StrategyJSONPatch:
 		return out, fmt.Errorf("JSONPatch hub-path rewrite is not supported; rewrite remaining-spoke JSONPatch rules by hand")
+	case StrategyCEL:
+		return out, fmt.Errorf("cel hub-path rewrite is not supported; rewrite remaining-spoke CEL rules by hand")
 	case StrategyForEach:
 		if r.ForEach == nil {
 			return out, fmt.Errorf("ForEach: missing params")
@@ -662,7 +719,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		if err != nil {
 			return out, err
 		}
-		out.TypeCoerce = &TypeCoerceParams{Path: hp}
+		out.TypeCoerce = &TypeCoerceParams{Path: hp, OnFractionalInteger: r.TypeCoerce.OnFractionalInteger}
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {
 			return out, fmt.Errorf("ScalarToFields: missing params")
@@ -744,6 +801,39 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		cp := *r.ListSplit
 		cp.HubPath = hp
 		out.ListSplit = &cp
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return out, fmt.Errorf("quantity: missing params")
+		}
+		hp, err := mapPath(r.Quantity.HubPath)
+		if err != nil {
+			return out, err
+		}
+		cp := *r.Quantity
+		cp.HubPath = hp
+		out.Quantity = &cp
+	case StrategyDuration:
+		if r.Duration == nil {
+			return out, fmt.Errorf("duration: missing params")
+		}
+		hp, err := mapPath(r.Duration.HubPath)
+		if err != nil {
+			return out, err
+		}
+		cp := *r.Duration
+		cp.HubPath = hp
+		out.Duration = &cp
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return out, fmt.Errorf("mapKeyRename: missing params")
+		}
+		hp, err := mapPath(r.MapKeyRename.HubPath)
+		if err != nil {
+			return out, err
+		}
+		cp := *r.MapKeyRename
+		cp.HubPath = hp
+		out.MapKeyRename = &cp
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -865,6 +955,22 @@ func spokePathsOf(r ConversionRule) []string {
 	case StrategyListSplit:
 		if r.ListSplit != nil {
 			return []string{r.ListSplit.SpokePath}
+		}
+	case StrategyQuantity:
+		if r.Quantity != nil {
+			return []string{r.Quantity.SpokePath}
+		}
+	case StrategyDuration:
+		if r.Duration != nil {
+			return []string{r.Duration.SpokePath}
+		}
+	case StrategyMapKeyRename:
+		if r.MapKeyRename != nil {
+			return []string{r.MapKeyRename.SpokePath}
+		}
+	case StrategyCEL:
+		if r.CEL != nil {
+			return append([]string(nil), r.CEL.SpokePaths...)
 		}
 	case StrategyTypeCoerce:
 		if r.TypeCoerce != nil {

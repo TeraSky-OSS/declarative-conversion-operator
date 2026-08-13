@@ -1,0 +1,6 @@
+apiVersion: example.org/v1
+kind: XPrio
+metadata:
+  name: frac
+spec:
+  weight: 1

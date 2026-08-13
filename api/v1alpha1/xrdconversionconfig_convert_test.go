@@ -97,7 +97,7 @@ func wellFormedRules() map[Strategy]ConversionRule {
 			Strategy: StrategyEnumRemap,
 			EnumRemap: &EnumRemapParams{
 				Path:    "spec.tier",
-				Mapping: []EnumValueMapping{{Hub: "Standard", Spoke: "std"}, {Hub: "Premium", Spoke: "prem"}},
+				Mapping: []EnumValueMapping{{Hub: rawJSON(`"Standard"`), Spoke: rawJSON(`"std"`)}, {Hub: rawJSON(`"Premium"`), Spoke: rawJSON(`"prem"`)}},
 			},
 		},
 		StrategyDefaultValue: {
@@ -169,6 +169,31 @@ func wellFormedRules() map[Strategy]ConversionRule {
 			Strategy:  StrategyListSplit,
 			ListSplit: &ListSplitParams{HubPath: "spec.tagsCSV", SpokePath: "spec.tags", Separator: ","},
 		},
+		StrategyQuantity: {
+			Strategy: StrategyQuantity,
+			Quantity: &QuantityParams{HubPath: "spec.cpuRequest", SpokePath: "spec.cpuMillis"},
+		},
+		StrategyDuration: {
+			Strategy: StrategyDuration,
+			Duration: &DurationParams{HubPath: "spec.timeout", SpokePath: "spec.timeoutSeconds"},
+		},
+		StrategyMapKeyRename: {
+			Strategy: StrategyMapKeyRename,
+			MapKeyRename: &MapKeyRenameParams{
+				HubPath: "spec.extraLabels", SpokePath: "spec.extraLabels",
+				Renames: map[string]string{"app": "application"},
+			},
+		},
+		StrategyCEL: {
+			Strategy: StrategyCEL,
+			CEL: &CELParams{
+				HubPaths:   []string{"spec.packed"},
+				SpokePaths: []string{"spec.bitHigh", "spec.bitLow"},
+				HubToSpoke: `{"spec.bitHigh": int(object.spec.packed) / 256, "spec.bitLow": int(object.spec.packed) % 256}`,
+				SpokeToHub: `{"spec.packed": object.spec.bitHigh * 256 + object.spec.bitLow}`,
+			},
+			AcknowledgeLossy: true,
+		},
 	}
 }
 
@@ -203,6 +228,10 @@ func clearParams(rule ConversionRule) ConversionRule {
 	rule.NumericScale = nil
 	rule.ListJoin = nil
 	rule.ListSplit = nil
+	rule.Quantity = nil
+	rule.Duration = nil
+	rule.MapKeyRename = nil
+	rule.CEL = nil
 	return rule
 }
 
