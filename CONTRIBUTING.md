@@ -18,6 +18,7 @@ make manifests  # CRD + RBAC into config/
 make fmt
 make vet
 make test       # generate + manifests + fmt + vet + go test -race
+make bench      # pkg/engine + webhook-server microbenchmarks (see docs/operations/capacity.md)
 ```
 
 Useful extras:

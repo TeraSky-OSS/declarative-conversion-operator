@@ -1,10 +1,69 @@
 # Capacity planning
 
-This page is a starting point, not a benchmark report. Phase 9 will add
-measured compile-time and ConversionReview latency numbers; until then, treat
-the guidance below as operational defaults that have held up in development and
-CI, and validate them against your own traffic with the metrics in
-[Observability](../observability.md).
+This page mixes operational defaults with measured envelopes from the Phase 9
+benchmark suite. Absolute times vary by CPU; the shapes (linear in leaf count
+and array length) are what to plan around. Re-run locally with `make bench`.
+
+Numbers below are from `go test -bench=. -benchmem -benchtime=300ms ./pkg/engine/`
+on an Intel Core Ultra 9 285HX (WSL2). Treat them as order-of-magnitude, not
+SLOs. The CI `Microbenchmarks (smoke)` job only proves the benchmarks compile
+and run; it does not gate on wall-clock.
+
+## Compile vs schema size
+
+`Compile` is linear in the number of schema leaves when each leaf has a
+`FieldRename` rule (the common case). It is **not** on the ConversionReview
+hot path — webhook-server compiles once per config change / pod start.
+
+| Leaves | ns/op | B/op | allocs/op | ≈ time |
+|---|---:|---:|---:|---:|
+| 10 | 30k | 48 KiB | 214 | 0.03 ms |
+| 100 | 317k | 467 KiB | 1.8k | 0.32 ms |
+| 1000 | 3.0M | 4.7 MiB | 17k | 3.0 ms |
+
+A 1000-leaf schema compiling in ~3 ms is well inside a reconcile budget.
+Hundreds of targets compiling on pod start is still seconds, not minutes.
+
+## Convert vs array length
+
+Hot-path `Convert` for the ops whose cost scales with element count. Direction
+is hub→spoke. Cost is linear in `n`.
+
+| Op | n=10 | n=100 | n=1000 |
+|---|---:|---:|---:|
+| `forEach` (2 nested FieldRenames) | 2.9 µs | 29 µs | 332 µs |
+| `arrayToMapByKey` | 4.1 µs | 34 µs | 428 µs |
+| `mapToArrayByKey` | 3.2 µs | 37 µs | 443 µs |
+
+A 1000-element array is still sub-millisecond per object. Pathological arrays
+(tens of thousands of elements) would show up as data-shape problems, not
+"need more replicas."
+
+## JSONPatch (baseline)
+
+Each `jsonPatch` op marshals the whole input, applies the patch, and unmarshals.
+Three independent ops on the same object cost ~3.3× one op (5.2 µs vs 17 µs) —
+the marshal round-trip is paid per op, not per Convert.
+
+| JSONPatch ops | ns/op | allocs/op |
+|---|---:|---:|
+| 1 | 5.2k | 64 |
+| 3 | 17k | 186 |
+
+## Spoke-to-spoke vs hub hop
+
+Router always goes spoke A → hub → spoke B (`O(N)` compiled plans, never
+pairwise). For a 1000-element `forEach` object:
+
+| Route | ns/op | vs hub→spoke |
+|---|---:|---|
+| hub → spoke | 328k | 1.0× |
+| spoke → spoke | 765k | 2.3× |
+
+Spoke-to-spoke is essentially two Converts. Even in this worst-case array
+shape it stays under 1 ms. The apiserver stores at the hub version, so
+spoke-to-spoke is rare in production. Direct shortcut plans are not worth
+breaking compile-time `O(N)` for — see issue #80.
 
 ## What actually consumes capacity
 
@@ -52,16 +111,14 @@ If latency climbs while CPU is idle, look for oversized ConversionReview
 batches or pathological array sizes under `forEach` / `arrayToMapByKey` —
 those show up as data-shape problems, not "need more replicas."
 
-## Known gaps (Phase 9)
+## Remaining gaps
 
-- No published compile-time vs schema-size curve yet
-  ([issue #75](https://github.com/terasky-oss/declarative-conversion-operator/issues/75)).
-- No synthetic large-batch ConversionReview load e2e yet
-  ([issue #79](https://github.com/terasky-oss/declarative-conversion-operator/issues/79)).
-- Extremely large/deep schemas and huge `forEach` arrays are called out as
-  unvalidated in [Limitations](../limitations.md).
-
-When those land, this page will cite the numbers instead of defaults.
+- Synthetic large-batch ConversionReview load e2e
+  ([issue #79](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/79)).
+- Registry copy-on-write cost at 100+ entries
+  ([issue #78](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/78)).
+- `cacheSelector` watch/memory reduction measurement
+  ([issue #76](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/76)).
 
 ## Related
 

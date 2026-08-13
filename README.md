@@ -146,6 +146,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop. Short version:
 ```console
 make generate manifests   # regenerate deepcopy code and CRD/RBAC YAML from kubebuilder markers
 make test                  # go vet + unit tests (race-enabled)
+make bench                 # microbenchmarks; numbers live in docs/operations/capacity.md
 make build                  # build all three binaries into bin/
 make helm-lint helm-template
 ```

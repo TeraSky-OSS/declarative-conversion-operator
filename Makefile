@@ -50,6 +50,10 @@ vet: ## Run go vet against code.
 test: generate manifests fmt vet ## Run unit tests.
 	go test ./... -race -count=1
 
+.PHONY: bench
+bench: ## Run microbenchmarks (times are not asserted; see docs/operations/capacity.md).
+	go test -run=^$$ -bench=. -benchmem -count=1 -benchtime=200ms ./pkg/engine/ ./internal/webhookserver/
+
 .PHONY: test-e2e
 test-e2e: ## Run the real end-to-end test: kind + cert-manager + Crossplane + this operator, both features enabled, proving the conversion webhook works against a live apiserver. Requires docker, kind, kubectl, and helm on PATH. Set KEEP_CLUSTER=1 to skip teardown for debugging.
 	./hack/e2e-test.sh

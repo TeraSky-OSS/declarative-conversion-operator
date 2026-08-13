@@ -25,9 +25,13 @@ This page is deliberately blunt about what the operator does *not* do today, so 
 - **Spoke-to-spoke conversions always route through the hub** — two `Convert` calls, never a direct spoke-to-spoke path. This keeps compilation cost linear in the number of spoke versions, at the cost of always paying for two conversion passes on a spoke-to-spoke request (which is inherently rarer than spoke-to-hub or hub-to-spoke in practice, since the apiserver always stores at the hub version).
 - **No cross-cluster or multi-region coordination.** Every `ConversionWebhookServer` instance and every operator replica assumes a single Kubernetes cluster.
 
-## Not (yet) validated
+## Scale envelopes
 
-- Extremely large or deeply nested schemas haven't been load-tested for compile time or the webhook server's per-request latency at scale.
-- Conversion of resources with very large numbers of array elements under `forEach`, `arrayToMapByKey`, or `mapToArrayByKey` hasn't been benchmarked.
+Microbenchmarks for compile time vs schema size and `Convert` vs array length
+live in [`pkg/engine/*_bench_test.go`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/pkg/engine)
+and are summarized in [Capacity planning](operations/capacity.md). Extremely
+large or deeply nested schemas beyond the published 1000-leaf / 1000-element
+points are still unvalidated against a live apiserver. Re-run `make bench`
+locally; a synthetic ConversionReview load script is tracked as issue #79.
 
 If something here blocks you, please [open an issue](https://github.com/terasky-oss/declarative-conversion-operator/issues) — several of these are natural extension points the design was deliberately seamed for (see [Roadmap](roadmap.md)), not fundamental barriers.
