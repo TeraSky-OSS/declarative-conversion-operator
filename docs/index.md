@@ -1,11 +1,5 @@
 # declarative-conversion-operator
 
-!!! note "Canonical product name"
-    The product, Helm chart, Go module, and GitHub repository are all
-    **`declarative-conversion-operator`**. A local directory still named
-    `xrd-conversion-operator` is the same project — clone from
-    [`TeraSky-OSS/declarative-conversion-operator`](https://github.com/TeraSky-OSS/declarative-conversion-operator).
-
 !!! warning "Alpha, under active development"
     APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome on [GitHub](https://github.com/terasky-oss/declarative-conversion-operator).
 
