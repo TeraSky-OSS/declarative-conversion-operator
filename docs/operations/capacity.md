@@ -91,6 +91,22 @@ That is a 99% reduction in both watch count and cache RAM. Use a selector per
 tenant (or per team) when one cluster holds many configs but each webhook
 instance only serves a slice.
 
+## Registry copy-on-write at 100+ entries
+
+`Registry.Set` copies the whole map of pointers and atomically swaps it so
+`Get` stays lock-free. At realistic scale:
+
+| Entries | Set ns/op | Get ns/op |
+|---|---:|---:|
+| 10 | 0.7k | — |
+| 100 | 4.5k | — |
+| 1000 | 40k | 7 (serial) / 0.6 (parallel) |
+
+A 4.5 µs copy on config churn (seconds to minutes apart) is noise next to
+compile time (~3 ms for 1000 leaves). The hot path is `Get`, which is a
+single atomic load. The current copy-on-write map is adequate; a more
+complex persistent structure is not justified.
+
 ## What actually consumes capacity
 
 | Workload | Who pays | Scales with |
@@ -141,8 +157,6 @@ those show up as data-shape problems, not "need more replicas."
 
 - Synthetic large-batch ConversionReview load e2e
   ([issue #79](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/79)).
-- Registry copy-on-write cost at 100+ entries
-  ([issue #78](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/78)).
 
 ## Related
 
