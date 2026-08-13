@@ -466,14 +466,7 @@ func hubSpokePathPairs(r ConversionRule) ([]pathPair, error) {
 		}
 		return []pathPair{{r.MapKeyRename.HubPath, r.MapKeyRename.SpokePath}}, nil
 	case StrategyCEL:
-		if r.CEL == nil {
-			return nil, fmt.Errorf("cel: missing params")
-		}
-		pairs := make([]pathPair, 0, len(r.CEL.HubPaths))
-		for _, hp := range r.CEL.HubPaths {
-			pairs = append(pairs, pathPair{hp, hp})
-		}
-		return pairs, nil
+		return nil, fmt.Errorf("CEL cannot contribute to a hub path map; remaining spokes that depend on it must be rewritten by hand")
 	case StrategyArrayToMapByKey:
 		if r.ArrayToMapByKey == nil {
 			return nil, fmt.Errorf("ArrayToMapByKey: missing params")

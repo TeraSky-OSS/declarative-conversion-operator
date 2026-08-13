@@ -264,6 +264,35 @@ func TestRehubSpokes_JSONPatchPromoteFails(t *testing.T) {
 	}
 }
 
+func TestRehubSpokes_CELPromoteFails(t *testing.T) {
+	t.Parallel()
+	_, _, err := RehubSpokes("v1", "v2", []SpokeVersionRules{
+		{
+			Version: "v2",
+			Rules: []ConversionRule{{
+				Strategy: StrategyCEL,
+				CEL: &CELParams{
+					HubPaths:   []string{"spec.packed"},
+					SpokePaths: []string{"spec.blob"},
+					HubToSpoke: `{"spec.blob": object.spec.packed}`,
+					SpokeToHub: `{"spec.packed": object.spec.blob}`,
+				},
+				AcknowledgeLossy: true,
+			}},
+		},
+		{
+			Version: "v3",
+			Rules: []ConversionRule{{
+				Strategy:    StrategyFieldRename,
+				FieldRename: &FieldRenameParams{HubPath: "spec.packed", SpokePath: "spec.packedV3"},
+			}},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected CEL promote to fail closed so remaining spokes are not rewritten unsafely")
+	}
+}
+
 func TestComposeSpokeRules_CELRewriteFails(t *testing.T) {
 	t.Parallel()
 	_, err := ComposeSpokeRules([]ConversionRule{{
