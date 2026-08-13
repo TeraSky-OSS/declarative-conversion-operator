@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename;CEL
 type Strategy string
 
 const (
@@ -101,6 +101,10 @@ const (
 	StrategyNumericScale           Strategy = "NumericScale"
 	StrategyListJoin               Strategy = "ListJoin"
 	StrategyListSplit              Strategy = "ListSplit"
+	StrategyQuantity               Strategy = "Quantity"
+	StrategyDuration               Strategy = "Duration"
+	StrategyMapKeyRename           Strategy = "MapKeyRename"
+	StrategyCEL                    Strategy = "CEL"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -225,9 +229,14 @@ type FromLabelParams struct {
 }
 
 // EnumValueMapping pairs one hub enum value with its spoke equivalent.
+// Values may be strings, integers, numbers, or booleans.
 type EnumValueMapping struct {
-	Hub   string `json:"hub"`
-	Spoke string `json:"spoke"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Hub extv1.JSON `json:"hub"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Spoke extv1.JSON `json:"spoke"`
 }
 
 // EnumRemapParams bidirectionally maps a scalar field's enumerated values.
@@ -296,7 +305,8 @@ type JSONPatchParams struct {
 
 // ForEachParams applies a nested rule list to each element of a hub array
 // and the corresponding spoke array. Nested rule paths are relative to a
-// single array element. Nesting is capped at depth 1.
+// single array element. Nesting is capped at depth 2 (a ForEach may wrap
+// another ForEach for arrays-of-arrays; a third level is rejected).
 type ForEachParams struct {
 	HubItemsPath   string `json:"hubItemsPath"`
 	SpokeItemsPath string `json:"spokeItemsPath"`
@@ -311,6 +321,12 @@ type ForEachParams struct {
 // becomes an integer in another.
 type TypeCoerceParams struct {
 	Path string `json:"path"`
+	// OnFractionalInteger is the policy when coercing a non-whole number
+	// into an integer-typed destination. Empty defaults to Error.
+	// +optional
+	// +kubebuilder:validation:Enum=Error;Truncate;Round
+	// +kubebuilder:default=Error
+	OnFractionalInteger string `json:"onFractionalInteger,omitempty"`
 }
 
 // ScalarToFieldsParams: the hub field is a single scalar string; Pattern
@@ -394,6 +410,40 @@ type ListSplitParams struct {
 	Separator string `json:"separator"`
 }
 
+// QuantityParams converts between a Kubernetes resource.Quantity string
+// and an integer millivalue. Compile infers which side is the string.
+type QuantityParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+}
+
+// DurationParams converts between a Go duration string and integer seconds.
+type DurationParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+}
+
+// MapKeyRenameParams renames known keys inside a free-form map; other keys
+// pass through unchanged. Renames is hub-key → spoke-key and must be injective.
+type MapKeyRenameParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	// +kubebuilder:validation:MinProperties=1
+	Renames map[string]string `json:"renames"`
+}
+
+// CELParams is an always-lossy escape hatch. Both expressions receive the
+// source object as `object` and must return a map whose declared destination
+// paths are merged onto the output. losslessOverride is not supported.
+type CELParams struct {
+	// +kubebuilder:validation:MinItems=1
+	HubPaths []string `json:"hubPaths"`
+	// +kubebuilder:validation:MinItems=1
+	SpokePaths []string `json:"spokePaths"`
+	HubToSpoke string   `json:"hubToSpoke"`
+	SpokeToHub string   `json:"spokeToHub"`
+}
+
 // ConversionRule is one declarative conversion rule between the hub version
 // and a spoke version. Exactly one of the strategy-specific fields below
 // should be set, matching Strategy.
@@ -450,6 +500,14 @@ type ConversionRule struct {
 	ListJoin *ListJoinParams `json:"listJoin,omitempty"`
 	// +optional
 	ListSplit *ListSplitParams `json:"listSplit,omitempty"`
+	// +optional
+	Quantity *QuantityParams `json:"quantity,omitempty"`
+	// +optional
+	Duration *DurationParams `json:"duration,omitempty"`
+	// +optional
+	MapKeyRename *MapKeyRenameParams `json:"mapKeyRename,omitempty"`
+	// +optional
+	CEL *CELParams `json:"cel,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).
@@ -457,6 +515,22 @@ type ConversionRule struct {
 	AcknowledgeLossy bool `json:"acknowledgeLossy,omitempty"`
 	// +optional
 	Reason string `json:"reason,omitempty"`
+
+	// When limits this rule to objects whose Path equals Equals (simple
+	// path-value comparison, not CEL). Coverage of the rule's target
+	// paths is partial — compile reports a warning, not an uncovered-field
+	// error, because the rule does not apply on every object.
+	// +optional
+	When *RuleWhen `json:"when,omitempty"`
+}
+
+// RuleWhen is a simple path-equals predicate evaluated against the
+// conversion input object.
+type RuleWhen struct {
+	Path string `json:"path"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Equals extv1.JSON `json:"equals"`
 }
 
 // WebhookServerRefField implements internal/assign's generic ConfigLike

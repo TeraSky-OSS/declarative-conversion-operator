@@ -88,7 +88,7 @@ Each `ConversionWebhookServer` replica keeps its compiled plans in a lock-free, 
 
 ### I hit a case none of the built-in strategies handle. Now what?
 
-`jsonPatch` is the escape hatch — an arbitrary RFC 6902 patch list, always treated as lossy unless you explicitly set `losslessOverride: true` (the engine can't statically verify a patch is its own inverse). If you find yourself reaching for it often for the same shape of problem, [open an issue](https://github.com/terasky-oss/declarative-conversion-operator/issues) — real-world API migration patterns are what shapes which strategy gets added next; see the [Roadmap](roadmap.md).
+`jsonPatch` is the structural escape hatch (arbitrary RFC 6902 patches; lossy unless `losslessOverride: true`). `cel` is the value-math escape hatch (always lossy — no `losslessOverride`). If you find yourself reaching for either often for the same shape of problem, [open an issue](https://github.com/terasky-oss/declarative-conversion-operator/issues) — real-world API migration patterns are what shapes which strategy gets added next; see the [Roadmap](roadmap.md).
 
 ### Where do I report a bug or ask a question?
 

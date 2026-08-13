@@ -1,0 +1,7 @@
+apiVersion: example.org/v2
+kind: XMode
+metadata:
+  name: advanced
+spec:
+  mode: advanced
+  advancedOption: fast

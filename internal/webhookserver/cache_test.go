@@ -97,6 +97,64 @@ func TestCacheSelector_ReducesCachedObjectCount(t *testing.T) {
 	}
 }
 
+func TestCacheSelector_LargeSyntheticReduction(t *testing.T) {
+	t.Parallel()
+	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by, ok := byObjectFor(opts, &teraskyv1alpha1.XRDConversionConfig{})
+	if !ok || by.Label == nil {
+		t.Fatal("expected label selector")
+	}
+
+	const total, matching = 10000, 100
+	all := make([]labels.Set, 0, total)
+	for i := 0; i < total-matching; i++ {
+		all = append(all, labels.Set{"tenant": "other"})
+	}
+	for i := 0; i < matching; i++ {
+		all = append(all, labels.Set{"tenant": "a"})
+	}
+	unscoped := CountMatchingLabels(all, labels.Everything())
+	scoped := CountMatchingLabels(all, by.Label)
+	if unscoped != total || scoped != matching {
+		t.Fatalf("unscoped=%d scoped=%d, want %d/%d", unscoped, scoped, total, matching)
+	}
+	// ByObject label selectors shrink the informer *store* (objects held),
+	// not the number of watches (still one list/watch per GVK). Memory then
+	// scales with matched objects; this test only asserts the match ratio.
+}
+
+func BenchmarkCountMatchingLabels(b *testing.B) {
+	const total, matching = 10000, 100
+	all := make([]labels.Set, 0, total)
+	for i := 0; i < total-matching; i++ {
+		all = append(all, labels.Set{"tenant": "other"})
+	}
+	for i := 0; i < matching; i++ {
+		all = append(all, labels.Set{"tenant": "a"})
+	}
+	sel, err := labels.Parse("tenant=a")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("unscoped", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if CountMatchingLabels(all, labels.Everything()) != total {
+				b.Fatal("unexpected count")
+			}
+		}
+	})
+	b.Run("scoped", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			if CountMatchingLabels(all, sel) != matching {
+				b.Fatal("unexpected count")
+			}
+		}
+	})
+}
+
 func TestCacheSelector_MatchExpressions(t *testing.T) {
 	t.Parallel()
 	raw := `{"matchExpressions":[{"key":"tenant","operator":"In","values":["a","b"]}]}`

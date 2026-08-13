@@ -78,12 +78,17 @@ func convertRules(rules []ConversionRule) ([]engine.Rule, error) {
 		if err != nil {
 			return nil, fmt.Errorf("rule %d (%s): %w", i, r.Strategy, err)
 		}
+		when, err := convertWhen(r.When)
+		if err != nil {
+			return nil, fmt.Errorf("rule %d (%s) when: %w", i, r.Strategy, err)
+		}
 		out = append(out, engine.Rule{
 			Strategy:         engine.Strategy(r.Strategy),
 			Params:           params,
 			AcknowledgeLossy: r.AcknowledgeLossy,
 			Reason:           r.Reason,
 			SourceIndex:      i,
+			When:             when,
 		})
 	}
 	return out, nil
@@ -207,7 +212,15 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 		}
 		mapping := make([]engine.EnumValueMapping, 0, len(r.EnumRemap.Mapping))
 		for _, m := range r.EnumRemap.Mapping {
-			mapping = append(mapping, engine.EnumValueMapping{Hub: m.Hub, Spoke: m.Spoke})
+			hub, err := jsonToAny(m.Hub)
+			if err != nil {
+				return nil, fmt.Errorf("enum mapping hub: %w", err)
+			}
+			spoke, err := jsonToAny(m.Spoke)
+			if err != nil {
+				return nil, fmt.Errorf("enum mapping spoke: %w", err)
+			}
+			mapping = append(mapping, engine.EnumValueMapping{Hub: hub, Spoke: spoke})
 		}
 		return engine.EnumRemapParams{
 			Path: engine.ParsePath(r.EnumRemap.Path), Mapping: mapping,
@@ -276,7 +289,10 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 		if r.TypeCoerce == nil {
 			return nil, fmt.Errorf("requires typeCoerce params")
 		}
-		return engine.TypeCoerceParams{Path: engine.ParsePath(r.TypeCoerce.Path)}, nil
+		return engine.TypeCoerceParams{
+			Path:                engine.ParsePath(r.TypeCoerce.Path),
+			OnFractionalInteger: engine.FractionalIntegerPolicy(r.TypeCoerce.OnFractionalInteger),
+		}, nil
 
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {
@@ -347,6 +363,40 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			Separator: r.ListSplit.Separator,
 		}, nil
 
+	case StrategyQuantity:
+		if r.Quantity == nil {
+			return nil, fmt.Errorf("requires quantity params")
+		}
+		return engine.QuantityParams{
+			HubPath: engine.ParsePath(r.Quantity.HubPath), SpokePath: engine.ParsePath(r.Quantity.SpokePath),
+		}, nil
+
+	case StrategyDuration:
+		if r.Duration == nil {
+			return nil, fmt.Errorf("requires duration params")
+		}
+		return engine.DurationParams{
+			HubPath: engine.ParsePath(r.Duration.HubPath), SpokePath: engine.ParsePath(r.Duration.SpokePath),
+		}, nil
+
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return nil, fmt.Errorf("requires mapKeyRename params")
+		}
+		return engine.MapKeyRenameParams{
+			HubPath: engine.ParsePath(r.MapKeyRename.HubPath), SpokePath: engine.ParsePath(r.MapKeyRename.SpokePath),
+			Renames: r.MapKeyRename.Renames,
+		}, nil
+
+	case StrategyCEL:
+		if r.CEL == nil {
+			return nil, fmt.Errorf("requires cel params")
+		}
+		return engine.CELParams{
+			HubPaths: parsePaths(r.CEL.HubPaths), SpokePaths: parsePaths(r.CEL.SpokePaths),
+			HubToSpoke: r.CEL.HubToSpoke, SpokeToHub: r.CEL.SpokeToHub,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", r.Strategy)
 	}
@@ -408,6 +458,17 @@ func jsonToAny(j extv1.JSON) (any, error) {
 		return nil, fmt.Errorf("unmarshal JSON value: %w", err)
 	}
 	return v, nil
+}
+
+func convertWhen(w *RuleWhen) (*engine.RuleWhen, error) {
+	if w == nil {
+		return nil, nil
+	}
+	eq, err := jsonToAny(w.Equals)
+	if err != nil {
+		return nil, err
+	}
+	return &engine.RuleWhen{Path: engine.ParsePath(w.Path), Equals: eq}, nil
 }
 
 func jsonMapToAny(m map[string]extv1.JSON) (map[string]any, error) {

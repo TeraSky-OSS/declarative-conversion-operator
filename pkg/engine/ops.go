@@ -20,8 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -277,11 +279,12 @@ func (o restoreAnnotationOp) apply(ctx *execContext) error {
 	return nil
 }
 
-// remapEnumOp rewrites a scalar string field's value through a precompiled
-// one-way lookup table.
+// remapEnumOp rewrites a scalar field's value through a precompiled
+// one-way lookup table. Keys are canonicalized so string, integer, and
+// boolean enums share the same machinery.
 type remapEnumOp struct {
 	path       FieldPath
-	table      map[string]string
+	table      map[string]any
 	onUnmapped UnknownKeyPolicy
 }
 
@@ -290,18 +293,34 @@ func (o remapEnumOp) apply(ctx *execContext) error {
 	if !ok {
 		return nil
 	}
-	s, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("remapEnum: value at %q is not a string", o.path)
-	}
-	mapped, ok := o.table[s]
+	mapped, ok := o.table[enumKey(v)]
 	if !ok {
 		if o.onUnmapped == UnknownKeyError {
-			return fmt.Errorf("remapEnum: unmapped value %q at %q", s, o.path)
+			return fmt.Errorf("remapEnum: unmapped value %v at %q", v, o.path)
 		}
-		return nil // Drop: leave the field unset in output.
+		return nil
 	}
 	return setValue(ctx.output, o.path, mapped)
+}
+
+func enumKey(v any) string {
+	switch t := v.(type) {
+	case string:
+		return "s:" + t
+	case bool:
+		return "b:" + strconv.FormatBool(t)
+	case int64:
+		return "n:" + strconv.FormatInt(t, 10)
+	case int:
+		return "n:" + strconv.FormatInt(int64(t), 10)
+	case int32:
+		return "n:" + strconv.FormatInt(int64(t), 10)
+	default:
+		if f, ok := AsFloat64(v); ok {
+			return "n:" + formatNumber(f)
+		}
+		return fmt.Sprintf("x:%T:%v", v, v)
+	}
 }
 
 // injectDefaultOp writes a fixed default into a field that exists only on
@@ -371,7 +390,7 @@ type jsonPatchOp struct {
 }
 
 func (o jsonPatchOp) apply(ctx *execContext) error {
-	b, err := json.Marshal(ctx.input)
+	b, err := ctx.marshalInput()
 	if err != nil {
 		return fmt.Errorf("jsonPatch: marshal input: %w", err)
 	}
@@ -396,6 +415,20 @@ func (o jsonPatchOp) apply(ctx *execContext) error {
 		}
 	}
 	return nil
+}
+
+func (ctx *execContext) marshalInput() ([]byte, error) {
+	if ctx.inputJSON != nil {
+		return ctx.inputJSON, nil
+	}
+	// encoding/json already pools encodeState; caching the result is what
+	// avoids a second marshal when several jsonPatch ops share a Convert.
+	b, err := json.Marshal(ctx.input)
+	if err != nil {
+		return nil, err
+	}
+	ctx.inputJSON = b
+	return b, nil
 }
 
 // forEachOp applies a nested list of Ops to each element of a hub array and
@@ -445,12 +478,58 @@ func (o forEachOp) apply(ctx *execContext) error {
 	return setValue(ctx.output, o.dstItemsPath, outArr)
 }
 
+// whenOp skips inner unless the input object has path equal to equals.
+type whenOp struct {
+	path   FieldPath
+	equals any
+	inner  Op
+}
+
+func (o whenOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.path)
+	if !ok || !jsonValuesEqual(v, o.equals) {
+		return nil
+	}
+	return o.inner.apply(ctx)
+}
+
+// jsonValuesEqual compares decoded JSON values, treating numeric types
+// that JSON/YAML might produce (float64 vs int64) as equal when they
+// represent the same number.
+func jsonValuesEqual(a, b any) bool {
+	if ai, ok := asInt64(a); ok {
+		if bi, ok := asInt64(b); ok {
+			return ai == bi
+		}
+	}
+	if af, ok := AsFloat64(a); ok {
+		if bf, ok := AsFloat64(b); ok {
+			return af == bf
+		}
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func asInt64(v any) (int64, bool) {
+	switch t := v.(type) {
+	case int64:
+		return t, true
+	case int:
+		return int64(t), true
+	case int32:
+		return int64(t), true
+	default:
+		return 0, false
+	}
+}
+
 // coerceOp reads a scalar and rewrites it as whatever JSON type toKind
 // expects (TypeCoerce). It needs no source-kind parameter: it type-
 // switches on the value it actually reads.
 type coerceOp struct {
 	path   FieldPath
 	toKind FieldKind
+	frac   FractionalIntegerPolicy
 }
 
 func (o coerceOp) apply(ctx *execContext) error {
@@ -458,7 +537,7 @@ func (o coerceOp) apply(ctx *execContext) error {
 	if !ok {
 		return nil
 	}
-	coerced, err := coerceScalarValue(v, o.toKind)
+	coerced, err := coerceScalarValueWithPolicy(v, o.toKind, o.frac)
 	if err != nil {
 		return fmt.Errorf("typeCoerce: %q: %w", o.path, err)
 	}

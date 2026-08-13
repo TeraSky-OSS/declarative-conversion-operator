@@ -83,6 +83,22 @@ jobs:
           path: coverage.out
           retention-days: 14
 
+  bench:
+    name: Microbenchmarks (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test -bench (does not assert absolute times)
+        run: make bench
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

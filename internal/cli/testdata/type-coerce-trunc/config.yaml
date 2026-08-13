@@ -1,0 +1,17 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xprios-trunc-conversion
+spec:
+  targetXRD:
+    name: xprios.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: TypeCoerce
+          typeCoerce:
+            path: spec.weight
+            onFractionalInteger: Truncate
+          acknowledgeLossy: true
+          reason: "fractional weights truncate toward zero when stored as integers on v1"

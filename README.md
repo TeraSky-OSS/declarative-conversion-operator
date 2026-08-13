@@ -96,11 +96,11 @@ go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yam
 
 ## Conversion strategies
 
-`fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `fromAnnotation` / `fromLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, one level of nesting), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`. Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
+`fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `fromAnnotation` / `fromLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, up to two nested levels), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`, `quantity`, `duration`, `mapKeyRename`, `cel` (always-lossy value-math escape hatch). Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
 
 A few of the newer strategies are worth calling out specifically:
 
-- **`typeCoerce`** converts a scalar's JSON type (string/integer/number/boolean) at the same path on both sides — e.g. a field that was a string in one version and an integer in another. Always treated as lossless (canonically-formatted values round-trip exactly); a value that genuinely can't be parsed (a non-numeric string coerced to a number) is a runtime conversion error, not a lossiness concern.
+- **`typeCoerce`** converts a scalar's JSON type (string/integer/number/boolean) at the same path on both sides — e.g. a field that was a string in one version and an integer in another. Whole values within float64 precision round-trip; `onFractionalInteger` (default `Error`) controls fractional numbers landing on an integer destination. A value that genuinely can't be parsed is a runtime conversion error, not a lossiness concern.
 - **`scalarToFields`** / **`fieldsToScalar`** decompose a single scalar into several fields (or the reverse) using a regexp with named capture groups (`pattern`) plus a Go `text/template` (`joinTemplate`) for the reverse direction — e.g. hub `spec.size: "3Gi"` split into spoke `spec.sizeValue: 3` / `spec.sizeUnit: "Gi"`. Like `jsonPatch`, the engine can't verify `pattern` and `joinTemplate` are true inverses of each other, so this is always lossy unless you set `losslessOverride: true` — real protection comes from running representative samples through `convctl test`, not from compile-time analysis.
 - **`arrayToMapByKey`** / **`mapToArrayByKey`** convert a list of objects into a map keyed by one of their fields, and back — the standard "list-map versus map" API-evolution pattern. Array→map is lossless (a duplicate or missing key is a hard runtime error, never a silent drop); map→array is always treated as lossy, since the reconstructed array is emitted sorted by key rather than reproducing whatever order the original array had.
 - **`numericScale`** rescales a numeric field by a fixed factor (`hubValue == spokeValue * factor`) — e.g. stored megabytes displayed as gigabytes. Whichever direction lands on an integer-typed field is treated as lossy, since the division/multiplication may not land on a whole number for every possible input.
@@ -146,6 +146,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full loop. Short version:
 ```console
 make generate manifests   # regenerate deepcopy code and CRD/RBAC YAML from kubebuilder markers
 make test                  # go vet + unit tests (race-enabled)
+make bench                 # microbenchmarks; numbers live in docs/operations/capacity.md
 make build                  # build all three binaries into bin/
 make helm-lint helm-template
 ```
@@ -156,13 +157,25 @@ make helm-lint helm-template
 
 ### End-to-end tests
 
-Three scripts, all built on shared setup in `hack/e2e-common.sh`, prove the conversion webhook works against a real `kube-apiserver`, not just `pkg/engine` offline — each creates a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's `manager`/`webhook-server` images and loads them straight into the cluster (no registry push), and installs the operator via its own Helm chart:
+The three correctness scripts plus local load/scale targets, all built on
+shared setup in `hack/e2e-common.sh`, prove the conversion webhook works
+against a real `kube-apiserver`, not just `pkg/engine` offline — each creates
+a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
+`manager`/`webhook-server` images and loads them straight into the cluster
+(no registry push), and installs the operator via its own Helm chart:
 
-- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 25 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
+- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 29 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
 - `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
 - `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
+- `make test-e2e-load` (`hack/e2e-load.sh`) — native-CRD kind cluster, then synthetic `ConversionReview` batches of varying object count/size against the live webhook-server; prints latency/throughput for [Capacity planning](docs/operations/capacity.md).
+- `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 29 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`). Not in the CI matrix.
 
-Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; all three run identically in CI (`.github/workflows/e2e.yml`, as a matrix) and locally. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
+Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`. The three
+correctness scripts run identically in CI (`.github/workflows/e2e.yml`, as a
+matrix) and locally. `make test-e2e-load` and `make test-e2e-scale` are
+local/capacity targets (`test-e2e-load` also needs `python3` and `curl`) and
+are not in that matrix. Set `KEEP_CLUSTER=1`
+to skip teardown for local debugging.
 
 ## License
 

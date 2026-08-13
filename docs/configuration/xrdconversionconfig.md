@@ -51,7 +51,13 @@ rules:
       spokePath: spec.storageSize
     acknowledgeLossy: false   # required true if the engine determines this rule is lossy
     reason: ""                 # encouraged whenever acknowledgeLossy is true
+    # optional: apply this rule only when a simple path-equals predicate matches
+    # when:
+    #   path: spec.mode
+    #   equals: advanced
 ```
+
+`when` is a **simple path-equals comparison**, not CEL. It is evaluated against the conversion *input* object (hub object on hub→spoke, spoke object on spoke→hub), so the discriminator path should exist with the same name on both versions. Compile still claims the rule's target paths (they are not uncovered-field errors) but reports a **partial coverage** warning: the rule does not apply to every object. When the predicate does not match, the inner transform is skipped — the destination field is not written.
 
 See the [Strategy Reference](../strategies/index.md) for every strategy's params, semantics, and worked examples. Every rule the engine determines is lossy in *either* direction requires `acknowledgeLossy: true`, or the whole config is rejected as `Invalid` — this is checked identically by the admission webhook (at `kubectl apply` time) and the controller (on every reconcile, in case the XRD's schema has drifted since).
 

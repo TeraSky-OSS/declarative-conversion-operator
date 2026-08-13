@@ -1,0 +1,37 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xpayloads.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XPayload
+    plural: xpayloads
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                payload:
+                  oneOf:
+                    - type: string
+                    - type: object
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                body:
+                  type: string

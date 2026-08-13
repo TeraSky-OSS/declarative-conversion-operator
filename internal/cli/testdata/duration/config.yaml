@@ -1,0 +1,17 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xtimeouts-conversion
+spec:
+  targetXRD:
+    name: xtimeouts.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: Duration
+          duration:
+            hubPath: spec.timeout
+            spokePath: spec.timeoutSeconds
+          acknowledgeLossy: true
+          reason: "canonical duration spelling (5m0s) may differ from an equivalent input such as 5m"

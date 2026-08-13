@@ -54,11 +54,17 @@ func effectivePolicy(p UnmappedFieldPolicy) UnmappedFieldPolicy {
 	return p
 }
 
-const maxForEachDepth = 1
+// MaxForEachDepth is the maximum ForEach nesting allowed: a ForEach may
+// contain another ForEach (arrays-of-arrays), but a third level is
+// rejected at compile/admission time. Deeper nesting is not supported
+// because coverage analysis and the CRD's schemaless nested-rule list
+// would otherwise recurse without a bound, and real XR schemas rarely
+// need more than two array levels.
+const MaxForEachDepth = 2
 
 // resolveAndBuildOps is the shared core used both at the top level and
 // recursively for ForEach's nested rule list. depth tracks ForEach nesting
-// to enforce the depth-1 cap.
+// to enforce MaxForEachDepth.
 func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy UnmappedFieldPolicy, depth int) (h2sOps, s2hOps []Op, results []RuleResult, diags []Diagnostic, verdict LosslessVerdict) {
 	claimedHub := map[string]bool{}
 	claimedSpoke := map[string]bool{}
@@ -198,6 +204,30 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			rr.HubPaths = []string{p.HubPath.String()}
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
+		case QuantityParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveQuantity(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case DurationParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveDuration(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case MapKeyRenameParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveMapKeyRename(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
+		case CELParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveCEL(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			for _, hp := range p.HubPaths {
+				rr.HubPaths = append(rr.HubPaths, hp.String())
+			}
+			for _, sp := range p.SpokePaths {
+				rr.SpokePaths = append(rr.SpokePaths, sp.String())
+			}
+
 		default:
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d: unknown or unset strategy params", idx))
 		}
@@ -207,6 +237,31 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		}
 		if !lossless.SpokeToHub && !rule.AcknowledgeLossy {
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): spoke->hub conversion is lossy but acknowledgeLossy is not set", idx, rule.Strategy))
+		}
+
+		if rule.When != nil {
+			if len(rule.When.Path) == 0 {
+				ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path is required", idx, rule.Strategy))
+			} else {
+				validWhen := true
+				if _, err := lookupPath(hub, rule.When.Path); err != nil {
+					ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path on hub: %v", idx, rule.Strategy, err))
+					validWhen = false
+				}
+				if _, err := lookupPath(spoke, rule.When.Path); err != nil {
+					ruleDiags = append(ruleDiags, errorf(idx, "rule %d (%s): when.path on spoke: %v", idx, rule.Strategy, err))
+					validWhen = false
+				}
+				if validWhen {
+					ruleDiags = append(ruleDiags, warnf(idx, "rule %d (%s): applies only when %q equals %#v; coverage of its target paths is partial", idx, rule.Strategy, rule.When.Path, rule.When.Equals))
+					if h2sOp != nil {
+						h2sOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: h2sOp}
+					}
+					if s2hOp != nil {
+						s2hOp = whenOp{path: rule.When.Path, equals: rule.When.Equals, inner: s2hOp}
+					}
+				}
+			}
 		}
 
 		for _, d := range ruleDiags {
@@ -244,7 +299,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		if claimedHub[key] {
 			continue
 		}
-		if sl, ok := spokeByPath[key]; ok && !claimedSpoke[key] && sl.Kind == hl.Kind && sl.Opaque == hl.Opaque {
+		if sl, ok := spokeByPath[key]; ok && !claimedSpoke[key] && sl.Kind == hl.Kind && sl.Opaque == hl.Opaque && sl.Construct == hl.Construct {
 			// Identical shape on both sides: auto-covered, no rule needed.
 			p := hl.Path
 			h2sOps = append(h2sOps, identityOp{path: p})
@@ -259,7 +314,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		} else {
 			verdict.HubToSpoke = false
 		}
-		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideHub, key))
+		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideHub, key, hl.Construct))
 	}
 	for _, sl := range spokeLeaves {
 		key := sl.Path.String()
@@ -272,7 +327,7 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		} else {
 			verdict.SpokeToHub = false
 		}
-		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideSpoke, key))
+		diags = append(diags, uncoveredFieldDiag(sev, UncoveredSideSpoke, key, sl.Construct))
 	}
 
 	// A field the schema never declares at all (on either side) never
@@ -603,13 +658,13 @@ func resolveEnumRemap(idx int, p EnumRemapParams, hub, spoke *extv1.JSONSchemaPr
 		diags = append(diags, *d)
 	}
 
-	hubToSpoke := map[string]string{}
-	spokeToHub := map[string]string{}
+	hubToSpoke := map[string]any{}
+	spokeToHub := map[string]any{}
 	spokeSeen := map[string]int{}
 	for _, m := range p.Mapping {
-		hubToSpoke[m.Hub] = m.Spoke
-		spokeToHub[m.Spoke] = m.Hub
-		spokeSeen[m.Spoke]++
+		hubToSpoke[enumKey(m.Hub)] = m.Spoke
+		spokeToHub[enumKey(m.Spoke)] = m.Hub
+		spokeSeen[enumKey(m.Spoke)]++
 	}
 	injective := true
 	for _, n := range spokeSeen {
@@ -820,8 +875,8 @@ func parsePatch(ops []JSONPatchOp) (patch jsonpatch.Patch, destPaths, allPaths [
 
 func resolveForEach(idx int, p ForEachParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, policy UnmappedFieldPolicy, depth int) (Op, Op, LosslessVerdict, []Diagnostic) {
 	var diags []Diagnostic
-	if depth >= maxForEachDepth {
-		diags = append(diags, errorf(idx, "rule %d (ForEach): nesting depth exceeds the supported maximum of %d", idx, maxForEachDepth))
+	if depth >= MaxForEachDepth {
+		diags = append(diags, errorf(idx, "rule %d (ForEach): nesting depth exceeds the supported maximum of %d", idx, MaxForEachDepth))
 		return nil, nil, LosslessVerdict{true, true}, diags
 	}
 	hubArray, err := lookupPath(hub, p.HubItemsPath)
@@ -900,9 +955,24 @@ func resolveTypeCoerce(idx int, p TypeCoerceParams, hub, spoke *extv1.JSONSchema
 	if d := claim(claimedSpoke, p.Path, idx, "spoke"); d != nil {
 		diags = append(diags, *d)
 	}
-	h2s := coerceOp{path: p.Path, toKind: spokeKind}
-	s2h := coerceOp{path: p.Path, toKind: hubKind}
-	return h2s, s2h, LosslessVerdict{true, true}, diags
+	frac := normalizeFractionalPolicy(p.OnFractionalInteger)
+	switch frac {
+	case FractionalIntegerError, FractionalIntegerTruncate, FractionalIntegerRound:
+	default:
+		diags = append(diags, errorf(idx, "rule %d (TypeCoerce): onFractionalInteger must be Error, Truncate, or Round, got %q", idx, p.OnFractionalInteger))
+	}
+	h2s := coerceOp{path: p.Path, toKind: spokeKind, frac: frac}
+	s2h := coerceOp{path: p.Path, toKind: hubKind, frac: frac}
+	lossless := LosslessVerdict{true, true}
+	if frac != FractionalIntegerError {
+		if spokeKind == FieldKindInteger {
+			lossless.HubToSpoke = false
+		}
+		if hubKind == FieldKindInteger {
+			lossless.SpokeToHub = false
+		}
+	}
+	return h2s, s2h, lossless, diags
 }
 
 // resolveScalarToFields and resolveFieldsToScalar share the same
@@ -1156,4 +1226,163 @@ func resolveListSplit(idx int, p ListSplitParams, hub, spoke *extv1.JSONSchemaPr
 	h2s := splitListOp{stringPath: p.HubPath, arrayPath: p.SpokePath, separator: p.Separator, itemKind: itemKind}
 	s2h := joinListOp{arrayPath: p.SpokePath, stringPath: p.HubPath, separator: p.Separator}
 	return h2s, s2h, LosslessVerdict{true, true}, diags
+}
+
+// resolveQuantity infers which side is the Quantity string from the
+// schemas. String→millivalue is lossless; millivalue→canonical Quantity
+// string is lossy ("0.5" and "500m" are the same Quantity).
+func resolveQuantity(idx int, p QuantityParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	return resolveStringIntegerPair(idx, "Quantity", p.HubPath, p.SpokePath, hub, spoke, claimedHub, claimedSpoke, func(src, dst FieldPath, toInteger bool) Op {
+		return quantityOp{src: src, dst: dst, toInteger: toInteger}
+	})
+}
+
+// resolveDuration infers which side is the duration string. String→seconds
+// is lossless; seconds→canonical duration string is lossy ("5m" vs "5m0s").
+func resolveDuration(idx int, p DurationParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	return resolveStringIntegerPair(idx, "Duration", p.HubPath, p.SpokePath, hub, spoke, claimedHub, claimedSpoke, func(src, dst FieldPath, toInteger bool) Op {
+		return durationOp{src: src, dst: dst, toInteger: toInteger}
+	})
+}
+
+// resolveStringIntegerPair is the shared compile path for Quantity and
+// Duration: exactly one side must be a string and the other an integer.
+// The string→integer direction is lossless; integer→canonical string is
+// not, because the formatter picks one of several equivalent spellings.
+func resolveStringIntegerPair(idx int, name string, hubPath, spokePath FieldPath, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, makeOp func(src, dst FieldPath, toInteger bool) Op) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	hubKind := FieldKindUnknown
+	if hubNode, err := lookupPath(hub, hubPath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): hub: %v", idx, name, err))
+	} else {
+		hubKind, _ = classify(hubNode)
+	}
+	spokeKind := FieldKindUnknown
+	if spokeNode, err := lookupPath(spoke, spokePath); err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): spoke: %v", idx, name, err))
+	} else {
+		spokeKind, _ = classify(spokeNode)
+	}
+	hubStr, hubInt := hubKind == FieldKindString, hubKind == FieldKindInteger
+	spokeStr, spokeInt := spokeKind == FieldKindString, spokeKind == FieldKindInteger
+	if (!hubStr || !spokeInt) && (!hubInt || !spokeStr) {
+		diags = append(diags, errorf(idx, "rule %d (%s): one side must be a string and the other an integer (hub %q is %s, spoke %q is %s)", idx, name, hubPath, hubKind, spokePath, spokeKind))
+	}
+	if d := claim(claimedHub, hubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, spokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	if hubStr && spokeInt {
+		return makeOp(hubPath, spokePath, true), makeOp(spokePath, hubPath, false), LosslessVerdict{HubToSpoke: true, SpokeToHub: false}, diags
+	}
+	if hubInt && spokeStr {
+		return makeOp(hubPath, spokePath, false), makeOp(spokePath, hubPath, true), LosslessVerdict{HubToSpoke: false, SpokeToHub: true}, diags
+	}
+	return nil, nil, LosslessVerdict{}, diags
+}
+
+func requireOpaqueMap(idx int, name, side string, path FieldPath, schema *extv1.JSONSchemaProps) []Diagnostic {
+	node, err := lookupPath(schema, path)
+	if err != nil {
+		return []Diagnostic{errorf(idx, "rule %d (%s): %s: %v", idx, name, side, err)}
+	}
+	kind, opaque := classify(node)
+	if kind != FieldKindObject || !opaque {
+		return []Diagnostic{errorf(idx, "rule %d (%s): %s field %q must be a free-form map (object with additionalProperties), got %s", idx, name, side, path, kind)}
+	}
+	return nil
+}
+
+func invertRenames(idx int, name string, renames map[string]string) (map[string]string, []Diagnostic) {
+	var diags []Diagnostic
+	if len(renames) == 0 {
+		return nil, []Diagnostic{errorf(idx, "rule %d (%s): renames must list at least one key", idx, name)}
+	}
+	rev := make(map[string]string, len(renames))
+	for hubKey, spokeKey := range renames {
+		if hubKey == "" || spokeKey == "" {
+			diags = append(diags, errorf(idx, "rule %d (%s): rename keys must be non-empty", idx, name))
+			continue
+		}
+		if _, dup := rev[spokeKey]; dup {
+			diags = append(diags, errorf(idx, "rule %d (%s): spoke key %q is the destination of more than one hub key (renames must be injective)", idx, name, spokeKey))
+			continue
+		}
+		rev[spokeKey] = hubKey
+	}
+	return rev, diags
+}
+
+// resolveMapKeyRename claims the whole free-form map on both sides. Known
+// keys are renamed; every other key passes through. Injective renames are
+// lossless in both directions.
+func resolveMapKeyRename(idx int, p MapKeyRenameParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	diags = append(diags, requireOpaqueMap(idx, "MapKeyRename", "hub", p.HubPath, hub)...)
+	diags = append(diags, requireOpaqueMap(idx, "MapKeyRename", "spoke", p.SpokePath, spoke)...)
+	rev, renameDiags := invertRenames(idx, "MapKeyRename", p.Renames)
+	diags = append(diags, renameDiags...)
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := mapKeyRenameOp{src: p.HubPath, dst: p.SpokePath, renames: p.Renames}
+	s2h := mapKeyRenameOp{src: p.SpokePath, dst: p.HubPath, renames: rev}
+	return h2s, s2h, LosslessVerdict{true, true}, diags
+}
+
+// resolveCEL always reports both directions lossy. Declared paths are
+// claimed so coverage stays fail-closed; expression bodies are opaque.
+func resolveCEL(idx int, p CELParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if len(p.HubPaths) == 0 {
+		diags = append(diags, errorf(idx, "rule %d (CEL): hubPaths must list at least one path", idx))
+	}
+	if len(p.SpokePaths) == 0 {
+		diags = append(diags, errorf(idx, "rule %d (CEL): spokePaths must list at least one path", idx))
+	}
+	if p.HubToSpoke == "" {
+		diags = append(diags, errorf(idx, "rule %d (CEL): hubToSpoke expression is required", idx))
+	}
+	if p.SpokeToHub == "" {
+		diags = append(diags, errorf(idx, "rule %d (CEL): spokeToHub expression is required", idx))
+	}
+	for _, hp := range p.HubPaths {
+		if _, err := lookupPath(hub, hp); err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): hub: %v", idx, err))
+		}
+		if d := claim(claimedHub, hp, idx, "hub"); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+	for _, sp := range p.SpokePaths {
+		if _, err := lookupPath(spoke, sp); err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): spoke: %v", idx, err))
+		}
+		if d := claim(claimedSpoke, sp, idx, "spoke"); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+	var h2s, s2h Op
+	if p.HubToSpoke != "" {
+		prg, err := compileCELProgram(p.HubToSpoke)
+		if err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): hubToSpoke: %v", idx, err))
+		} else {
+			h2s = celOp{prg: prg, dests: p.SpokePaths}
+		}
+	}
+	if p.SpokeToHub != "" {
+		prg, err := compileCELProgram(p.SpokeToHub)
+		if err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): spokeToHub: %v", idx, err))
+		} else {
+			s2h = celOp{prg: prg, dests: p.HubPaths}
+		}
+	}
+	return h2s, s2h, LosslessVerdict{HubToSpoke: false, SpokeToHub: false}, diags
 }

@@ -1,0 +1,13 @@
+apiVersion: example.org/v2
+kind: XVolumeSet
+metadata:
+  name: demo
+spec:
+  volumes:
+    - name: data
+      disks:
+        - sizeGB: "10"
+        - sizeGB: "20"
+    - name: logs
+      disks:
+        - sizeGB: "5"

@@ -21,8 +21,8 @@ element.
 is lossless in both directions, exactly like the rules it wraps. Two
 constraints are worth knowing before you reach for it:
 
-- **Nesting is capped at depth 1** — a `ForEach`'s rule list cannot contain
-  another `ForEach`.
+- **Nesting is capped at depth 2** — a `ForEach` may wrap another `ForEach`
+  (arrays-of-arrays); a third level is rejected.
 - **Positional correspondence is strict.** If both the hub and spoke item
   paths are present on the input as arrays of different lengths, conversion
   fails loudly rather than truncating to the shorter one.

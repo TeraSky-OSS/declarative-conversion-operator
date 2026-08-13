@@ -1,0 +1,6 @@
+apiVersion: example.org/v2
+kind: XPrio
+metadata:
+  name: whole
+spec:
+  weight: 2

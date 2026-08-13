@@ -1,0 +1,7 @@
+apiVersion: example.org/v1
+kind: XPacked
+metadata:
+  name: demo
+spec:
+  bitHigh: 2
+  bitLow: 16

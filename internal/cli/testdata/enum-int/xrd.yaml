@@ -1,0 +1,37 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xcodes.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XCode
+    plural: xcodes
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                statusCode:
+                  type: integer
+                  enum: [200, 404]
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                statusCode:
+                  type: integer
+                  enum: [2, 4]

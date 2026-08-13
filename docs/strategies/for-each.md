@@ -67,6 +67,25 @@ Each element of the hub's `volumes` array renames `sizeGB`/`label` to the v1 spo
 
 Note that the nested rules' `hubPath`/`spokePath` (`sizeGB`, `size`, `label`, `name`) are relative to a single array element — not prefixed with `spec.volumes[]`.
 
+A second `forEach` is allowed inside the first for arrays-of-arrays. Paths in the inner list are relative to the inner element (a disk, below), not the outer volume:
+
+```yaml
+- strategy: ForEach
+  forEach:
+    hubItemsPath: spec.volumes
+    spokeItemsPath: spec.volumes
+    rules:
+      - strategy: ForEach
+        forEach:
+          hubItemsPath: disks
+          spokeItemsPath: disks
+          rules:
+            - strategy: FieldRename
+              fieldRename:
+                hubPath: sizeGB
+                spokePath: size
+```
+
 ### Objects
 
 === "Hub (v3)"
@@ -89,5 +108,5 @@ Note that the nested rules' `hubPath`/`spokePath` (`sizeGB`, `size`, `label`, `n
 
 ## Constraints
 
-- **Nesting is capped at depth 1.** A `forEach`'s own rule list can't contain another `forEach` — see [Limitations](../limitations.md).
+- **Nesting is capped at depth 2.** A `forEach` may contain another `forEach` (arrays-of-arrays, common in XR specs). A third nested `forEach` is a compile/admission error, not a silent truncation — see [Limitations](../limitations.md). Deeper nesting isn't supported yet because coverage analysis and the CRD's nested-rule list need a recursion bound, and two array levels covers the real migrations we've seen.
 - **Strict positional correspondence is required at runtime.** The hub and spoke arrays must have the same length and element order. If both item paths are present on the input as arrays of unequal length, conversion fails with a hard runtime error — not a best-effort merge or truncation to the source length. If the destination path is absent, the output is built from the source array alone.

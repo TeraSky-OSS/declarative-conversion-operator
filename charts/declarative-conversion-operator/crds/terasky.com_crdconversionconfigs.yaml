@@ -113,6 +113,32 @@ spec:
                             - keyField
                             - spokePath
                             type: object
+                          cel:
+                            description: |-
+                              CELParams is an always-lossy escape hatch. Both expressions receive the
+                              source object as `object` and must return a map whose declared destination
+                              paths are merged onto the output. losslessOverride is not supported.
+                            properties:
+                              hubPaths:
+                                items:
+                                  type: string
+                                minItems: 1
+                                type: array
+                              hubToSpoke:
+                                type: string
+                              spokePaths:
+                                items:
+                                  type: string
+                                minItems: 1
+                                type: array
+                              spokeToHub:
+                                type: string
+                            required:
+                            - hubPaths
+                            - hubToSpoke
+                            - spokePaths
+                            - spokeToHub
+                            type: object
                           constant:
                             description: ConstantParams forces a field to a fixed
                               value on the side it exists on.
@@ -176,19 +202,32 @@ spec:
                             - existsOn
                             - path
                             type: object
+                          duration:
+                            description: DurationParams converts between a Go duration
+                              string and integer seconds.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
                           enumRemap:
                             description: EnumRemapParams bidirectionally maps a scalar
                               field's enumerated values.
                             properties:
                               mapping:
                                 items:
-                                  description: EnumValueMapping pairs one hub enum
-                                    value with its spoke equivalent.
+                                  description: |-
+                                    EnumValueMapping pairs one hub enum value with its spoke equivalent.
+                                    Values may be strings, integers, numbers, or booleans.
                                   properties:
                                     hub:
-                                      type: string
+                                      x-kubernetes-preserve-unknown-fields: true
                                     spoke:
-                                      type: string
+                                      x-kubernetes-preserve-unknown-fields: true
                                   required:
                                   - hub
                                   - spoke
@@ -288,7 +327,8 @@ spec:
                             description: |-
                               ForEachParams applies a nested rule list to each element of a hub array
                               and the corresponding spoke array. Nested rule paths are relative to a
-                              single array element. Nesting is capped at depth 1.
+                              single array element. Nesting is capped at depth 2 (a ForEach may wrap
+                              another ForEach for arrays-of-arrays; a third level is rejected).
                             properties:
                               hubItemsPath:
                                 type: string
@@ -438,6 +478,25 @@ spec:
                             - separator
                             - spokePath
                             type: object
+                          mapKeyRename:
+                            description: |-
+                              MapKeyRenameParams renames known keys inside a free-form map; other keys
+                              pass through unchanged. Renames is hub-key → spoke-key and must be injective.
+                            properties:
+                              hubPath:
+                                type: string
+                              renames:
+                                additionalProperties:
+                                  type: string
+                                minProperties: 1
+                                type: object
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - renames
+                            - spokePath
+                            type: object
                           mapToArrayByKey:
                             description: |-
                               MapToArrayByKeyParams is the structural mirror of ArrayToMapByKeyParams:
@@ -520,6 +579,19 @@ spec:
                             description: |-
                               ObjectToSingletonArrayParams: the hub field is an object; the spoke field
                               is a single-element array wrapping it.
+                            properties:
+                              hubPath:
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - spokePath
+                            type: object
+                          quantity:
+                            description: |-
+                              QuantityParams converts between a Kubernetes resource.Quantity string
+                              and an integer millivalue. Compile infers which side is the string.
                             properties:
                               hubPath:
                                 type: string
@@ -629,6 +701,10 @@ spec:
                             - NumericScale
                             - ListJoin
                             - ListSplit
+                            - Quantity
+                            - Duration
+                            - MapKeyRename
+                            - CEL
                             type: string
                           toAnnotation:
                             description: ToMetadataParams backs both ToAnnotation
@@ -677,9 +753,34 @@ spec:
                               declare at Path — e.g. a field that was a string in one version and
                               becomes an integer in another.
                             properties:
+                              onFractionalInteger:
+                                default: Error
+                                description: |-
+                                  OnFractionalInteger is the policy when coercing a non-whole number
+                                  into an integer-typed destination. Empty defaults to Error.
+                                enum:
+                                - Error
+                                - Truncate
+                                - Round
+                                type: string
                               path:
                                 type: string
                             required:
+                            - path
+                            type: object
+                          when:
+                            description: |-
+                              When limits this rule to objects whose Path equals Equals (simple
+                              path-value comparison, not CEL). Coverage of the rule's target
+                              paths is partial — compile reports a warning, not an uncovered-field
+                              error, because the rule does not apply on every object.
+                            properties:
+                              equals:
+                                x-kubernetes-preserve-unknown-fields: true
+                              path:
+                                type: string
+                            required:
+                            - equals
                             - path
                             type: object
                         required:
@@ -921,6 +1022,10 @@ spec:
                             - NumericScale
                             - ListJoin
                             - ListSplit
+                            - Quantity
+                            - Duration
+                            - MapKeyRename
+                            - CEL
                             type: string
                           warnings:
                             items:
