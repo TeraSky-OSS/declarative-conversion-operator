@@ -35,6 +35,7 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`listSplit`](list-join-split.md) | Delimited string ⇄ array of scalars. | :material-check-all:{ style="color:#2e7d32" } Always |
 | [`quantity`](quantity.md) | Kubernetes Quantity string ⇄ integer millivalue. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy |
 | [`duration`](duration.md) | Go duration string ⇄ integer seconds. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy |
+| [`mapKeyRename`](map-key-rename.md) | Rename known keys in a free-form map; other keys pass through. | :material-check-all:{ style="color:#2e7d32" } Always (injective renames) |
 
 ## Reading the examples
 

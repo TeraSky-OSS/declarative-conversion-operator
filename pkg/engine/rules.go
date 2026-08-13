@@ -47,6 +47,7 @@ const (
 	StrategyListSplit              Strategy = "ListSplit"
 	StrategyQuantity               Strategy = "Quantity"
 	StrategyDuration               Strategy = "Duration"
+	StrategyMapKeyRename           Strategy = "MapKeyRename"
 )
 
 // UnmappedFieldPolicy controls what happens when a field exists in a hub or
@@ -410,6 +411,18 @@ type DurationParams struct {
 }
 
 func (DurationParams) isRuleParams() {}
+
+// MapKeyRenameParams renames known keys inside a free-form map and
+// passes every other key through unchanged. The whole map is claimed so
+// coverage treats the remainder as intentional passthrough, not omission.
+// Renames must be injective (compile rejects two hub keys mapping to the
+// same spoke key). Both directions are lossless when that holds.
+type MapKeyRenameParams struct {
+	HubPath, SpokePath FieldPath
+	Renames            map[string]string // hub key -> spoke key
+}
+
+func (MapKeyRenameParams) isRuleParams() {}
 
 // RuleSet is every rule declared for one hub<->spoke version pair.
 type RuleSet struct {

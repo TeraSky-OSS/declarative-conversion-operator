@@ -177,6 +177,13 @@ func wellFormedRules() map[Strategy]ConversionRule {
 			Strategy: StrategyDuration,
 			Duration: &DurationParams{HubPath: "spec.timeout", SpokePath: "spec.timeoutSeconds"},
 		},
+		StrategyMapKeyRename: {
+			Strategy: StrategyMapKeyRename,
+			MapKeyRename: &MapKeyRenameParams{
+				HubPath: "spec.extraLabels", SpokePath: "spec.extraLabels",
+				Renames: map[string]string{"app": "application"},
+			},
+		},
 	}
 }
 
@@ -213,6 +220,7 @@ func clearParams(rule ConversionRule) ConversionRule {
 	rule.ListSplit = nil
 	rule.Quantity = nil
 	rule.Duration = nil
+	rule.MapKeyRename = nil
 	return rule
 }
 

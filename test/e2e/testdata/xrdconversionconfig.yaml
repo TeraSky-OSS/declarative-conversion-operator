@@ -1,6 +1,6 @@
 # Mirrors internal/cli/testdata/full/config.yaml exactly (same targetXRD
 # schema, same rules) so this e2e run exercises every one of pkg/engine's
-# 27 built-in strategies against a real apiserver, not just the 2 the
+# 28 built-in strategies against a real apiserver, not just the 2 the
 # earlier, minimal version of this fixture covered.
 apiVersion: terasky.com/v1alpha1
 kind: XRDConversionConfig
@@ -226,3 +226,10 @@ spec:
             spokePath: spec.timeoutSeconds
           acknowledgeLossy: true
           reason: "integer seconds re-format as Go's canonical duration string (5m0s), which may differ from an equivalent spelling such as 5m"
+
+        - strategy: MapKeyRename
+          mapKeyRename:
+            hubPath: spec.extraLabels
+            spokePath: spec.extraLabels
+            renames:
+              app: application

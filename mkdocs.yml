@@ -108,6 +108,7 @@ nav:
       - List Join / Split: strategies/list-join-split.md
       - Quantity: strategies/quantity.md
       - Duration: strategies/duration.md
+      - Map Key Rename: strategies/map-key-rename.md
   - Contributing:
       - Adding a strategy: contributing/adding-a-strategy.md
   - FAQ: faq.md

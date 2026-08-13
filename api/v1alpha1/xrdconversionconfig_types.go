@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename
 type Strategy string
 
 const (
@@ -103,6 +103,7 @@ const (
 	StrategyListSplit              Strategy = "ListSplit"
 	StrategyQuantity               Strategy = "Quantity"
 	StrategyDuration               Strategy = "Duration"
+	StrategyMapKeyRename           Strategy = "MapKeyRename"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -415,6 +416,15 @@ type DurationParams struct {
 	SpokePath string `json:"spokePath"`
 }
 
+// MapKeyRenameParams renames known keys inside a free-form map; other keys
+// pass through unchanged. Renames is hub-key → spoke-key and must be injective.
+type MapKeyRenameParams struct {
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	// +kubebuilder:validation:MinProperties=1
+	Renames map[string]string `json:"renames"`
+}
+
 // ConversionRule is one declarative conversion rule between the hub version
 // and a spoke version. Exactly one of the strategy-specific fields below
 // should be set, matching Strategy.
@@ -475,6 +485,8 @@ type ConversionRule struct {
 	Quantity *QuantityParams `json:"quantity,omitempty"`
 	// +optional
 	Duration *DurationParams `json:"duration,omitempty"`
+	// +optional
+	MapKeyRename *MapKeyRenameParams `json:"mapKeyRename,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).

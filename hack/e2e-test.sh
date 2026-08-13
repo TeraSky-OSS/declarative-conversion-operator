@@ -81,6 +81,8 @@ assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='
 assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.allowedCIDRsCSV}')" "10.1.0.0/16,10.2.0.0/16" "ListSplit (s2h): spec.allowedCIDRs -> spec.allowedCIDRsCSV"
 assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.cpuRequest}')" "1" "Quantity (s2h): spec.cpuMillis 1000 -> spec.cpuRequest 1"
 assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.timeout}')" "30s" "Duration (s2h): spec.timeoutSeconds 30 -> spec.timeout 30s"
+assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.extraLabels.app}')" "sandbox" "MapKeyRename (s2h): spec.extraLabels.application -> spec.extraLabels.app"
+assert_eq "$(kubectl get "${V3}" "${NAME_V1}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.extraLabels.region}')" "eu-central-1" "MapKeyRename (s2h): unmapped key region passes through"
 
 # --- v2 (spoke) -> v3 (hub): every v2-spoke strategy's spoke->hub direction ---
 log "Creating a composite resource at spoke version v2"
@@ -142,5 +144,7 @@ assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='
 assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.allowedCIDRs[1]}')" "192.168.0.0/16" "ListSplit (h2s): second CIDR element"
 assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.cpuMillis}')" "500" "Quantity (h2s): spec.cpuRequest 500m -> spec.cpuMillis 500"
 assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.timeoutSeconds}')" "300" "Duration (h2s): spec.timeout 5m -> spec.timeoutSeconds 300"
+assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.extraLabels.application}')" "widget" "MapKeyRename (h2s): spec.extraLabels.app -> spec.extraLabels.application"
+assert_eq "$(kubectl get "${V1}" "${NAME_V3}" -n "${COMPOSITE_NS}" -o jsonpath='{.spec.extraLabels.region}')" "us-east-1" "MapKeyRename (h2s): unmapped key region passes through"
 
-log "All e2e conversion checks passed (every one of pkg/engine's 27 built-in strategies exercised against a real apiserver)"
+log "All e2e conversion checks passed (every one of pkg/engine's 28 built-in strategies exercised against a real apiserver)"

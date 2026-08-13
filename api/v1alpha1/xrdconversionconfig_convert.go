@@ -376,6 +376,15 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			HubPath: engine.ParsePath(r.Duration.HubPath), SpokePath: engine.ParsePath(r.Duration.SpokePath),
 		}, nil
 
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return nil, fmt.Errorf("requires mapKeyRename params")
+		}
+		return engine.MapKeyRenameParams{
+			HubPath: engine.ParsePath(r.MapKeyRename.HubPath), SpokePath: engine.ParsePath(r.MapKeyRename.SpokePath),
+			Renames: r.MapKeyRename.Renames,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", r.Strategy)
 	}

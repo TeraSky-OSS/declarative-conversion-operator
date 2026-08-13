@@ -1,4 +1,4 @@
-# Exercises every one of the 14 v1-spoke strategies' spoke->hub direction
+# Exercises every one of the 15 v1-spoke strategies' spoke->hub direction
 # when read back at the hub version (v3) — see hack/e2e-test.sh.
 apiVersion: e2e.example.org/v1
 kind: XWidget
@@ -48,3 +48,6 @@ spec:
     - "10.0.0.53"
   cpuMillis: 1000
   timeoutSeconds: 30
+  extraLabels:
+    application: "sandbox"
+    region: "eu-central-1"

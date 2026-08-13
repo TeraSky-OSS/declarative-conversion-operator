@@ -225,3 +225,10 @@ spec:
             spokePath: spec.timeoutSeconds
           acknowledgeLossy: true
           reason: "integer seconds re-format as Go's canonical duration string (5m0s), which may differ from an equivalent spelling such as 5m"
+
+        - strategy: MapKeyRename
+          mapKeyRename:
+            hubPath: spec.extraLabels
+            spokePath: spec.extraLabels
+            renames:
+              app: application

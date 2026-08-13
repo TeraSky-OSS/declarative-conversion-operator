@@ -1420,6 +1420,60 @@ func TestQuantity_BothStringsIsCompileError(t *testing.T) {
 	}
 }
 
+func TestMapKeyRename_RenamesKnownKeyAndPassesOthers(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyMapKeyRename, Params: MapKeyRenameParams{
+			HubPath: ParsePath("labels"), SpokePath: ParsePath("labels"),
+			Renames: map[string]string{"app": "application"},
+		}},
+	}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{
+		"labels": map[string]any{"app": "widget", "keep": "yes"},
+	}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	got, _ := out["labels"].(map[string]any)
+	if got["application"] != "widget" || got["keep"] != "yes" {
+		t.Fatalf("expected renamed app plus passthrough keep, got %#v", out["labels"])
+	}
+	if _, still := got["app"]; still {
+		t.Fatalf("expected hub key app to be renamed away, got %#v", got)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	backMap, _ := back["labels"].(map[string]any)
+	if backMap["app"] != "widget" || backMap["keep"] != "yes" {
+		t.Fatalf("expected reverse rename plus passthrough, got %#v", back["labels"])
+	}
+}
+
+func TestMapKeyRename_NonInjectiveIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"labels": openMapSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyMapKeyRename, Params: MapKeyRenameParams{
+			HubPath: ParsePath("labels"), SpokePath: ParsePath("labels"),
+			Renames: map[string]string{"a": "x", "b": "x"},
+		}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error for non-injective renames")
+	}
+}
+
 func TestDuplicateClaim_IsCompileError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": strSchema(), "c": strSchema()})

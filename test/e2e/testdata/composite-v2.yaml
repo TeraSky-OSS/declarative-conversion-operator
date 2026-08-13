@@ -45,3 +45,6 @@ spec:
       limit: "100"
   cpuRequest: "250m"
   timeout: "1m"
+  extraLabels:
+    app: "gadget"
+    region: "us-west-1"

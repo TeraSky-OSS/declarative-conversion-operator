@@ -45,6 +45,9 @@ spec:
     - "10.0.0.53"
   cpuMillis: 1000
   timeoutSeconds: 30
+  extraLabels:
+    application: "sandbox"
+    region: "eu-central-1"
 status:
   phase: "Pending"
   observedGeneration: 1

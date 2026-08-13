@@ -102,7 +102,7 @@ var allStrategies = []string{
 	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
 	"TypeCoerce", "ScalarToFields", "FieldsToScalar",
 	"ArrayToMapByKey", "MapToArrayByKey", "NumericScale", "ListJoin", "ListSplit",
-	"Quantity", "Duration",
+	"Quantity", "Duration", "MapKeyRename",
 }
 
 // TestRunTest_FullCoverage_EndToEnd exercises a much richer fixture
@@ -299,6 +299,23 @@ func TestRunTest_DurationSecondsRoundTrip(t *testing.T) {
 		XRDPath:    "testdata/duration/xrd.yaml",
 		ConfigPath: "testdata/duration/config.yaml",
 		SamplesDir: "testdata/duration/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_MapKeyRenamePassthrough(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/map-key-rename/xrd.yaml",
+		ConfigPath: "testdata/map-key-rename/config.yaml",
+		SamplesDir: "testdata/map-key-rename/samples",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

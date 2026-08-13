@@ -452,6 +452,25 @@ spec:
                             - separator
                             - spokePath
                             type: object
+                          mapKeyRename:
+                            description: |-
+                              MapKeyRenameParams renames known keys inside a free-form map; other keys
+                              pass through unchanged. Renames is hub-key → spoke-key and must be injective.
+                            properties:
+                              hubPath:
+                                type: string
+                              renames:
+                                additionalProperties:
+                                  type: string
+                                minProperties: 1
+                                type: object
+                              spokePath:
+                                type: string
+                            required:
+                            - hubPath
+                            - renames
+                            - spokePath
+                            type: object
                           mapToArrayByKey:
                             description: |-
                               MapToArrayByKeyParams is the structural mirror of ArrayToMapByKeyParams:
@@ -658,6 +677,7 @@ spec:
                             - ListSplit
                             - Quantity
                             - Duration
+                            - MapKeyRename
                             type: string
                           toAnnotation:
                             description: ToMetadataParams backs both ToAnnotation
@@ -967,6 +987,7 @@ spec:
                             - ListSplit
                             - Quantity
                             - Duration
+                            - MapKeyRename
                             type: string
                           warnings:
                             items:

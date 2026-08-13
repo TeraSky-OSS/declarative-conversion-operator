@@ -280,6 +280,18 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.Duration = &DurationParams{
 			HubPath: r.Duration.SpokePath, SpokePath: r.Duration.HubPath,
 		}
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return out, fmt.Errorf("MapKeyRename: missing params")
+		}
+		rev := make(map[string]string, len(r.MapKeyRename.Renames))
+		for hubKey, spokeKey := range r.MapKeyRename.Renames {
+			rev[spokeKey] = hubKey
+		}
+		out.Strategy = StrategyMapKeyRename
+		out.MapKeyRename = &MapKeyRenameParams{
+			HubPath: r.MapKeyRename.SpokePath, SpokePath: r.MapKeyRename.HubPath, Renames: rev,
+		}
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -439,6 +451,11 @@ func hubSpokePathPairs(r ConversionRule) ([]pathPair, error) {
 			return nil, fmt.Errorf("Duration: missing params")
 		}
 		return []pathPair{{r.Duration.HubPath, r.Duration.SpokePath}}, nil
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return nil, fmt.Errorf("MapKeyRename: missing params")
+		}
+		return []pathPair{{r.MapKeyRename.HubPath, r.MapKeyRename.SpokePath}}, nil
 	case StrategyArrayToMapByKey:
 		if r.ArrayToMapByKey == nil {
 			return nil, fmt.Errorf("ArrayToMapByKey: missing params")
@@ -793,6 +810,17 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		cp := *r.Duration
 		cp.HubPath = hp
 		out.Duration = &cp
+	case StrategyMapKeyRename:
+		if r.MapKeyRename == nil {
+			return out, fmt.Errorf("MapKeyRename: missing params")
+		}
+		hp, err := mapPath(r.MapKeyRename.HubPath)
+		if err != nil {
+			return out, err
+		}
+		cp := *r.MapKeyRename
+		cp.HubPath = hp
+		out.MapKeyRename = &cp
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -922,6 +950,10 @@ func spokePathsOf(r ConversionRule) []string {
 	case StrategyDuration:
 		if r.Duration != nil {
 			return []string{r.Duration.SpokePath}
+		}
+	case StrategyMapKeyRename:
+		if r.MapKeyRename != nil {
+			return []string{r.MapKeyRename.SpokePath}
 		}
 	case StrategyTypeCoerce:
 		if r.TypeCoerce != nil {

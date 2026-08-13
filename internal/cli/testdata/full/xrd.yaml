@@ -103,6 +103,10 @@ spec:
                   type: string
                 timeout:
                   type: string
+                extraLabels:
+                  type: object
+                  additionalProperties:
+                    type: string
             status:
               type: object
               properties:
@@ -211,6 +215,10 @@ spec:
                   type: string
                 timeout:
                   type: string
+                extraLabels:
+                  type: object
+                  additionalProperties:
+                    type: string
             status:
               type: object
               properties:
@@ -291,6 +299,10 @@ spec:
                   type: integer
                 timeoutSeconds:
                   type: integer
+                extraLabels:
+                  type: object
+                  additionalProperties:
+                    type: string
                 # -- mirrors of fields owned by the v2 spoke's rules, kept
                 # identical in shape so they're auto-covered here without a
                 # rule --

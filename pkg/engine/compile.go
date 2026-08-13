@@ -214,6 +214,11 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			rr.HubPaths = []string{p.HubPath.String()}
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
+		case MapKeyRenameParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveMapKeyRename(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
 		default:
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d: unknown or unset strategy params", idx))
 		}
@@ -1241,4 +1246,56 @@ func resolveStringIntegerPair(idx int, name string, hubPath, spokePath FieldPath
 		return makeOp(hubPath, spokePath, false), makeOp(spokePath, hubPath, true), LosslessVerdict{HubToSpoke: false, SpokeToHub: true}, diags
 	}
 	return nil, nil, LosslessVerdict{}, diags
+}
+
+func requireOpaqueMap(idx int, name, side string, path FieldPath, schema *extv1.JSONSchemaProps) []Diagnostic {
+	node, err := lookupPath(schema, path)
+	if err != nil {
+		return []Diagnostic{errorf(idx, "rule %d (%s): %s: %v", idx, name, side, err)}
+	}
+	kind, opaque := classify(node)
+	if kind != FieldKindObject || !opaque {
+		return []Diagnostic{errorf(idx, "rule %d (%s): %s field %q must be a free-form map (object with additionalProperties), got %s", idx, name, side, path, kind)}
+	}
+	return nil
+}
+
+func invertRenames(idx int, name string, renames map[string]string) (map[string]string, []Diagnostic) {
+	var diags []Diagnostic
+	if len(renames) == 0 {
+		return nil, []Diagnostic{errorf(idx, "rule %d (%s): renames must list at least one key", idx, name)}
+	}
+	rev := make(map[string]string, len(renames))
+	for hubKey, spokeKey := range renames {
+		if hubKey == "" || spokeKey == "" {
+			diags = append(diags, errorf(idx, "rule %d (%s): rename keys must be non-empty", idx, name))
+			continue
+		}
+		if _, dup := rev[spokeKey]; dup {
+			diags = append(diags, errorf(idx, "rule %d (%s): spoke key %q is the destination of more than one hub key (renames must be injective)", idx, name, spokeKey))
+			continue
+		}
+		rev[spokeKey] = hubKey
+	}
+	return rev, diags
+}
+
+// resolveMapKeyRename claims the whole free-form map on both sides. Known
+// keys are renamed; every other key passes through. Injective renames are
+// lossless in both directions.
+func resolveMapKeyRename(idx int, p MapKeyRenameParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	diags = append(diags, requireOpaqueMap(idx, "MapKeyRename", "hub", p.HubPath, hub)...)
+	diags = append(diags, requireOpaqueMap(idx, "MapKeyRename", "spoke", p.SpokePath, spoke)...)
+	rev, renameDiags := invertRenames(idx, "MapKeyRename", p.Renames)
+	diags = append(diags, renameDiags...)
+	if d := claim(claimedHub, p.HubPath, idx, "hub"); d != nil {
+		diags = append(diags, *d)
+	}
+	if d := claim(claimedSpoke, p.SpokePath, idx, "spoke"); d != nil {
+		diags = append(diags, *d)
+	}
+	h2s := mapKeyRenameOp{src: p.HubPath, dst: p.SpokePath, renames: p.Renames}
+	s2h := mapKeyRenameOp{src: p.SpokePath, dst: p.HubPath, renames: rev}
+	return h2s, s2h, LosslessVerdict{true, true}, diags
 }
