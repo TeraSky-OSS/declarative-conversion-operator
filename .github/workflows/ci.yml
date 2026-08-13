@@ -172,6 +172,24 @@ jobs:
             --set dashboards.enabled=true \
             --set manager.podDisruptionBudget.enabled=true
 
+      - name: helm template (scheduling, labels, extraEnv, cacheSelector)
+        run: |
+          out="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+            --namespace declarative-conversion-system \
+            -f hack/testdata/helm-install-ux-values.yaml)"
+          echo "$out" | grep -q 'priorityClassName: system-cluster-critical'
+          echo "$out" | grep -q 'team: platform'
+          echo "$out" | grep -q 'env: "ci"'
+          echo "$out" | grep -q 'name: FOO'
+          echo "$out" | grep -q 'name: TENANT'
+          echo "$out" | grep -q -- '--cert-reload-interval=1m'
+          echo "$out" | grep -q 'tenant: a'
+
+      - name: CRD upgrade helper prints chart CRDs
+        run: |
+          ./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print \
+            | grep -q 'kind: CustomResourceDefinition'
+
       - name: promtool test rules
         run: make test-prometheus
 

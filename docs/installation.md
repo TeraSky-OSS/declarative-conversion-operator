@@ -35,9 +35,24 @@ By default this creates:
 Confirm everything came up:
 
 ```console
-kubectl -n declarative-conversion-system get pods
-kubectl wait --for=condition=Available conversionwebhookserver/default --timeout=120s
+kubectl -n declarative-conversion-system rollout status deploy/declarative-conversion-operator-manager
+kubectl wait --for=condition=Available conversionwebhookserver/default --timeout=180s
 ```
+
+Helm's post-install notes walk the same first-success path (manager + CWS Ready, then `convctl`, then a gallery/kitchen-sink config).
+
+## cert-manager install matrix
+
+This chart **does not** vendor cert-manager as a subchart. Both webhook surfaces (`Certificate` for the manager's admission webhook, and `Certificate` for every `ConversionWebhookServer`) are cert-manager resources; without the cert-manager controller they never become Ready.
+
+| cert-manager on the cluster | Issuer | Supported? |
+|---|---|---|
+| Installed | Unset — the chart creates a bootstrap self-signed `ClusterIssuer` (`certManager.selfSigned.enabled: true`, the default) | **Yes** — try-out / `helm install` with no extra values |
+| Installed | Your `Issuer`/`ClusterIssuer` via `certManager.issuerRef` (and usually `certManager.selfSigned.enabled: false`) | **Yes** — production |
+| Not installed | Any `issuerRef`, including an Issuer that exists as YAML but has no controller | **No** — install [cert-manager](https://cert-manager.io/docs/installation/) first |
+| Not installed | None | **No** — same: cert-manager is a required external prerequisite |
+
+`helm install` / `helm upgrade` NOTES warn when `cert-manager.io/v1` is missing from the cluster's API. `helm template` cannot see that API, so a GitOps render will not print the warning — check the matrix above instead.
 
 ## Feature toggles
 
@@ -67,6 +82,13 @@ Both CRDs (`XRDConversionConfig`, `CRDConversionConfig`) are always installed re
 | `conversionWebhookServer.replicaCount` | Replica count for the default `ConversionWebhookServer` instance. | `2` |
 | `conversionWebhookServer.autoscaling.enabled` | Use an HPA instead of a fixed replica count for the default instance. | `false` |
 | `conversionWebhookServer.certificate.issuerRef` | Issuer override for the default instance's conversion-webhook certificate. | inherits `certManager.issuerRef` |
+| `manager.priorityClassName` / `manager.topologySpreadConstraints` | Scheduling knobs on the manager Deployment. | unset / `[]` |
+| `manager.podLabels` / `manager.podAnnotations` | Extra labels/annotations on manager pods (selector labels are not overridden). | `{}` |
+| `manager.extraArgs` / `manager.extraEnv` / `manager.extraVolumes` / `manager.extraVolumeMounts` | Escape hatches on the manager container. | `[]` |
+| `commonLabels` | Labels merged onto every chart-templated resource (not CWS child pods). | `{}` |
+| `conversionWebhookServer.priorityClassName` / `.topologySpreadConstraints` / `.podLabels` / `.podAnnotations` | Passed through to the default `ConversionWebhookServer` CR (the operator builds the Deployment). | unset / `[]` / `{}` |
+| `conversionWebhookServer.extraArgs` / `.extraEnv` / `.extraVolumes` / `.extraVolumeMounts` | Passed through to the default CWS spec. | `[]` |
+| `conversionWebhookServer.cacheSelector` | Optional label selector scoping that instance's config informers. | `{}` (unscoped) |
 | `metrics.serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor`. Opt-in by value, not capability-detected, so chart behavior doesn't change based on how it's rendered. | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in alerts. | `false` |
 | `dashboards.enabled` | Create Grafana sidecar ConfigMap(s) labeled `grafana_dashboard: "1"`. | `false` |
@@ -91,10 +113,18 @@ certManager:
 
 ## Upgrading
 
-CRDs live in the chart's `crds/` directory and follow [Helm's standard convention](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/): they're applied once at install time and **never** touched by `helm upgrade` or `helm uninstall` — the safest default against accidental schema-change data loss. If a chart upgrade changes the CRD schema, apply the new CRDs manually first:
+CRDs live in the chart's `crds/` directory and follow [Helm's standard convention](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/): they're applied once at install time and **never** touched by `helm upgrade` or `helm uninstall` — the safest default against accidental schema-change data loss. If a chart upgrade changes the CRD schema, apply the new CRDs **before** `helm upgrade`:
 
 ```console
-helm show crds oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version <new-version> | kubectl apply -f -
+# From a checkout of the version you're moving to:
+make helm-upgrade-crds          # kubectl diff; no write
+make helm-upgrade-crds APPLY=1  # apply if they differ
+
+# From a published chart:
+./hack/upgrade-crds.sh \
+  --chart oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
+  --version <new-version> --apply
+
 helm upgrade declarative-conversion-operator \
   oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version <new-version> \
   --namespace declarative-conversion-system

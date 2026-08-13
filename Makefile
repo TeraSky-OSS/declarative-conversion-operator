@@ -34,6 +34,10 @@ manifests: controller-gen ## Generate CRD and RBAC manifests into config/.
 helm-sync: manifests ## Copy generated CRDs into the Helm chart's crds/ directory.
 	cp config/crd/bases/*.yaml charts/declarative-conversion-operator/crds/
 
+.PHONY: helm-upgrade-crds
+helm-upgrade-crds: ## Diff this chart's CRDs against the current cluster (APPLY=1 to apply).
+	./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator $(if $(APPLY),--apply,)
+
 .PHONY: fmt
 fmt: ## Run gofmt against code.
 	gofmt -l -w .

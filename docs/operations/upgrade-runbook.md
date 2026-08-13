@@ -65,6 +65,26 @@ silently dropped by the apiserver.
 
 ```console
 # Fetch once; fail here if Helm cannot retrieve the chart version.
+# From a checkout of the version you're moving to:
+make helm-upgrade-crds          # kubectl diff; exits 1 if they differ
+make helm-upgrade-crds APPLY=1  # apply only after you've inspected the diff
+
+# Equivalent against a published chart (what the Make target wraps):
+./hack/upgrade-crds.sh \
+  --chart oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
+  --version <new-version>
+./hack/upgrade-crds.sh \
+  --chart oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
+  --version <new-version> --apply
+```
+
+`hack/upgrade-crds.sh` is the same sequence as below (`helm show crds`, then
+`kubectl diff`, then optional `kubectl apply`). Do not pipe `helm show crds`
+straight into `kubectl apply` without checking retrieval succeeded — a Helm
+pull failure would otherwise look like an empty apply.
+
+```console
+# Fetch once; fail here if Helm cannot retrieve the chart version.
 helm show crds oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator \
   --version <new-version> > /tmp/dco-crds.yaml
 
