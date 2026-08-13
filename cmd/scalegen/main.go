@@ -51,7 +51,7 @@ func main() {
 	opts.QPS = float32(qps)
 
 	if _, err := scalegen.Run(context.Background(), opts); err != nil {
-		fmt.Fprintf(os.Stderr, "scalegen: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "scalegen: %v\n", err)
 		os.Exit(1)
 	}
 }

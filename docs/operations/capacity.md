@@ -185,8 +185,7 @@ apiserver Get/List (which invoke the conversion webhook) in parallel:
   category.
 
 Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars — this is
-**not** in the CI e2e matrix; 100×100 is a local capacity run (kind etcd and
-apiserver will dominate before the webhook does).
+**not** in the CI e2e matrix; 100×100 is a local capacity run.
 
 ```console
 # smoke (default)
@@ -199,6 +198,28 @@ TARGETS=100 INSTANCES=100 PARALLEL=32 make test-e2e-scale
 KEEP_CLUSTER=1 TARGETS=20 INSTANCES=20 make test-e2e-scale
 go run ./cmd/scalegen --reset --targets 20 --instances 20 --parallel 16 --qps 100 --namespace dco-scale
 ```
+
+### 100×100 on a single-node kind cluster
+
+Same workstation as the microbenchmarks (Intel Core Ultra 9 285HX, WSL2,
+kindest/node v1.35, one control-plane node). 100 CRDs × 3 versions, 3–10
+strategies per spoke (all 29 used across the fleet), 100 instances created
+at `v1`, then parallel Get/List at both spokes (`PARALLEL=32`, QPS 100 /
+burst 200). Create of 10,000 objects took **1m38s**. Zero conversion errors.
+
+| Op | Calls | Objects / call | p50 | p99 | max | Errors |
+|---|---:|---:|---:|---:|---:|---:|
+| list v1 | 300 | 100 | 299 ms | 400 ms | 410 ms | 0 |
+| list v2 | 300 | 100 | 300 ms | 392 ms | 402 ms | 0 |
+| get v1 | 10,000 | 1 | 320 ms | 336 ms | 388 ms | 0 |
+| get v2 | 10,000 | 1 | 320 ms | 340 ms | 411 ms | 0 |
+
+A List of 100 objects is the same ~300 ms p50 as a single Get. Engine
+`Convert` on these fixtures is microseconds; the kind apiserver, etcd, and
+TLS hop dominate. Spoke v1 and v2 are indistinguishable. The 1s p99
+ConversionReview alert is ~3× this envelope. Re-run with
+`TARGETS=100 INSTANCES=100 PARALLEL=32 make test-e2e-scale` after changing
+the serving path.
 
 | Flag / env | Default | Meaning |
 |---|---|---|
@@ -216,10 +237,8 @@ go run ./cmd/scalegen --reset --targets 20 --instances 20 --parallel 16 --qps 10
 | `--dry-run` | false | Print strategy coverage only (no cluster) |
 
 Native CRDs are used on purpose: they exercise the same `pkg/engine` +
-webhook-server path as XRDs without requiring Crossplane. Record p50/p99 from
-the `=== cluster scale ===` summary into this page after a 100×100 run on
-your hardware — those numbers include apiserver + etcd + conversion, not just
-`Convert`.
+webhook-server path as XRDs without requiring Crossplane. Times above include
+apiserver + etcd + conversion, not just `Convert`.
 
 ## What actually consumes capacity
 

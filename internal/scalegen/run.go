@@ -126,7 +126,7 @@ func (o Options) withDefaults() Options {
 }
 
 func (o Options) logf(format string, args ...any) {
-	fmt.Fprintf(o.Out, format+"\n", args...)
+	_, _ = fmt.Fprintf(o.Out, format+"\n", args...)
 }
 
 // Run generates CRDs (3 versions, 3–10 strategies per spoke, all catalog
@@ -267,9 +267,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 }
 
 func printResult(w io.Writer, r *Result) {
-	fmt.Fprintf(w, "\n=== cluster scale ===\n")
-	fmt.Fprintf(w, "targets=%d instances/type=%d total objects=%d\n", r.Targets, r.Instances, r.Targets*r.Instances)
-	fmt.Fprintf(w, "create: %s\n", r.Create.Round(time.Millisecond))
+	_, _ = fmt.Fprintf(w, "\n=== cluster scale ===\n")
+	_, _ = fmt.Fprintf(w, "targets=%d instances/type=%d total objects=%d\n", r.Targets, r.Instances, r.Targets*r.Instances)
+	_, _ = fmt.Fprintf(w, "create: %s\n", r.Create.Round(time.Millisecond))
 	printStats(w, "list v1 (hub→spoke, N objects/call)", r.ListV1)
 	printStats(w, "list v2 (hub→spoke, N objects/call)", r.ListV2)
 	printStats(w, "get  v1 (hub→spoke, 1 object/call)", r.GetV1)
@@ -277,10 +277,10 @@ func printResult(w io.Writer, r *Result) {
 }
 
 func printStats(w io.Writer, name string, s Stats) {
-	fmt.Fprintf(w, "%s: n=%d errors=%d p50=%s p99=%s max=%s\n",
+	_, _ = fmt.Fprintf(w, "%s: n=%d errors=%d p50=%s p99=%s max=%s\n",
 		name, s.N, s.Errors, s.P50.Round(time.Millisecond), s.P99.Round(time.Millisecond), s.Max.Round(time.Millisecond))
 	for _, e := range s.Samples {
-		fmt.Fprintf(w, "  sample error: %s\n", e)
+		_, _ = fmt.Fprintf(w, "  sample error: %s\n", e)
 	}
 }
 
