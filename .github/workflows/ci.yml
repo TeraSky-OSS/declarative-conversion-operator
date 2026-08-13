@@ -178,12 +178,21 @@ jobs:
             --namespace declarative-conversion-system \
             -f hack/testdata/helm-install-ux-values.yaml)"
           echo "$out" | grep -q 'priorityClassName: system-cluster-critical'
-          echo "$out" | grep -q 'team: platform'
+          echo "$out" | grep -q 'team: "platform"'
           echo "$out" | grep -q 'env: "ci"'
           echo "$out" | grep -q 'name: FOO'
           echo "$out" | grep -q 'name: TENANT'
           echo "$out" | grep -q -- '--cert-reload-interval=1m'
           echo "$out" | grep -q 'tenant: a'
+          echo "$out" | grep -q 'app.kubernetes.io/name: declarative-conversion-operator'
+          if echo "$out" | grep -q 'app.kubernetes.io/name: hijack'; then
+            echo "FAIL: commonLabels overrode the manager selector name" >&2
+            exit 1
+          fi
+          if echo "$out" | grep -q 'control-plane: hijack'; then
+            echo "FAIL: podLabels overrode the manager selector" >&2
+            exit 1
+          fi
 
       - name: CRD upgrade helper prints chart CRDs
         run: |

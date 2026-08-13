@@ -36,7 +36,7 @@ helm-sync: manifests ## Copy generated CRDs into the Helm chart's crds/ director
 
 .PHONY: helm-upgrade-crds
 helm-upgrade-crds: ## Diff this chart's CRDs against the current cluster (APPLY=1 to apply).
-	./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator $(if $(APPLY),--apply,)
+	./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator $(if $(filter 1,$(APPLY)),--apply,)
 
 .PHONY: fmt
 fmt: ## Run gofmt against code.

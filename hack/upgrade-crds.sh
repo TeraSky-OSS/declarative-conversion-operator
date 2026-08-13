@@ -17,7 +17,17 @@ APPLY=0
 PRINT_ONLY=0
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \?//'
+  cat <<'EOF'
+Diff (and optionally apply) this chart's CRDs against the current cluster.
+Helm installs CRDs from crds/ once and never upgrades them; run this before
+helm upgrade whenever a chart version changes the CRD schema.
+
+Usage:
+  ./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator
+  ./hack/upgrade-crds.sh --chart oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version 0.2.0
+  ./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --apply
+  ./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print
+EOF
   exit "${1:-0}"
 }
 

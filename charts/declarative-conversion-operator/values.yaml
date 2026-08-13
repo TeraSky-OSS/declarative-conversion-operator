@@ -1,7 +1,10 @@
 nameOverride: ""
 fullnameOverride: ""
 # Labels merged onto every chart-templated resource (not CWS child pods;
-# those are owned by the ConversionWebhookServer controller).
+# those are owned by the ConversionWebhookServer controller). Keys the
+# chart uses for identity or the manager Deployment selector
+# (app.kubernetes.io/name, instance, managed-by, version, helm.sh/chart,
+# control-plane) are ignored so they cannot break rolling updates.
 commonLabels: {}
 imagePullSecrets: []
 
@@ -68,6 +71,8 @@ manager:
   affinity: {}
   topologySpreadConstraints: []
   priorityClassName: ""
+  # Extra labels on manager pods. Selector/identity keys are ignored
+  # (same restriction as commonLabels).
   podLabels: {}
   podAnnotations: {}
   podDisruptionBudget:

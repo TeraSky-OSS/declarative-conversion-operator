@@ -18,13 +18,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
+        {{- include "declarative-conversion-operator.userLabels" .Values.commonLabels | nindent 8 }}
+        {{- include "declarative-conversion-operator.userLabels" .Values.manager.podLabels | nindent 8 }}
         {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 8 }}
-        {{- with .Values.manager.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-        {{- range $k, $v := .Values.commonLabels }}
-        {{ $k }}: {{ $v | quote }}
-        {{- end }}
     spec:
       serviceAccountName: {{ include "declarative-conversion-operator.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}

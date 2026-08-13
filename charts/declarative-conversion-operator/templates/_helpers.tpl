@@ -17,6 +17,20 @@ Fully qualified app name.
 {{- end }}
 
 {{/*
+User-supplied labels with chart identity / manager selector keys stripped
+so they cannot override app.kubernetes.io/name|instance|managed-by|version,
+helm.sh/chart, or control-plane.
+*/}}
+{{- define "declarative-conversion-operator.userLabels" -}}
+{{- $skip := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/managed-by" "app.kubernetes.io/version" "helm.sh/chart" "control-plane" -}}
+{{- range $k, $v := . }}
+{{- if not (has $k $skip) }}
+{{ $k }}: {{ $v | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Common labels.
 */}}
 {{- define "declarative-conversion-operator.labels" -}}
@@ -25,9 +39,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
-{{- range $k, $v := .Values.commonLabels }}
-{{ $k }}: {{ $v | quote }}
-{{- end }}
+{{- include "declarative-conversion-operator.userLabels" .Values.commonLabels }}
 {{- end }}
 
 {{/*

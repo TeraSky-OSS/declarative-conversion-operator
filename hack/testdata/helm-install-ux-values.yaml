@@ -2,10 +2,12 @@
 # Not a recommended production values file.
 commonLabels:
   env: ci
+  app.kubernetes.io/name: hijack
 manager:
   priorityClassName: system-cluster-critical
   podLabels:
     team: platform
+    control-plane: hijack
   podAnnotations:
     foo: bar
   extraEnv:
