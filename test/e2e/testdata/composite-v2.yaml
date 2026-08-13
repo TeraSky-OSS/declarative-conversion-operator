@@ -48,3 +48,4 @@ spec:
   extraLabels:
     app: "gadget"
     region: "us-west-1"
+  packed: 528

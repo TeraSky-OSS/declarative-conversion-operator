@@ -1544,6 +1544,81 @@ func TestMapKeyRename_NonInjectiveIsCompileError(t *testing.T) {
 	}
 }
 
+func TestCEL_IntegerPackingRoundTrip(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"packed": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"bitHigh": intSchema(), "bitLow": intSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyCEL,
+		Params: CELParams{
+			HubPaths:   []FieldPath{ParsePath("packed")},
+			SpokePaths: []FieldPath{ParsePath("bitHigh"), ParsePath("bitLow")},
+			HubToSpoke: `{"bitHigh": int(object.packed) / 256, "bitLow": int(object.packed) % 256}`,
+			SpokeToHub: `{"packed": int(object.bitHigh) * 256 + int(object.bitLow)}`,
+		},
+		AcknowledgeLossy: true,
+	}}}
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: map[string]any{"packed": float64(1025)}})
+	if err != nil {
+		t.Fatalf("convert h2s: %v", err)
+	}
+	high, _ := AsFloat64(out["bitHigh"])
+	low, _ := AsFloat64(out["bitLow"])
+	if high != 4 || low != 1 {
+		t.Fatalf("expected bitHigh=4 bitLow=1, got %#v", out)
+	}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: out})
+	if err != nil {
+		t.Fatalf("convert s2h: %v", err)
+	}
+	if got, ok := AsFloat64(back["packed"]); !ok || got != 1025 {
+		t.Fatalf("expected packed=1025, got %#v", back["packed"])
+	}
+}
+
+func TestCEL_RequiresAcknowledgeLossy(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": intSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyCEL,
+		Params: CELParams{
+			HubPaths:   []FieldPath{ParsePath("a")},
+			SpokePaths: []FieldPath{ParsePath("b")},
+			HubToSpoke: `{"b": object.a}`,
+			SpokeToHub: `{"a": object.b}`,
+		},
+	}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error when CEL is missing acknowledgeLossy")
+	}
+}
+
+func TestCEL_BadExpressionIsCompileError(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": intSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": intSchema()})
+	rs := RuleSet{Rules: []Rule{{
+		Strategy: StrategyCEL,
+		Params: CELParams{
+			HubPaths:   []FieldPath{ParsePath("a")},
+			SpokePaths: []FieldPath{ParsePath("b")},
+			HubToSpoke: `this is not cel`,
+			SpokeToHub: `{"a": object.b}`,
+		},
+		AcknowledgeLossy: true,
+	}}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected a compile error for an invalid hubToSpoke expression")
+	}
+}
+
 func TestDuplicateClaim_IsCompileError(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"b": strSchema(), "c": strSchema()})

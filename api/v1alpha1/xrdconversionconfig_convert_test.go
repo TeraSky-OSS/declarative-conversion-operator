@@ -184,6 +184,16 @@ func wellFormedRules() map[Strategy]ConversionRule {
 				Renames: map[string]string{"app": "application"},
 			},
 		},
+		StrategyCEL: {
+			Strategy: StrategyCEL,
+			CEL: &CELParams{
+				HubPaths:   []string{"spec.packed"},
+				SpokePaths: []string{"spec.bitHigh", "spec.bitLow"},
+				HubToSpoke: `{"spec.bitHigh": int(object.spec.packed) / 256, "spec.bitLow": int(object.spec.packed) % 256}`,
+				SpokeToHub: `{"spec.packed": object.spec.bitHigh * 256 + object.spec.bitLow}`,
+			},
+			AcknowledgeLossy: true,
+		},
 	}
 }
 
@@ -221,6 +231,7 @@ func clearParams(rule ConversionRule) ConversionRule {
 	rule.Quantity = nil
 	rule.Duration = nil
 	rule.MapKeyRename = nil
+	rule.CEL = nil
 	return rule
 }
 

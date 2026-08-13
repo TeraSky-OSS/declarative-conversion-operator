@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename;CEL
 type Strategy string
 
 const (
@@ -104,6 +104,7 @@ const (
 	StrategyQuantity               Strategy = "Quantity"
 	StrategyDuration               Strategy = "Duration"
 	StrategyMapKeyRename           Strategy = "MapKeyRename"
+	StrategyCEL                    Strategy = "CEL"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -431,6 +432,18 @@ type MapKeyRenameParams struct {
 	Renames map[string]string `json:"renames"`
 }
 
+// CELParams is an always-lossy escape hatch. Both expressions receive the
+// source object as `object` and must return a map whose declared destination
+// paths are merged onto the output. losslessOverride is not supported.
+type CELParams struct {
+	// +kubebuilder:validation:MinItems=1
+	HubPaths []string `json:"hubPaths"`
+	// +kubebuilder:validation:MinItems=1
+	SpokePaths []string `json:"spokePaths"`
+	HubToSpoke string   `json:"hubToSpoke"`
+	SpokeToHub string   `json:"spokeToHub"`
+}
+
 // ConversionRule is one declarative conversion rule between the hub version
 // and a spoke version. Exactly one of the strategy-specific fields below
 // should be set, matching Strategy.
@@ -493,6 +506,8 @@ type ConversionRule struct {
 	Duration *DurationParams `json:"duration,omitempty"`
 	// +optional
 	MapKeyRename *MapKeyRenameParams `json:"mapKeyRename,omitempty"`
+	// +optional
+	CEL *CELParams `json:"cel,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).

@@ -204,3 +204,27 @@ func TestValidateCRDStructure_WarnPolicyRequiresReason(t *testing.T) {
 		t.Fatalf("unexpected error when reason is provided: %v", err)
 	}
 }
+
+func TestValidateStructure_CELRequiresAcknowledgeLossy(t *testing.T) {
+	rule := teraskyv1alpha1.ConversionRule{
+		Strategy: teraskyv1alpha1.StrategyCEL,
+		CEL: &teraskyv1alpha1.CELParams{
+			HubPaths:   []string{"spec.a"},
+			SpokePaths: []string{"spec.b"},
+			HubToSpoke: `{"spec.b": object.spec.a}`,
+			SpokeToHub: `{"spec.a": object.spec.b}`,
+		},
+	}
+	cfg := &teraskyv1alpha1.XRDConversionConfig{Spec: teraskyv1alpha1.XRDConversionConfigSpec{
+		HubVersion: "v2",
+		Spokes:     []teraskyv1alpha1.SpokeVersionRules{{Version: "v1", Rules: []teraskyv1alpha1.ConversionRule{rule}}},
+	}}
+	if err := ValidateStructure(cfg); err == nil {
+		t.Fatal("expected CEL without acknowledgeLossy to be rejected")
+	}
+	rule.AcknowledgeLossy = true
+	cfg.Spec.Spokes[0].Rules[0] = rule
+	if err := ValidateStructure(cfg); err != nil {
+		t.Fatalf("unexpected error for acknowledged CEL: %v", err)
+	}
+}

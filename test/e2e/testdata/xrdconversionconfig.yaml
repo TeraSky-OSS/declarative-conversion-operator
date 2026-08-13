@@ -1,6 +1,6 @@
 # Mirrors internal/cli/testdata/full/config.yaml exactly (same targetXRD
 # schema, same rules) so this e2e run exercises every one of pkg/engine's
-# 28 built-in strategies against a real apiserver, not just the 2 the
+# 29 built-in strategies against a real apiserver, not just the 2 the
 # earlier, minimal version of this fixture covered.
 apiVersion: terasky.com/v1alpha1
 kind: XRDConversionConfig
@@ -233,3 +233,15 @@ spec:
             spokePath: spec.extraLabels
             renames:
               app: application
+
+        - strategy: CEL
+          cel:
+            hubPaths:
+              - spec.packed
+            spokePaths:
+              - spec.bitHigh
+              - spec.bitLow
+            hubToSpoke: '{"spec.bitHigh": int(object.spec.packed) / 256, "spec.bitLow": int(object.spec.packed) % 256}'
+            spokeToHub: '{"spec.packed": int(object.spec.bitHigh) * 256 + int(object.spec.bitLow)}'
+          acknowledgeLossy: true
+          reason: "integer packing via CEL is an escape hatch the engine cannot prove lossless"

@@ -48,6 +48,8 @@ spec:
   extraLabels:
     application: "sandbox"
     region: "eu-central-1"
+  bitHigh: 3
+  bitLow: 16
 status:
   phase: "Pending"
   observedGeneration: 1

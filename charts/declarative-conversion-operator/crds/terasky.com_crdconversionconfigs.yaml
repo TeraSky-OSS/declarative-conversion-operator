@@ -113,6 +113,32 @@ spec:
                             - keyField
                             - spokePath
                             type: object
+                          cel:
+                            description: |-
+                              CELParams is an always-lossy escape hatch. Both expressions receive the
+                              source object as `object` and must return a map whose declared destination
+                              paths are merged onto the output. losslessOverride is not supported.
+                            properties:
+                              hubPaths:
+                                items:
+                                  type: string
+                                minItems: 1
+                                type: array
+                              hubToSpoke:
+                                type: string
+                              spokePaths:
+                                items:
+                                  type: string
+                                minItems: 1
+                                type: array
+                              spokeToHub:
+                                type: string
+                            required:
+                            - hubPaths
+                            - hubToSpoke
+                            - spokePaths
+                            - spokeToHub
+                            type: object
                           constant:
                             description: ConstantParams forces a field to a fixed
                               value on the side it exists on.
@@ -678,6 +704,7 @@ spec:
                             - Quantity
                             - Duration
                             - MapKeyRename
+                            - CEL
                             type: string
                           toAnnotation:
                             description: ToMetadataParams backs both ToAnnotation
@@ -998,6 +1025,7 @@ spec:
                             - Quantity
                             - Duration
                             - MapKeyRename
+                            - CEL
                             type: string
                           warnings:
                             items:

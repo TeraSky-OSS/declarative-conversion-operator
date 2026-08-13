@@ -1,0 +1,22 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xpacked-conversion
+spec:
+  targetXRD:
+    name: xpacked.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: CEL
+          cel:
+            hubPaths:
+              - spec.packed
+            spokePaths:
+              - spec.bitHigh
+              - spec.bitLow
+            hubToSpoke: '{"spec.bitHigh": int(object.spec.packed) / 256, "spec.bitLow": int(object.spec.packed) % 256}'
+            spokeToHub: '{"spec.packed": int(object.spec.bitHigh) * 256 + int(object.spec.bitLow)}'
+          acknowledgeLossy: true
+          reason: "CEL packing cannot be proven lossless at compile time"

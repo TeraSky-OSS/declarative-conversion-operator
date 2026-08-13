@@ -278,6 +278,9 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.MapKeyRename != nil {
 		set++
 	}
+	if r.CEL != nil {
+		set++
+	}
 	if set != 1 {
 		return fmt.Errorf("strategy %q requires exactly one matching params field to be set, found %d", r.Strategy, set)
 	}
@@ -293,6 +296,9 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 		if strings.TrimSpace(r.When.Path) == "" {
 			return fmt.Errorf("when.path is required")
 		}
+	}
+	if r.Strategy == teraskyv1alpha1.StrategyCEL && !r.AcknowledgeLossy {
+		return fmt.Errorf("CEL is always treated as lossy; acknowledgeLossy must be true (losslessOverride is not supported)")
 	}
 	if r.Strategy == teraskyv1alpha1.StrategyFromLabel && r.FromLabel != nil && r.FromLabel.Serialization == "JSON" {
 		return fmt.Errorf("FromLabel does not support serialization=JSON; use String (labels cannot carry JSON-quoted values)")

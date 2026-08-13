@@ -219,6 +219,15 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			rr.HubPaths = []string{p.HubPath.String()}
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
+		case CELParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveCEL(idx, p, hub, spoke, claimedHub, claimedSpoke)
+			for _, hp := range p.HubPaths {
+				rr.HubPaths = append(rr.HubPaths, hp.String())
+			}
+			for _, sp := range p.SpokePaths {
+				rr.SpokePaths = append(rr.SpokePaths, sp.String())
+			}
+
 		default:
 			ruleDiags = append(ruleDiags, errorf(idx, "rule %d: unknown or unset strategy params", idx))
 		}
@@ -1313,4 +1322,56 @@ func resolveMapKeyRename(idx int, p MapKeyRenameParams, hub, spoke *extv1.JSONSc
 	h2s := mapKeyRenameOp{src: p.HubPath, dst: p.SpokePath, renames: p.Renames}
 	s2h := mapKeyRenameOp{src: p.SpokePath, dst: p.HubPath, renames: rev}
 	return h2s, s2h, LosslessVerdict{true, true}, diags
+}
+
+// resolveCEL always reports both directions lossy. Declared paths are
+// claimed so coverage stays fail-closed; expression bodies are opaque.
+func resolveCEL(idx int, p CELParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	if len(p.HubPaths) == 0 {
+		diags = append(diags, errorf(idx, "rule %d (CEL): hubPaths must list at least one path", idx))
+	}
+	if len(p.SpokePaths) == 0 {
+		diags = append(diags, errorf(idx, "rule %d (CEL): spokePaths must list at least one path", idx))
+	}
+	if p.HubToSpoke == "" {
+		diags = append(diags, errorf(idx, "rule %d (CEL): hubToSpoke expression is required", idx))
+	}
+	if p.SpokeToHub == "" {
+		diags = append(diags, errorf(idx, "rule %d (CEL): spokeToHub expression is required", idx))
+	}
+	for _, hp := range p.HubPaths {
+		if _, err := lookupPath(hub, hp); err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): hub: %v", idx, err))
+		}
+		if d := claim(claimedHub, hp, idx, "hub"); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+	for _, sp := range p.SpokePaths {
+		if _, err := lookupPath(spoke, sp); err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): spoke: %v", idx, err))
+		}
+		if d := claim(claimedSpoke, sp, idx, "spoke"); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+	var h2s, s2h Op
+	if p.HubToSpoke != "" {
+		prg, err := compileCELProgram(p.HubToSpoke)
+		if err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): hubToSpoke: %v", idx, err))
+		} else {
+			h2s = celOp{prg: prg, dests: p.SpokePaths}
+		}
+	}
+	if p.SpokeToHub != "" {
+		prg, err := compileCELProgram(p.SpokeToHub)
+		if err != nil {
+			diags = append(diags, errorf(idx, "rule %d (CEL): spokeToHub: %v", idx, err))
+		} else {
+			s2h = celOp{prg: prg, dests: p.HubPaths}
+		}
+	}
+	return h2s, s2h, LosslessVerdict{HubToSpoke: false, SpokeToHub: false}, diags
 }

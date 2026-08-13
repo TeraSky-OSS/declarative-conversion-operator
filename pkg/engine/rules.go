@@ -48,6 +48,7 @@ const (
 	StrategyQuantity               Strategy = "Quantity"
 	StrategyDuration               Strategy = "Duration"
 	StrategyMapKeyRename           Strategy = "MapKeyRename"
+	StrategyCEL                    Strategy = "CEL"
 )
 
 // UnmappedFieldPolicy controls what happens when a field exists in a hub or
@@ -442,6 +443,20 @@ type MapKeyRenameParams struct {
 }
 
 func (MapKeyRenameParams) isRuleParams() {}
+
+// CELParams is an always-lossy escape hatch: two CEL expressions rewrite
+// declared hub/spoke paths. Compile cannot prove the expressions inverse,
+// and losslessOverride is intentionally not offered — acknowledgeLossy is
+// required. HubPaths/SpokePaths are claimed for coverage even though the
+// expression bodies are opaque.
+type CELParams struct {
+	HubPaths   []FieldPath
+	SpokePaths []FieldPath
+	HubToSpoke string
+	SpokeToHub string
+}
+
+func (CELParams) isRuleParams() {}
 
 // RuleSet is every rule declared for one hub<->spoke version pair.
 type RuleSet struct {

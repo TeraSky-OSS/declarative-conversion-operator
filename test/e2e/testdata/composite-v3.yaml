@@ -51,3 +51,4 @@ spec:
   extraLabels:
     app: "widget"
     region: "us-east-1"
+  packed: 1025

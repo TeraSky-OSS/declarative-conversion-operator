@@ -388,6 +388,15 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			Renames: r.MapKeyRename.Renames,
 		}, nil
 
+	case StrategyCEL:
+		if r.CEL == nil {
+			return nil, fmt.Errorf("requires cel params")
+		}
+		return engine.CELParams{
+			HubPaths: parsePaths(r.CEL.HubPaths), SpokePaths: parsePaths(r.CEL.SpokePaths),
+			HubToSpoke: r.CEL.HubToSpoke, SpokeToHub: r.CEL.SpokeToHub,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", r.Strategy)
 	}

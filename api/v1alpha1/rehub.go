@@ -292,6 +292,15 @@ func InvertRule(r ConversionRule) (ConversionRule, error) {
 		out.MapKeyRename = &MapKeyRenameParams{
 			HubPath: r.MapKeyRename.SpokePath, SpokePath: r.MapKeyRename.HubPath, Renames: rev,
 		}
+	case StrategyCEL:
+		if r.CEL == nil {
+			return out, fmt.Errorf("CEL: missing params")
+		}
+		out.Strategy = StrategyCEL
+		out.CEL = &CELParams{
+			HubPaths: append([]string(nil), r.CEL.SpokePaths...), SpokePaths: append([]string(nil), r.CEL.HubPaths...),
+			HubToSpoke: r.CEL.SpokeToHub, SpokeToHub: r.CEL.HubToSpoke,
+		}
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -456,6 +465,15 @@ func hubSpokePathPairs(r ConversionRule) ([]pathPair, error) {
 			return nil, fmt.Errorf("MapKeyRename: missing params")
 		}
 		return []pathPair{{r.MapKeyRename.HubPath, r.MapKeyRename.SpokePath}}, nil
+	case StrategyCEL:
+		if r.CEL == nil {
+			return nil, fmt.Errorf("CEL: missing params")
+		}
+		pairs := make([]pathPair, 0, len(r.CEL.HubPaths))
+		for _, hp := range r.CEL.HubPaths {
+			pairs = append(pairs, pathPair{hp, hp})
+		}
+		return pairs, nil
 	case StrategyArrayToMapByKey:
 		if r.ArrayToMapByKey == nil {
 			return nil, fmt.Errorf("ArrayToMapByKey: missing params")
@@ -821,6 +839,21 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		cp := *r.MapKeyRename
 		cp.HubPath = hp
 		out.MapKeyRename = &cp
+	case StrategyCEL:
+		if r.CEL == nil {
+			return out, fmt.Errorf("CEL: missing params")
+		}
+		paths := make([]string, len(r.CEL.HubPaths))
+		for i, p := range r.CEL.HubPaths {
+			np, err := mapPath(p)
+			if err != nil {
+				return out, err
+			}
+			paths[i] = np
+		}
+		cp := *r.CEL
+		cp.HubPaths = paths
+		out.CEL = &cp
 	default:
 		return out, fmt.Errorf("unsupported strategy %q", r.Strategy)
 	}
@@ -954,6 +987,10 @@ func spokePathsOf(r ConversionRule) []string {
 	case StrategyMapKeyRename:
 		if r.MapKeyRename != nil {
 			return []string{r.MapKeyRename.SpokePath}
+		}
+	case StrategyCEL:
+		if r.CEL != nil {
+			return append([]string(nil), r.CEL.SpokePaths...)
 		}
 	case StrategyTypeCoerce:
 		if r.TypeCoerce != nil {

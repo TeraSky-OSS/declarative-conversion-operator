@@ -1,0 +1,6 @@
+apiVersion: example.org/v2
+kind: XPacked
+metadata:
+  name: demo
+spec:
+  packed: 1025

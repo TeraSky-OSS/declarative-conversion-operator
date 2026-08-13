@@ -102,7 +102,7 @@ var allStrategies = []string{
 	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
 	"TypeCoerce", "ScalarToFields", "FieldsToScalar",
 	"ArrayToMapByKey", "MapToArrayByKey", "NumericScale", "ListJoin", "ListSplit",
-	"Quantity", "Duration", "MapKeyRename",
+	"Quantity", "Duration", "MapKeyRename", "CEL",
 }
 
 // TestRunTest_FullCoverage_EndToEnd exercises a much richer fixture
@@ -347,6 +347,23 @@ func TestRunTest_TypeCoerceFractionalIntegerTruncate(t *testing.T) {
 		XRDPath:    "testdata/type-coerce-trunc/xrd.yaml",
 		ConfigPath: "testdata/type-coerce-trunc/config.yaml",
 		SamplesDir: "testdata/type-coerce-trunc/samples",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 conversion errors, got %d", rep.Summary.Errors)
+	}
+	if rep.Summary.UnacknowledgedLoss != 0 {
+		t.Fatalf("expected 0 unacknowledged losses, got %d", rep.Summary.UnacknowledgedLoss)
+	}
+}
+
+func TestRunTest_CELIntegerPacking(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:    "testdata/cel/xrd.yaml",
+		ConfigPath: "testdata/cel/config.yaml",
+		SamplesDir: "testdata/cel/samples",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
