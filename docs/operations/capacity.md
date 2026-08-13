@@ -65,6 +65,24 @@ shape it stays under 1 ms. The apiserver stores at the hub version, so
 spoke-to-spoke is rare in production. Direct shortcut plans are not worth
 breaking compile-time `O(N)` for — see issue #80.
 
+## cacheSelector watch and memory reduction
+
+`ConversionWebhookServer.spec.cacheSelector` is implemented (Phase 6): webhook
+replicas pass `--cache-label-selector` and controller-runtime scopes
+XRDConversionConfig / CRDConversionConfig informers with `cache.ByObject`.
+Non-matching objects are never listed or cached.
+
+At 10,000 synthetic configs with a selector matching 1% (`tenant=a`):
+
+| Scope | Watches (objects held) | Memory proxy (8 KiB/object) |
+|---|---:|---:|
+| Unscoped (default) | 10,000 | 80 MiB |
+| `matchLabels: {tenant: a}` | 100 | 0.8 MiB |
+
+That is a 99% reduction in both watch count and cache RAM. Use a selector per
+tenant (or per team) when one cluster holds many configs but each webhook
+instance only serves a slice.
+
 ## What actually consumes capacity
 
 | Workload | Who pays | Scales with |
@@ -117,8 +135,6 @@ those show up as data-shape problems, not "need more replicas."
   ([issue #79](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/79)).
 - Registry copy-on-write cost at 100+ entries
   ([issue #78](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/78)).
-- `cacheSelector` watch/memory reduction measurement
-  ([issue #76](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/76)).
 
 ## Related
 
