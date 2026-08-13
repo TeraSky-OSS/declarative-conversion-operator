@@ -56,7 +56,7 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported privately to the project maintainers at **scott@terasky.com**.
+reported privately to the project maintainers.
 Security vulnerabilities are **not** Code of Conduct reports — follow
 [SECURITY.md](SECURITY.md) (GitHub Security Advisories) instead.
 
