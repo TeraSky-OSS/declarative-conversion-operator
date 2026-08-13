@@ -198,6 +198,11 @@ type ToMetadataParams struct {
 // FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
 // geometry of ToMetadataParams. The schema field lives on the spoke; hub
 // metadata holds the stash key.
+//
+// For FromLabel, serialization must be String (JSON produces quoted values
+// that are not valid Kubernetes label values). The admission webhook and
+// engine reject serialization=JSON for FromLabel; the default when unset is
+// String. FromAnnotation still defaults to JSON.
 type FromMetadataParams struct {
 	SpokePath string `json:"spokePath"`
 	Key       string `json:"key"`

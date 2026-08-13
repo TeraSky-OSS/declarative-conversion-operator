@@ -279,6 +279,9 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 			return fmt.Errorf("forEach: %w", err)
 		}
 	}
+	if r.Strategy == teraskyv1alpha1.StrategyFromLabel && r.FromLabel != nil && r.FromLabel.Serialization == "JSON" {
+		return fmt.Errorf("FromLabel does not support serialization=JSON; use String (labels cannot carry JSON-quoted values)")
+	}
 	return nil
 }
 

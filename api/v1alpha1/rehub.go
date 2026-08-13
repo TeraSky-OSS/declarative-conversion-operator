@@ -640,12 +640,7 @@ func RewriteHubPaths(r ConversionRule, m HubPathMap) (ConversionRule, error) {
 		if err != nil {
 			return out, err
 		}
-		nested := make([]ConversionRule, 0, len(r.ForEach.Rules))
-		for i, nr := range r.ForEach.Rules {
-			// Nested paths are relative to an element — do not rewrite via hub map.
-			nested = append(nested, nr)
-			_ = i
-		}
+		nested := append([]ConversionRule(nil), r.ForEach.Rules...)
 		cp := *r.ForEach
 		cp.HubItemsPath = hp
 		cp.Rules = nested
@@ -814,6 +809,42 @@ func spokePathsOf(r ConversionRule) []string {
 		if r.ObjectToScalar != nil {
 			return []string{r.ObjectToScalar.SpokePath}
 		}
+	case StrategySingletonArrayToObject:
+		if r.SingletonArrayToObject != nil {
+			return []string{r.SingletonArrayToObject.SpokePath}
+		}
+	case StrategyObjectToSingletonArray:
+		if r.ObjectToSingletonArray != nil {
+			return []string{r.ObjectToSingletonArray.SpokePath}
+		}
+	case StrategyFieldsToMap:
+		if r.FieldsToMap != nil {
+			return []string{r.FieldsToMap.SpokeMapPath}
+		}
+	case StrategyMapToFields:
+		if r.MapToFields != nil {
+			return append([]string(nil), r.MapToFields.SpokePaths...)
+		}
+	case StrategyScalarToFields:
+		if r.ScalarToFields != nil {
+			out := make([]string, 0, len(r.ScalarToFields.SpokeFields))
+			for _, p := range r.ScalarToFields.SpokeFields {
+				out = append(out, p)
+			}
+			return out
+		}
+	case StrategyFieldsToScalar:
+		if r.FieldsToScalar != nil {
+			return []string{r.FieldsToScalar.SpokePath}
+		}
+	case StrategyArrayToMapByKey:
+		if r.ArrayToMapByKey != nil {
+			return []string{r.ArrayToMapByKey.SpokePath}
+		}
+	case StrategyMapToArrayByKey:
+		if r.MapToArrayByKey != nil {
+			return []string{r.MapToArrayByKey.SpokePath}
+		}
 	case StrategyNumericScale:
 		if r.NumericScale != nil {
 			return []string{r.NumericScale.SpokePath}
@@ -826,6 +857,33 @@ func spokePathsOf(r ConversionRule) []string {
 		if r.ListSplit != nil {
 			return []string{r.ListSplit.SpokePath}
 		}
+	case StrategyTypeCoerce:
+		if r.TypeCoerce != nil {
+			return []string{r.TypeCoerce.Path}
+		}
+	case StrategyEnumRemap:
+		if r.EnumRemap != nil {
+			return []string{r.EnumRemap.Path}
+		}
+	case StrategyDefaultValue:
+		if r.DefaultValue != nil && r.DefaultValue.ExistsOn == SideSpoke {
+			return []string{r.DefaultValue.Path}
+		}
+	case StrategyConstant:
+		if r.Constant != nil && r.Constant.ExistsOn == SideSpoke {
+			return []string{r.Constant.Path}
+		}
+	case StrategyDelete:
+		if r.Delete != nil && r.Delete.ExistsOn == SideSpoke {
+			return []string{r.Delete.Path}
+		}
+	case StrategyForEach:
+		if r.ForEach != nil {
+			return []string{r.ForEach.SpokeItemsPath}
+		}
+	case StrategyToAnnotation, StrategyToLabel, StrategyJSONPatch:
+		// No spoke schema path claimed (metadata-only or opaque patches).
+		return nil
 	}
 	return nil
 }

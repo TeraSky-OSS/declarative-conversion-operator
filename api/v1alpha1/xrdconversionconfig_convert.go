@@ -185,9 +185,17 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 		if p == nil {
 			return nil, fmt.Errorf("requires %s params", r.Strategy)
 		}
+		serDefault := "JSON"
+		if r.Strategy == StrategyFromLabel {
+			// Labels must be plain strings; JSON quoting produces invalid label values.
+			if p.Serialization == "JSON" {
+				return nil, fmt.Errorf("FromLabel does not support serialization=JSON; use String")
+			}
+			serDefault = "String"
+		}
 		return engine.FromMetadataParams{
 			SpokePath: engine.ParsePath(p.SpokePath), Key: p.Key,
-			Serialization: orDefault(p.Serialization, "JSON"), StashOnReverse: p.StashOnReverse,
+			Serialization: orDefault(p.Serialization, serDefault), StashOnReverse: p.StashOnReverse,
 		}, nil
 
 	case StrategyEnumRemap:

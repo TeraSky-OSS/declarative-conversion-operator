@@ -154,5 +154,7 @@ spoke → hub stashes the spoke field back onto hub metadata.
 
 | Value | Behavior |
 |---|---|
-| `JSON` (default) | The value is JSON-encoded before being stored — safe for any scalar, object, or array value, at the cost of quoted strings and escaped characters in the raw annotation/label value. |
-| `String` | The value is stored as-is with no encoding — only valid for values that are already plain strings (required for labels, which must be valid label values). |
+| `JSON` (default for annotations) | The value is JSON-encoded before being stored — safe for any scalar, object, or array value, at the cost of quoted strings and escaped characters in the raw annotation/label value. |
+| `String` (required for labels) | The value is stored as-is with no encoding — only valid for values that are already plain strings (required for labels, which must be valid label values). |
+
+`FromLabel` rejects `serialization: JSON` at admission and compile time (defaulting to `String` when unset). Writing a label also validates the value against Kubernetes label rules at conversion time.

@@ -483,6 +483,21 @@ func TestFromLabel_StashOnReverse(t *testing.T) {
 	}
 }
 
+func TestFromLabel_RejectsJSONSerialization(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"operatorTier": strSchema()})
+	rs := RuleSet{Rules: []Rule{
+		{Strategy: StrategyFromLabel, Params: FromMetadataParams{
+			SpokePath: ParsePath("operatorTier"), Key: "operator-tier",
+			Serialization: "JSON", StashOnReverse: true,
+		}},
+	}}
+	_, diags, _ := Compile(rs, &hub, &spoke)
+	if errs := diagMessages(diags, SeverityError); len(errs) == 0 {
+		t.Fatal("expected error rejecting FromLabel serialization=JSON")
+	}
+}
+
 func TestEnumRemap_Bidirectional(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})

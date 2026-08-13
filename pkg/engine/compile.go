@@ -553,7 +553,14 @@ func resolveFromMetadata(idx int, strategy Strategy, p FromMetadataParams, spoke
 		metadataField = "labels"
 	}
 	serialization := p.Serialization
-	if serialization == "" {
+	if strategy == StrategyFromLabel {
+		if serialization == "JSON" {
+			diags = append(diags, errorf(idx, "rule %d (FromLabel): serialization=JSON is not supported for labels; use String", idx))
+		}
+		if serialization == "" {
+			serialization = "String"
+		}
+	} else if serialization == "" {
 		serialization = "JSON"
 	}
 	// Hub→spoke: restore the spoke field from hub metadata.

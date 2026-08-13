@@ -187,19 +187,19 @@ func (f forceHubStorage) Describe() engine.ResourceDescriptor {
 	return f.inner.Describe()
 }
 
-// stripStatus remmarshals a typed config to a map and drops status so draft
+// stripStatus remarshals a typed config to a map and drops status so draft
 // YAML does not emit an empty status: {} block.
-func stripStatus(obj any) map[string]any {
+func stripStatus(obj any) (map[string]any, error) {
 	data, err := sigsyaml.Marshal(obj)
 	if err != nil {
-		return map[string]any{"error": err.Error()}
+		return nil, fmt.Errorf("marshaling draft: %w", err)
 	}
 	var m map[string]any
 	if err := sigsyaml.Unmarshal(data, &m); err != nil {
-		return map[string]any{"error": err.Error()}
+		return nil, fmt.Errorf("preparing draft output: %w", err)
 	}
 	delete(m, "status")
-	return m
+	return m, nil
 }
 
 func versionLeafSetsXRD(xrd *unstructured.Unstructured) (map[string]map[string]bool, error) {
@@ -269,10 +269,14 @@ before applying.`,
 			if err != nil {
 				return err
 			}
-			if output == "json" {
-				return writeJSON(cmd, stripStatus(out))
+			draft, err := stripStatus(out)
+			if err != nil {
+				return err
 			}
-			data, err := sigsyaml.Marshal(stripStatus(out))
+			if output == "json" {
+				return writeJSON(cmd, draft)
+			}
+			data, err := sigsyaml.Marshal(draft)
 			if err != nil {
 				return fmt.Errorf("marshaling draft: %w", err)
 			}

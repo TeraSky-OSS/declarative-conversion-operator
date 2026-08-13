@@ -83,6 +83,33 @@ func TestInvertRule_ScalarToObject(t *testing.T) {
 	}
 }
 
+func TestComposeSpokeRules_DoesNotLiftClaimedNonRenamePath(t *testing.T) {
+	t.Parallel()
+	// Remapped old-hub path is already claimed by ArrayToMapByKey's spoke path;
+	// Compose must not synthesize a conflicting FieldRename.
+	pathMap := HubPathMap{"spec.zones": "spec.zoneMap"}
+	rules := []ConversionRule{{
+		Strategy: StrategyArrayToMapByKey,
+		ArrayToMapByKey: &ArrayToMapByKeyParams{
+			HubPath: "spec.zones", SpokePath: "spec.zones", KeyField: "name",
+		},
+	}}
+	spokeLeaves := map[string]bool{"spec.zones": true}
+	out, err := ComposeSpokeRules(rules, pathMap, spokeLeaves)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected only rewritten ArrayToMapByKey, got %d rules: %+v", len(out), out)
+	}
+	if out[0].Strategy != StrategyArrayToMapByKey || out[0].ArrayToMapByKey == nil {
+		t.Fatalf("expected ArrayToMapByKey, got %+v", out[0])
+	}
+	if out[0].ArrayToMapByKey.HubPath != "spec.zoneMap" || out[0].ArrayToMapByKey.SpokePath != "spec.zones" {
+		t.Fatalf("unexpected rewrite: %+v", out[0].ArrayToMapByKey)
+	}
+}
+
 func TestComposeSpokeRules_LiftsAutoCoveredRename(t *testing.T) {
 	t.Parallel()
 	// Stage 4→5: v1 had capacity↔size; widgetName was auto-covered vs hub v2.
