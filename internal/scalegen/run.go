@@ -138,7 +138,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 	cov := StrategyCoverage(targets)
-	opts.logf("generated %d CRDs × 3 versions (hub %s); strategy coverage:", len(targets), HubVersion)
+	opts.logf("generated %d CRDs × 3 versions (hub %s, category %s); strategy coverage:", len(targets), HubVersion, Category)
 	for _, s := range slots() {
 		opts.logf("  %-24s %d", s.Name, cov[s.Name])
 	}
@@ -246,6 +246,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	createDur := time.Since(createStart)
 	opts.logf("created instances in %s", createDur.Round(time.Millisecond))
+	opts.logf("list all generated CRs: kubectl get %s -n %s", Category, opts.Namespace)
 
 	opts.logf("benchmarking parallel List/Get at spoke versions %s and %s (%d workers)", V1, V2, opts.Parallel)
 	listV1 := benchLists(ctx, dyn, targets, opts.Namespace, V1, opts.ListRepeats, opts.Parallel)

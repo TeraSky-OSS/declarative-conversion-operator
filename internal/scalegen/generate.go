@@ -32,6 +32,9 @@ const (
 	HubVersion = "v3"
 	V1         = "v1"
 	V2         = "v2"
+	// Category is set on every generated CRD so `kubectl get widgets -n dco-scale`
+	// lists instances of all scale-gen types together.
+	Category = "widgets"
 )
 
 // Target is one generated CRD plus its conversion config and instance template.
@@ -89,7 +92,10 @@ func BuildTargets(targets, minN, maxN int, seed int64) ([]Target, error) {
 			TypeMeta:   metav1.TypeMeta{APIVersion: "apiextensions.k8s.io/v1", Kind: "CustomResourceDefinition"},
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec: extv1.CustomResourceDefinitionSpec{
-				Group: Group, Names: extv1.CustomResourceDefinitionNames{Plural: plural, Singular: fmt.Sprintf("widget%03d", i), Kind: kind},
+				Group: Group, Names: extv1.CustomResourceDefinitionNames{
+					Plural: plural, Singular: fmt.Sprintf("widget%03d", i), Kind: kind,
+					Categories: []string{Category},
+				},
 				Scope: extv1.NamespaceScoped,
 				Versions: []extv1.CustomResourceDefinitionVersion{
 					{Name: HubVersion, Served: true, Storage: true, Schema: schemaFor(hubProps)},

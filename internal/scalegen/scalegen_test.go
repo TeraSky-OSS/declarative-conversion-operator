@@ -78,6 +78,9 @@ func TestBuildTargets_AnalyzeAndConvert(t *testing.T) {
 	if cov := StrategyCoverage(targets); len(cov) != 29 {
 		t.Fatalf("coverage has %d strategies, want 29", len(cov))
 	}
+	if got := targets[0].CRD.Spec.Names.Categories; len(got) != 1 || got[0] != Category {
+		t.Fatalf("CRD categories = %v, want [%s]", got, Category)
+	}
 	for _, tgt := range targets {
 		tgt := tgt
 		t.Run(tgt.CRDName, func(t *testing.T) {

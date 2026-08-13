@@ -180,6 +180,9 @@ apiserver Get/List (which invoke the conversion webhook) in parallel:
   must be ≥ 29).
 - Instances are created at `v1`; Get/List run at both spoke versions so the
   apiserver converts hub↔spoke on every call.
+- Every CRD is in the `widgets` category: `kubectl get widgets -n dco-scale`
+  lists the whole fleet. Re-apply with `--reset` if older CRDs lack the
+  category.
 
 Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars — this is
 **not** in the CI e2e matrix; 100×100 is a local capacity run (kind etcd and
