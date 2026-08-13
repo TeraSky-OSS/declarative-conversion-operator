@@ -32,6 +32,7 @@ live in [`pkg/engine/*_bench_test.go`](https://github.com/TeraSky-OSS/declarativ
 and are summarized in [Capacity planning](operations/capacity.md). Extremely
 large or deeply nested schemas beyond the published 1000-leaf / 1000-element
 points are still unvalidated against a live apiserver. Re-run `make bench`
-locally; a synthetic ConversionReview load script is tracked as issue #79.
+locally; `make test-e2e-load` posts synthetic ConversionReview batches at a
+live webhook-server.
 
 If something here blocks you, please [open an issue](https://github.com/terasky-oss/declarative-conversion-operator/issues) — several of these are natural extension points the design was deliberately seamed for (see [Roadmap](roadmap.md)), not fundamental barriers.

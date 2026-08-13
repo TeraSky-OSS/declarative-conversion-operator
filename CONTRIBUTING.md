@@ -27,6 +27,7 @@ Useful extras:
 make helm-sync          # copy generated CRDs into the Helm chart
 make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
+make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)
 make dev-up             # kind + cert-manager + Crossplane + kube-prometheus-stack + operator
 make dev-down           # delete the kind cluster from dev-up
 ```

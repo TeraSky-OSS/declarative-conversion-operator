@@ -1,4 +1,6 @@
 bin/
+__pycache__/
+*.pyc
 *.out
 *.test
 dist/

@@ -66,6 +66,10 @@ test-e2e-crd-only: ## Run the e2e test for the native-CRD-only deployment shape:
 test-e2e-crossplane-only: ## Run the e2e test for the Crossplane-only deployment shape: features.nativeCRD.enabled=false. Same prerequisites as test-e2e.
 	./hack/e2e-test-crossplane-only.sh
 
+.PHONY: test-e2e-load
+test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
+	./hack/e2e-load.sh
+
 ##@ Build
 
 .PHONY: build

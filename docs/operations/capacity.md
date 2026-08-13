@@ -107,6 +107,30 @@ compile time (~3 ms for 1000 leaves). The hot path is `Get`, which is a
 single atomic load. The current copy-on-write map is adequate; a more
 complex persistent structure is not justified.
 
+## ConversionReview load (kind)
+
+`make test-e2e-load` stands up a native-CRD kind cluster and POSTs synthetic
+`ConversionReview` batches at the live webhook-server (`FieldRename` +
+`ToAnnotation` + `DefaultValue` + `Delete` on the Gadget fixture). Numbers
+from one run on the same workstation as the microbenchmarks (kindest/node
+v1.35, port-forward to `default-webhook-server`):
+
+| Objects / review | Extra pad / object | p50 | p99 | Reviews/s | Objects/s | Errors |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 0 | 7.8 ms | 11.0 ms | 125 | 125 | 0 |
+| 10 | 0 | 7.9 ms | 12.8 ms | 117 | 1.2k | 0 |
+| 50 | 0 | 8.7 ms | 10.6 ms | 113 | 5.7k | 0 |
+| 10 | 8 KiB | 11.5 ms | 13.9 ms | 87 | 867 | 0 |
+
+Batch size barely moves p50 (the TLS + HTTP overhead dominates this fixture).
+An 8 KiB annotation pad adds ~3 ms. Error rate was zero. These are
+client-observed times through `kubectl port-forward`, so they include that
+hop; in-cluster apiserver→webhook is typically a bit faster.
+
+The 1s p99 alert in [Observability](../observability.md) is more than an
+order of magnitude above this envelope for small objects. Re-run with
+`make test-e2e-load` (or `KEEP_CLUSTER=1`) after changing the hot path.
+
 ## What actually consumes capacity
 
 | Workload | Who pays | Scales with |
@@ -152,11 +176,6 @@ rate(dco_webhook_registry_compile_duration_seconds_sum[5m])
 If latency climbs while CPU is idle, look for oversized ConversionReview
 batches or pathological array sizes under `forEach` / `arrayToMapByKey` —
 those show up as data-shape problems, not "need more replicas."
-
-## Remaining gaps
-
-- Synthetic large-batch ConversionReview load e2e
-  ([issue #79](https://github.com/TeraSky-OSS/declarative-conversion-operator/issues/79)).
 
 ## Related
 
