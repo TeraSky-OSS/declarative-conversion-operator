@@ -50,6 +50,12 @@ spec:
             key: xrd.example.org/description
             restoreOnReverse: true
 
+        - strategy: FromAnnotation
+          fromAnnotation:
+            spokePath: spec.operatorNote
+            key: xrd.example.org/operator-note
+            stashOnReverse: true
+
         - strategy: EnumRemap
           enumRemap:
             path: spec.size
@@ -137,6 +143,13 @@ spec:
             key: tier
             serialization: String
             restoreOnReverse: true
+
+        - strategy: FromLabel
+          fromLabel:
+            spokePath: spec.operatorTier
+            key: operator-tier
+            serialization: String
+            stashOnReverse: true
 
         - strategy: DefaultValue
           defaultValue:

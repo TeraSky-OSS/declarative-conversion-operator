@@ -36,9 +36,14 @@ Offline checks (from a repo checkout):
 convctl test --config examples/crossplane-xr-multiversion/04-add-v3/xrdconversionconfig.yaml \
   --xrd examples/crossplane-xr-multiversion/04-add-v3/xrd.yaml \
   --samples examples/crossplane-xr-multiversion/04-add-v3/samples/
+
+# Draft the stage-5 config from stage 4 (review before apply):
+convctl rehub --config examples/crossplane-xr-multiversion/04-add-v3/xrdconversionconfig.yaml \
+  --xrd examples/crossplane-xr-multiversion/04-add-v3/xrd.yaml --to v3
 ```
 
 The full apply walkthrough, including Composition pipeline YAML and hub-promotion
 ordering, lives in the [example README](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/examples/crossplane-xr-multiversion/README.md).
 Hub-promotion safety (`KeepServingStale`) is documented in
 [XRDConversionConfig: Changing the hub version](../configuration/xrdconversionconfig.md#changing-the-hub-version).
+Use [`convctl rehub`](../cli.md#convctl-rehub) as the draft step when rewriting rules for a new hub.

@@ -6,10 +6,11 @@
 convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
 convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
-convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o json|table]
+convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl diff          --config config.yaml --live [-o json|table]
 convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
 convctl suggest       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
+convctl rehub         --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --to v3 [-o yaml|json]
 convctl patch-preview --config config.yaml --service-name NAME --service-namespace NS --ca-bundle B64 [flags]
 ```
 
@@ -223,6 +224,53 @@ spokes:
 The output is shaped exactly like a config's `spec.spokes` stanza, so accepted suggestions paste straight in.
 
 **These are heuristics, not conclusions.** Nothing can prove two differently-named fields were meant to be the same one, and name similarity will occasionally pair the wrong two. Read every suggestion, delete the wrong ones, and let `convctl validate` and `convctl test` grade what's left — a suggestion that survives both is a rule you can trust, and one that doesn't cost you a deleted line.
+
+## `convctl rehub`
+
+Drafts a conversion config rewritten so `--to` becomes the hub. `--to` must
+already be a spoke (add it first, then promote). Prints a same-kind YAML/JSON
+object to stdout and **never applies** it.
+
+```console
+convctl rehub --config config.yaml --xrd xrd.yaml --to v3
+convctl rehub --config config.yaml --crd crd.yaml --to v2 -o yaml
+```
+
+| Flag | Description |
+|---|---|
+| `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig`. **Required.** |
+| `-x, --xrd` / `--crd` | Target schema. Exactly one required (matched to the config's `kind`). |
+| `--to` | Version that becomes the new hub — must already be a spoke. **Required.** |
+| `-o, --output` | `yaml` (default) or `json`. |
+| `--allow-invalid` | Print the draft even if `Analyze` reports it Invalid. |
+
+What it does:
+
+1. Sets `hubVersion` to `--to`
+2. Drops the `--to` spoke entry
+3. Adds the **old hub** as a spoke whose rules are the **invert** of the old `--to` rules (e.g. `FieldRename` path swap, `ToAnnotation` → `FromAnnotation`)
+4. For every other spoke, **composes** old rules through the old-hub → new-hub path map (and lifts previously auto-covered renames when the spoke still has that leaf)
+
+Hub promotion is **not** a mechanical path swap — remaining spokes must be
+re-expressed against the new hub. `rehub` fail-closes if a rule cannot be
+rewritten safely (for example a promote spoke that is JSONPatch-only, or a
+remaining-spoke `JSONPatch` that needs a hand rewrite). Review the draft, then
+`convctl validate` / `convctl test` before applying.
+
+The Crossplane lifecycle example is the acceptance fixture:
+
+```console
+# stage 02 → matches stage 03
+convctl rehub --config examples/crossplane-xr-multiversion/02-add-v2/xrdconversionconfig.yaml \
+  --xrd examples/crossplane-xr-multiversion/02-add-v2/xrd.yaml --to v2
+
+# stage 04 → matches stage 05 (v1 gets two FieldRenames)
+convctl rehub --config examples/crossplane-xr-multiversion/04-add-v3/xrdconversionconfig.yaml \
+  --xrd examples/crossplane-xr-multiversion/04-add-v3/xrd.yaml --to v3
+```
+
+See [Changing the hub version](configuration/xrdconversionconfig.md#changing-the-hub-version)
+for the in-cluster promote sequence (`referenceable` / Composition retarget).
 
 ## `convctl patch-preview`
 

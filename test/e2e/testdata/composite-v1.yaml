@@ -1,4 +1,4 @@
-# Exercises every one of the 11 v1-spoke strategies' spoke->hub direction
+# Exercises every one of the 12 v1-spoke strategies' spoke->hub direction
 # when read back at the hub version (v3) — see hack/e2e-test.sh.
 apiVersion: e2e.example.org/v1
 kind: XWidget
@@ -16,6 +16,7 @@ spec:
   teamTag: "core"
   computeUnits: 5
   debugMode: true
+  operatorTier: "ops-bronze"
   volumes:
     - size: "10"
       name: "scratch"

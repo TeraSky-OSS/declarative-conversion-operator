@@ -85,6 +85,14 @@ func wellFormedRules() map[Strategy]ConversionRule {
 			Strategy: StrategyToLabel,
 			ToLabel:  &ToMetadataParams{HubPath: "spec.tier", Key: "example.org/tier"},
 		},
+		StrategyFromAnnotation: {
+			Strategy:       StrategyFromAnnotation,
+			FromAnnotation: &FromMetadataParams{SpokePath: "spec.operatorNote", Key: "example.org/operator-note"},
+		},
+		StrategyFromLabel: {
+			Strategy:  StrategyFromLabel,
+			FromLabel: &FromMetadataParams{SpokePath: "spec.operatorTier", Key: "operator-tier", Serialization: "String"},
+		},
 		StrategyEnumRemap: {
 			Strategy: StrategyEnumRemap,
 			EnumRemap: &EnumRemapParams{
@@ -179,6 +187,8 @@ func clearParams(rule ConversionRule) ConversionRule {
 	rule.MapToFields = nil
 	rule.ToAnnotation = nil
 	rule.ToLabel = nil
+	rule.FromAnnotation = nil
+	rule.FromLabel = nil
 	rule.EnumRemap = nil
 	rule.DefaultValue = nil
 	rule.Constant = nil

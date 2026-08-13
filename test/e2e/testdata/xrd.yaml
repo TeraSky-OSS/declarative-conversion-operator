@@ -157,6 +157,8 @@ spec:
                   type: integer
                 dnsServersCSV:
                   type: string
+                operatorNote:
+                  type: string
                 # -- mirrors of fields owned by the v1 spoke's rules, kept
                 # identical in shape so they're auto-covered here without a
                 # rule --
@@ -252,6 +254,8 @@ spec:
                   type: integer
                 debugMode:
                   type: boolean
+                operatorTier:
+                  type: string
                 volumes:
                   type: array
                   items:

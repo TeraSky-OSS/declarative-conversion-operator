@@ -29,6 +29,8 @@ const (
 	StrategyMapToFields            Strategy = "MapToFields"
 	StrategyToAnnotation           Strategy = "ToAnnotation"
 	StrategyToLabel                Strategy = "ToLabel"
+	StrategyFromAnnotation         Strategy = "FromAnnotation"
+	StrategyFromLabel              Strategy = "FromLabel"
 	StrategyEnumRemap              Strategy = "EnumRemap"
 	StrategyDefaultValue           Strategy = "DefaultValue"
 	StrategyConstant               Strategy = "Constant"
@@ -169,6 +171,19 @@ type ToMetadataParams struct {
 }
 
 func (ToMetadataParams) isRuleParams() {}
+
+// FromMetadataParams backs both FromAnnotation and FromLabel: the inverse
+// geometry of ToMetadataParams. The schema field lives on the spoke; its
+// value is restored from a hub metadata annotation/label on hub→spoke, and
+// (when StashOnReverse is set) stashed onto hub metadata on spoke→hub.
+type FromMetadataParams struct {
+	SpokePath      FieldPath
+	Key            string
+	Serialization  string // "JSON" (default) | "String"
+	StashOnReverse bool
+}
+
+func (FromMetadataParams) isRuleParams() {}
 
 // EnumRemapParams bidirectionally maps a scalar field's enumerated values
 // between hub and spoke vocabularies.

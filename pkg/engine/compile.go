@@ -120,6 +120,10 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			h2sOp, s2hOp, lossless, ruleDiags = resolveToMetadata(idx, rule.Strategy, p, hub, claimedHub)
 			rr.HubPaths = []string{p.HubPath.String()}
 
+		case FromMetadataParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveFromMetadata(idx, rule.Strategy, p, spoke, claimedSpoke)
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
 		case EnumRemapParams:
 			h2sOp, s2hOp, lossless, ruleDiags = resolveEnumRemap(idx, p, hub, spoke, claimedHub, claimedSpoke)
 			rr.HubPaths = []string{p.Path.String()}
@@ -528,6 +532,37 @@ func resolveToMetadata(idx int, strategy Strategy, p ToMetadataParams, hub *extv
 	spokeToHubLossless := p.RestoreOnReverse
 	if p.RestoreOnReverse {
 		s2h = restoreAnnotationOp{hubPath: p.HubPath, metadataField: metadataField, key: p.Key, serialization: serialization}
+	} else {
+		s2h = stripMetadataKeyOp{metadataField: metadataField, key: p.Key}
+	}
+	return h2s, s2h, LosslessVerdict{HubToSpoke: true, SpokeToHub: spokeToHubLossless}, diags
+}
+
+// resolveFromMetadata is the geometric inverse of resolveToMetadata: the
+// schema field lives on the spoke, and the stash key lives on hub metadata.
+// Runtime ops are reused with the spoke field path substituted for hubPath.
+func resolveFromMetadata(idx int, strategy Strategy, p FromMetadataParams, spoke *extv1.JSONSchemaProps, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	spokeNode, err := lookupPath(spoke, p.SpokePath)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (%s): %v", idx, strategy, err))
+	}
+	diags = append(diags, claimSubtree(claimedSpoke, p.SpokePath, spokeNode, idx, "spoke")...)
+	metadataField := "annotations"
+	if strategy == StrategyFromLabel {
+		metadataField = "labels"
+	}
+	serialization := p.Serialization
+	if serialization == "" {
+		serialization = "JSON"
+	}
+	// Hub→spoke: restore the spoke field from hub metadata.
+	h2s := restoreAnnotationOp{hubPath: p.SpokePath, metadataField: metadataField, key: p.Key, serialization: serialization}
+	var s2h Op
+	spokeToHubLossless := p.StashOnReverse
+	if p.StashOnReverse {
+		// Spoke→hub: stash the spoke field onto hub metadata.
+		s2h = stashAnnotationOp{hubPath: p.SpokePath, metadataField: metadataField, key: p.Key, serialization: serialization}
 	} else {
 		s2h = stripMetadataKeyOp{metadataField: metadataField, key: p.Key}
 	}

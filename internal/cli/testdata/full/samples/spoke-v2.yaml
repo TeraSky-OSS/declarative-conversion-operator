@@ -31,6 +31,7 @@ spec:
   diskSizeUnit: "Gi"
   memoryGB: 2
   dnsServersCSV: "9.9.9.9,4.2.2.2"
+  operatorNote: "v2 ops note"
   contactName: "Alex Rivera"
   contactEmail: "alex@example.com"
   endpoints:

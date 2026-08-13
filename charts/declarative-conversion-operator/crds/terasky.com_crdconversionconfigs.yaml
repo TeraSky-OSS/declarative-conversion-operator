@@ -301,6 +301,50 @@ spec:
                             - rules
                             - spokeItemsPath
                             type: object
+                          fromAnnotation:
+                            description: |-
+                              FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
+                              geometry of ToMetadataParams. The schema field lives on the spoke; hub
+                              metadata holds the stash key.
+                            properties:
+                              key:
+                                type: string
+                              serialization:
+                                default: JSON
+                                enum:
+                                - JSON
+                                - String
+                                type: string
+                              spokePath:
+                                type: string
+                              stashOnReverse:
+                                type: boolean
+                            required:
+                            - key
+                            - spokePath
+                            type: object
+                          fromLabel:
+                            description: |-
+                              FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
+                              geometry of ToMetadataParams. The schema field lives on the spoke; hub
+                              metadata holds the stash key.
+                            properties:
+                              key:
+                                type: string
+                              serialization:
+                                default: JSON
+                                enum:
+                                - JSON
+                                - String
+                                type: string
+                              spokePath:
+                                type: string
+                              stashOnReverse:
+                                type: boolean
+                            required:
+                            - key
+                            - spokePath
+                            type: object
                           jsonPatch:
                             description: |-
                               JSONPatchParams is the escape hatch: raw JSON Patch documents applied per
@@ -569,6 +613,8 @@ spec:
                             - MapToFields
                             - ToAnnotation
                             - ToLabel
+                            - FromAnnotation
+                            - FromLabel
                             - EnumRemap
                             - DefaultValue
                             - Constant
@@ -859,6 +905,8 @@ spec:
                             - MapToFields
                             - ToAnnotation
                             - ToLabel
+                            - FromAnnotation
+                            - FromLabel
                             - EnumRemap
                             - DefaultValue
                             - Constant

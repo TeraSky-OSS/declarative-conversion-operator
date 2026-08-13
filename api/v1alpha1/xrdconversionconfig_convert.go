@@ -177,6 +177,19 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			Serialization: orDefault(p.Serialization, "JSON"), RestoreOnReverse: p.RestoreOnReverse,
 		}, nil
 
+	case StrategyFromAnnotation, StrategyFromLabel:
+		p := r.FromAnnotation
+		if r.Strategy == StrategyFromLabel {
+			p = r.FromLabel
+		}
+		if p == nil {
+			return nil, fmt.Errorf("requires %s params", r.Strategy)
+		}
+		return engine.FromMetadataParams{
+			SpokePath: engine.ParsePath(p.SpokePath), Key: p.Key,
+			Serialization: orDefault(p.Serialization, "JSON"), StashOnReverse: p.StashOnReverse,
+		}, nil
+
 	case StrategyEnumRemap:
 		if r.EnumRemap == nil {
 			return nil, fmt.Errorf("requires enumRemap params")

@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit
 type Strategy string
 
 const (
@@ -85,6 +85,8 @@ const (
 	StrategyMapToFields            Strategy = "MapToFields"
 	StrategyToAnnotation           Strategy = "ToAnnotation"
 	StrategyToLabel                Strategy = "ToLabel"
+	StrategyFromAnnotation         Strategy = "FromAnnotation"
+	StrategyFromLabel              Strategy = "FromLabel"
 	StrategyEnumRemap              Strategy = "EnumRemap"
 	StrategyDefaultValue           Strategy = "DefaultValue"
 	StrategyConstant               Strategy = "Constant"
@@ -191,6 +193,20 @@ type ToMetadataParams struct {
 	Serialization string `json:"serialization,omitempty"`
 	// +optional
 	RestoreOnReverse bool `json:"restoreOnReverse,omitempty"`
+}
+
+// FromMetadataParams backs both FromAnnotation and FromLabel — the inverse
+// geometry of ToMetadataParams. The schema field lives on the spoke; hub
+// metadata holds the stash key.
+type FromMetadataParams struct {
+	SpokePath string `json:"spokePath"`
+	Key       string `json:"key"`
+	// +optional
+	// +kubebuilder:validation:Enum=JSON;String
+	// +kubebuilder:default=JSON
+	Serialization string `json:"serialization,omitempty"`
+	// +optional
+	StashOnReverse bool `json:"stashOnReverse,omitempty"`
 }
 
 // EnumValueMapping pairs one hub enum value with its spoke equivalent.
@@ -387,6 +403,10 @@ type ConversionRule struct {
 	ToAnnotation *ToMetadataParams `json:"toAnnotation,omitempty"`
 	// +optional
 	ToLabel *ToMetadataParams `json:"toLabel,omitempty"`
+	// +optional
+	FromAnnotation *FromMetadataParams `json:"fromAnnotation,omitempty"`
+	// +optional
+	FromLabel *FromMetadataParams `json:"fromLabel,omitempty"`
 	// +optional
 	EnumRemap *EnumRemapParams `json:"enumRemap,omitempty"`
 	// +optional

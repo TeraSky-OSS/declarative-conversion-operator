@@ -220,6 +220,12 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.ToLabel != nil {
 		set++
 	}
+	if r.FromAnnotation != nil {
+		set++
+	}
+	if r.FromLabel != nil {
+		set++
+	}
 	if r.EnumRemap != nil {
 		set++
 	}
