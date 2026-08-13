@@ -26,6 +26,17 @@ Useful extras:
 make helm-sync          # copy generated CRDs into the Helm chart
 make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
+make dev-up             # kind + cert-manager + Crossplane + kube-prometheus-stack + operator
+make dev-down           # delete the kind cluster from dev-up
+```
+
+`make dev-up` enables chart ServiceMonitors / PrometheusRules / Grafana dashboards and
+installs kube-prometheus-stack with anonymous Grafana (see
+`hack/dev-monitoring-values.yaml`). After it finishes:
+
+```console
+kubectl -n monitoring-system port-forward svc/monitoring-grafana 3000:80
+# open http://localhost:3000 — no login
 ```
 
 Offline CLI checks against fixtures (no cluster required):

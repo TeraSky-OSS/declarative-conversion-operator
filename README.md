@@ -152,7 +152,7 @@ make helm-lint helm-template
 
 ### Local dev environment
 
-`make dev-up` stands up a full local environment — a [kind](https://kind.sigs.k8s.io/) cluster, cert-manager, Crossplane, and this operator's own Helm chart installed with images built from your local checkout — and leaves it running for interactive use. It's the same setup the e2e tests use (see below), minus the test assertions and the teardown. Safe to re-run after every code change: it rebuilds the images, reloads them into the cluster, and restarts the running pods so the new code actually takes effect. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; tear it down with `make dev-down`.
+`make dev-up` stands up a full local environment — a [kind](https://kind.sigs.k8s.io/) cluster, cert-manager, Crossplane, [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) (Prometheus + Grafana with anonymous access), and this operator's own Helm chart installed with images built from your local checkout (ServiceMonitors, PrometheusRules, and Grafana dashboard ConfigMaps enabled) — and leaves it running for interactive use. It's the same setup the e2e tests use (see below), minus the test assertions, the teardown, and the monitoring stack. Safe to re-run after every code change: it rebuilds the images, reloads them into the cluster, and restarts the running pods so the new code actually takes effect. Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`; tear it down with `make dev-down`.
 
 ### End-to-end tests
 
