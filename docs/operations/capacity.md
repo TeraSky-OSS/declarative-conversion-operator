@@ -70,8 +70,10 @@ pairwise). For a 1000-element `forEach` object:
 
 Spoke-to-spoke is essentially two Converts. Even in this worst-case array
 shape it stays under 1 ms. The apiserver stores at the hub version, so
-spoke-to-spoke is rare in production. Direct shortcut plans are not worth
-breaking compile-time `O(N)` for — see issue #80.
+spoke-to-spoke is rare in production. Direct shortcut plans were evaluated
+and rejected: they would push compilation toward `O(N²)` spoke pairs for a
+gain that does not show up under the 1s p99 ConversionReview alert. Hub-and-
+spoke remains the only routing mode.
 
 ## cacheSelector watch and memory reduction
 

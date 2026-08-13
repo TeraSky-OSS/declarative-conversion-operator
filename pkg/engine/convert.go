@@ -69,7 +69,11 @@ type Router struct {
 }
 
 // Convert moves obj from version `from` to version `to`, routing through
-// the hub when neither endpoint is the hub itself.
+// the hub when neither endpoint is the hub itself. Spoke-to-spoke is
+// intentionally two Convert calls rather than a compiled shortcut plan:
+// that keeps compilation O(number of spokes) instead of O(N²), and
+// BenchmarkRouter_SpokeToSpoke_vs_HubHop shows the extra hop stays
+// sub-millisecond even for a 1000-element forEach object.
 func (r *Router) Convert(obj map[string]any, from, to string) (map[string]any, error) {
 	if from == to {
 		return obj, nil
