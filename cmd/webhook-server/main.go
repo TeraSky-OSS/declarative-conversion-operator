@@ -129,7 +129,7 @@ func main() {
 
 	registry := webhookserver.NewRegistry()
 	metricsReg := prometheus.NewRegistry()
-	metrics := webhookserver.NewMetrics(metricsReg)
+	metrics := webhookserver.NewMetrics(metricsReg, metricsReg)
 
 	reconciler := &webhookserver.Reconciler{
 		Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics,

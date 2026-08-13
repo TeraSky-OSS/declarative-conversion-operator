@@ -53,7 +53,7 @@ cluster. Every command works against either resource type:
 	}
 	root.AddCommand(
 		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
-		newConvertCmd(), newSuggestCmd(), newPatchPreviewCmd(), newVersionCmd(),
+		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newPatchPreviewCmd(), newVersionCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

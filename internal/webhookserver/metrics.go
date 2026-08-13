@@ -17,7 +17,10 @@ limitations under the License.
 package webhookserver
 
 import (
+	"net/http"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Metrics is the webhook server's Prometheus metric set, registered on a
@@ -34,55 +37,76 @@ type Metrics struct {
 	RegistryReloadTotal *prometheus.CounterVec
 	RegistryCompileErr  *prometheus.CounterVec
 	Ready               prometheus.Gauge
+
+	// gatherer is the registry metrics were registered on, used by
+	// PlainMux's /metrics handler. Must be the underlying Gatherer when
+	// reg is a WrapRegistererWith* wrapper (those implement Registerer only).
+	gatherer prometheus.Gatherer
 }
 
 // NewMetrics constructs and registers the full metric set on reg.
-func NewMetrics(reg prometheus.Registerer) *Metrics {
+// gatherer must be the registry that backs reg (pass the same *Registry for
+// both when not wrapping). A nil gatherer makes Handler refuse to serve the
+// process-wide default registry.
+func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metrics {
 	m := &Metrics{
 		ReviewDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "xrdconv_webhook_conversion_review_duration_seconds",
+			Name:    "dco_webhook_conversion_review_duration_seconds",
 			Help:    "Latency of ConversionReview requests, end to end.",
 			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
 		}, []string{"target", "direction", "result"}),
 		ReviewRequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "xrdconv_webhook_conversion_review_requests_total",
+			Name: "dco_webhook_conversion_review_requests_total",
 			Help: "Total ConversionReview requests handled.",
 		}, []string{"target", "result"}),
 		ObjectsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "xrdconv_webhook_conversion_objects_total",
+			Name: "dco_webhook_conversion_objects_total",
 			Help: "Total individual objects converted.",
 		}, []string{"target", "from_version", "to_version", "result"}),
 		LossyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "xrdconv_webhook_lossy_conversion_total",
+			Name: "dco_webhook_lossy_conversion_total",
 			Help: "Total conversions performed in a direction statically known to be lossy.",
 		}, []string{"target", "direction"}),
 		RegistrySize: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "xrdconv_webhook_registry_size",
+			Name: "dco_webhook_registry_size",
 			Help: "Number of target resources (XRD/CRD names) currently present in this replica's registry, including error-only placeholders.",
 		}),
 		RegistryEntryLoaded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "xrdconv_webhook_registry_entry_loaded",
+			Name: "dco_webhook_registry_entry_loaded",
 			Help: "1 if this replica has a compiled, servable conversion plan for the target; 0 if the registry entry is error-only / not ready. Scraped per pod, so replica identity comes from the scrape target.",
 		}, []string{"target"}),
 		RegistryLastReload: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "xrdconv_webhook_registry_last_reload_timestamp_seconds",
+			Name: "dco_webhook_registry_last_reload_timestamp_seconds",
 			Help: "Unix timestamp of the last successful compile, per target.",
 		}, []string{"target"}),
 		RegistryReloadTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "xrdconv_webhook_registry_reload_total",
+			Name: "dco_webhook_registry_reload_total",
 			Help: "Total attempted (re)compiles, per target and result.",
 		}, []string{"target", "result"}),
 		RegistryCompileErr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "xrdconv_webhook_registry_compile_errors_total",
+			Name: "dco_webhook_registry_compile_errors_total",
 			Help: "Total compile failures that left a stale-but-serving (or absent) plan in place.",
 		}, []string{"target", "reason"}),
 		Ready: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "xrdconv_webhook_ready",
+			Name: "dco_webhook_ready",
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
 		}),
+		gatherer: gatherer,
 	}
 	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
+}
+
+// Handler returns an HTTP handler that exposes this metric set. Prefer this
+// over promhttp.Handler(), which serves the process-wide default registry
+// and would hide every series registered on the dedicated registry.
+func (m *Metrics) Handler() http.Handler {
+	if m == nil || m.gatherer == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "metrics gatherer not configured", http.StatusServiceUnavailable)
+		})
+	}
+	return promhttp.HandlerFor(m.gatherer, promhttp.HandlerOpts{})
 }
 
 // SyncRegistryMetrics refreshes RegistrySize and per-target

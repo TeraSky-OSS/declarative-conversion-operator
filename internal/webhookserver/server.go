@@ -76,7 +76,11 @@ func (s *Server) PlainMux() *http.ServeMux {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/debug/registry", s.handleDebugRegistry)
-	mux.Handle("/metrics", promhttp.Handler())
+	if s.Metrics != nil {
+		mux.Handle("/metrics", s.Metrics.Handler())
+	} else {
+		mux.Handle("/metrics", promhttp.Handler())
+	}
 	return mux
 }
 

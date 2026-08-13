@@ -1,9 +1,9 @@
 # Kitchen sink: every strategy at once
 
 [`internal/cli/testdata/full/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full)
-is the one place in the repository where **all 23 built-in strategies** are
+is the one place in the repository where **all 25 built-in strategies** are
 exercised against a single schema: a three-version XRD with a hub and two
-spokes, 24 rules covering all 23 strategies, plus sample objects at every
+spokes, 26 rules covering all 25 strategies, plus sample objects at every
 version. It is the
 fixture the CLI's own end-to-end tests and the e2e suite run against, so it is
 correct by construction — if a strategy's YAML shape ever changed, this fixture
@@ -19,7 +19,7 @@ gallery](index.md) instead — those are written to be read top to bottom.
 | File | What it is |
 |---|---|
 | [`xrd.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/xrd.yaml) | `xwidgets.example.org` with three served versions: `v3` (hub, `referenceable: true`), `v2`, and `v1`. |
-| [`config.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/config.yaml) | The `XRDConversionConfig`: 13 rules for the `v2` spoke, 11 for `v1`, 24 in total covering 23 distinct strategies. |
+| [`config.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/config.yaml) | The `XRDConversionConfig`: 14 rules for the `v2` spoke, 12 for `v1`, 26 in total covering 25 distinct strategies. |
 | [`config-norules.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/config-norules.yaml) | The same config with every rule stripped — the "new spoke version, no mapping yet" starting point for `convctl suggest`. |
 | [`samples/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full/samples) | One object per version: `hub-v3.yaml`, `spoke-v2.yaml`, `spoke-v1.yaml`. |
 
@@ -57,7 +57,7 @@ Two more things the report shows that are easy to miss:
 - **Spoke-to-spoke paths match rules from both spokes.** `v1→v2` lists `v2:`
   and `v1:` rules because every spoke-to-spoke conversion routes through the
   hub — two conversions, exactly as in a live cluster.
-- **`RULE COVERAGE` lists all 24 rules with a match count.** A rule no sample
+- **`RULE COVERAGE` lists all 26 rules with a match count.** A rule no sample
   exercised would show up here as a warning, which `--strict` (or
   `--fail-on warn`) escalates to a failure.
 
@@ -68,7 +68,7 @@ Where to find each strategy in
 Rule numbers are the indices the `convctl test` report prints
 (`v2:rule[4]:FieldsToMap`), so a report line points straight at a block of YAML.
 
-### `v2` spoke — 13 rules
+### `v2` spoke — 14 rules
 
 | # | Strategy | What it maps here |
 |---|---|---|
@@ -78,15 +78,16 @@ Rule numbers are the indices the `convctl test` report prints
 | 3 | [`ObjectToScalar`](../strategies/scalar-object.md) | `spec.network.cidr` → `spec.networkCIDR` |
 | 4 | [`FieldsToMap`](../strategies/fields-map.md) | `spec.cpuLimit` + `spec.memoryLimit` → `spec.limits` map |
 | 5 | [`ToAnnotation`](../strategies/metadata-stash.md) | `spec.description` → annotation, `restoreOnReverse: true` |
-| 6 | [`EnumRemap`](../strategies/enum-remap.md) | `spec.size`: `Small`/`Medium`/`Large` ⇄ `S`/`M`/`L` |
-| 7 | [`Constant`](../strategies/constant.md) | forces `spec.schemaVersion: "v2"` on the spoke — always lossy |
-| 8 | [`JSONPatch`](../strategies/json-patch.md) | escape hatch: `move` `spec.legacyFlag` ⇄ `spec.legacyFlagV2`, with `losslessOverride` |
-| 9 | [`TypeCoerce`](../strategies/type-coerce.md) | `spec.priority`: integer on the hub, string on the spoke |
-| 10 | [`ScalarToFields`](../strategies/scalar-fields.md) | `spec.diskSize: "50Gi"` → `spec.diskSizeValue` + `spec.diskSizeUnit` |
-| 11 | [`NumericScale`](../strategies/numeric-scale.md) | `spec.memoryMB` ⇄ `spec.memoryGB`, `factor: 1024` — lossy on the integer side |
-| 12 | [`ListJoin`](../strategies/list-join-split.md) | `spec.dnsServers` array ⇄ `spec.dnsServersCSV` string |
+| 6 | [`FromAnnotation`](../strategies/metadata-stash.md) | hub annotation → `spec.operatorNote`, `stashOnReverse: true` |
+| 7 | [`EnumRemap`](../strategies/enum-remap.md) | `spec.size`: `Small`/`Medium`/`Large` ⇄ `S`/`M`/`L` |
+| 8 | [`Constant`](../strategies/constant.md) | forces `spec.schemaVersion: "v2"` on the spoke — always lossy |
+| 9 | [`JSONPatch`](../strategies/json-patch.md) | escape hatch: `move` `spec.legacyFlag` ⇄ `spec.legacyFlagV2`, with `losslessOverride` |
+| 10 | [`TypeCoerce`](../strategies/type-coerce.md) | `spec.priority`: integer on the hub, string on the spoke |
+| 11 | [`ScalarToFields`](../strategies/scalar-fields.md) | `spec.diskSize: "50Gi"` → `spec.diskSizeValue` + `spec.diskSizeUnit` |
+| 12 | [`NumericScale`](../strategies/numeric-scale.md) | `spec.memoryMB` ⇄ `spec.memoryGB`, `factor: 1024` — lossy on the integer side |
+| 13 | [`ListJoin`](../strategies/list-join-split.md) | `spec.dnsServers` array ⇄ `spec.dnsServersCSV` string |
 
-### `v1` spoke — 11 rules
+### `v1` spoke — 12 rules
 
 | # | Strategy | What it maps here |
 |---|---|---|
@@ -94,13 +95,14 @@ Rule numbers are the indices the `convctl test` report prints
 | 1 | [`ObjectToSingletonArray`](../strategies/singleton-array-object.md) | `spec.primaryRegion` → `spec.regions` |
 | 2 | [`MapToFields`](../strategies/fields-map.md) | `spec.tags` map → `spec.envTag` + `spec.teamTag` |
 | 3 | [`ToLabel`](../strategies/metadata-stash.md) | `spec.tier` → label, `serialization: String` |
-| 4 | [`DefaultValue`](../strategies/default-value.md) | `spec.computeUnits`, spoke-only, defaults to `1` |
-| 5 | [`Delete`](../strategies/delete.md) | drops `spec.debugMode`, a `v1`-only escape hatch |
-| 6 | [`ForEach`](../strategies/for-each.md) | per-element renames inside `spec.volumes` |
-| 7 | [`FieldsToScalar`](../strategies/scalar-fields.md) | `spec.contactName` + `spec.contactEmail` → `spec.contact` |
-| 8 | [`ArrayToMapByKey`](../strategies/array-map-key.md) | `spec.endpoints` array ⇄ map keyed by `name` |
-| 9 | [`MapToArrayByKey`](../strategies/array-map-key.md) | `spec.limitsByTier` map ⇄ `spec.tierLimits` array keyed by `tier` |
-| 10 | [`ListSplit`](../strategies/list-join-split.md) | `spec.allowedCIDRsCSV` string ⇄ `spec.allowedCIDRs` array |
+| 4 | [`FromLabel`](../strategies/metadata-stash.md) | hub label → `spec.operatorTier`, `stashOnReverse: true` |
+| 5 | [`DefaultValue`](../strategies/default-value.md) | `spec.computeUnits`, spoke-only, defaults to `1` |
+| 6 | [`Delete`](../strategies/delete.md) | drops `spec.debugMode`, a `v1`-only escape hatch |
+| 7 | [`ForEach`](../strategies/for-each.md) | per-element renames inside `spec.volumes` |
+| 8 | [`FieldsToScalar`](../strategies/scalar-fields.md) | `spec.contactName` + `spec.contactEmail` → `spec.contact` |
+| 9 | [`ArrayToMapByKey`](../strategies/array-map-key.md) | `spec.endpoints` array ⇄ map keyed by `name` |
+| 10 | [`MapToArrayByKey`](../strategies/array-map-key.md) | `spec.limitsByTier` map ⇄ `spec.tierLimits` array keyed by `tier` |
+| 11 | [`ListSplit`](../strategies/list-join-split.md) | `spec.allowedCIDRsCSV` string ⇄ `spec.allowedCIDRs` array |
 
 ## What the schema is quietly demonstrating
 
@@ -110,7 +112,7 @@ alongside the config explains two things no single strategy page can:
 - **Fields with an identical shape on both sides need no rule.** Each spoke
   mirrors the fields *the other* spoke has rules for, keeping them
   byte-identical to the hub — and they are covered automatically. That is why
-  24 rules are enough for a schema this wide, and why fail-closed coverage
+  26 rules are enough for a schema this wide, and why fail-closed coverage
   isn't as noisy in practice as it sounds.
 - **`status` is not special.** `v2` maps `status.phase` → `status.state` with an
   ordinary `FieldRename`, while `v1` leaves `status` untouched because its shape
@@ -141,7 +143,7 @@ go run ./cmd/convctl suggest \
 ```
 
 And `convctl diff` between the two configs, which reads as "what did writing all
-24 rules actually accomplish?" — every field that stopped being uncovered, per
+26 rules actually accomplish?" — every field that stopped being uncovered, per
 spoke:
 
 ```console

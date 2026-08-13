@@ -156,7 +156,9 @@ test-prometheus: promtool ## Run promtool unit tests for chart PrometheusRule al
 
 # Same shape as hack/e2e-common.sh's setup (kind + cert-manager + Crossplane
 # + this operator's own Helm chart), but left running afterward for
-# interactive use instead of being torn down by a test script. A fixed image
+# interactive use instead of being torn down by a test script. Also installs
+# kube-prometheus-stack with anonymous Grafana and enables the chart's
+# ServiceMonitors / PrometheusRules / dashboard ConfigMaps. A fixed image
 # tag (rather than e2e's timestamped one) keeps `make dev-up` idempotent and
 # safe to re-run after every code change: it rebuilds, reloads, and restarts
 # the running pods so the new code actually takes effect.
@@ -167,9 +169,13 @@ DEV_IMG_TAG ?= dev
 DEV_MANAGER_IMG ?= ghcr.io/terasky-oss/declarative-conversion-operator:$(DEV_IMG_TAG)
 DEV_WEBHOOK_IMG ?= ghcr.io/terasky-oss/declarative-conversion-webhook-server:$(DEV_IMG_TAG)
 DEV_CERT_MANAGER_VERSION ?= v1.21.1
+DEV_MONITORING_NAMESPACE ?= monitoring-system
+DEV_MONITORING_RELEASE ?= monitoring
+# Pin so re-runs stay reproducible; bump deliberately when upgrading the stack.
+DEV_KUBE_PROM_STACK_VERSION ?= 88.3.0
 
 .PHONY: dev-up
-dev-up: ## Stand up (or refresh) a full local dev environment: kind cluster + cert-manager + Crossplane + this operator's own Helm chart, built from your local checkout (the chart bootstraps its own self-signed ClusterIssuer by default -- no separate issuer setup needed). Safe to re-run after code changes. Requires docker, kind, kubectl, and helm on PATH.
+dev-up: ## Stand up (or refresh) a full local dev environment: kind + cert-manager + Crossplane + kube-prometheus-stack (anonymous Grafana) + this operator with metrics/dashboards enabled. Safe to re-run after code changes. Requires docker, kind, kubectl, and helm on PATH.
 	@command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
 	@command -v kind >/dev/null 2>&1 || { echo "kind is required (https://kind.sigs.k8s.io)" >&2; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required" >&2; exit 1; }
@@ -200,12 +206,23 @@ dev-up: ## Stand up (or refresh) a full local dev environment: kind cluster + ce
 	helm upgrade --install crossplane crossplane-stable/crossplane \
 		--namespace crossplane-system --create-namespace \
 		--wait --timeout 180s
-	@echo "==> Installing/upgrading $(DEV_RELEASE_NAME) with the locally-built dev images"
+	@echo "==> Installing kube-prometheus-stack (Prometheus + Grafana, anonymous auth)"
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+	helm repo update prometheus-community
+	helm upgrade --install $(DEV_MONITORING_RELEASE) prometheus-community/kube-prometheus-stack \
+		--namespace $(DEV_MONITORING_NAMESPACE) --create-namespace \
+		--version $(DEV_KUBE_PROM_STACK_VERSION) \
+		--values hack/dev-monitoring-values.yaml \
+		--wait --timeout 600s
+	@echo "==> Installing/upgrading $(DEV_RELEASE_NAME) with the locally-built dev images + monitoring"
 	helm upgrade --install $(DEV_RELEASE_NAME) charts/declarative-conversion-operator \
 		--namespace $(DEV_NAMESPACE) --create-namespace \
 		--set image.manager.tag=$(DEV_IMG_TAG) \
 		--set image.webhookServer.tag=$(DEV_IMG_TAG) \
 		--set image.pullPolicy=Never \
+		--set metrics.serviceMonitor.enabled=true \
+		--set metrics.prometheusRule.enabled=true \
+		--set dashboards.enabled=true \
 		--wait --timeout 180s
 	@echo "==> Restarting pods so the freshly-loaded image content takes effect (tag is fixed across re-runs)"
 	kubectl -n $(DEV_NAMESPACE) rollout restart deployment/$(DEV_RELEASE_NAME)-manager
@@ -217,7 +234,13 @@ dev-up: ## Stand up (or refresh) a full local dev environment: kind cluster + ce
 	@echo ""
 	@echo "==> Local dev environment ready."
 	@echo "    kubectl context: kind-$(DEV_CLUSTER_NAME)"
-	@echo "    Namespace:       $(DEV_NAMESPACE)"
+	@echo "    Operator ns:     $(DEV_NAMESPACE)"
+	@echo "    Monitoring ns:   $(DEV_MONITORING_NAMESPACE)"
+	@echo "    Grafana (no login):"
+	@echo "      kubectl -n $(DEV_MONITORING_NAMESPACE) port-forward svc/$(DEV_MONITORING_RELEASE)-grafana 3000:80"
+	@echo "      open http://localhost:3000  (anonymous Admin; dashboards under search)"
+	@echo "    Prometheus:"
+	@echo "      kubectl -n $(DEV_MONITORING_NAMESPACE) port-forward svc/$(DEV_MONITORING_RELEASE)-kube-prometheus-prometheus 9090:9090"
 	@echo "    Made a code change? Just run 'make dev-up' again to rebuild, reload, and restart."
 	@echo "    Tear it down with: make dev-down"
 

@@ -167,6 +167,12 @@ the old spoke mapping is rewritten from `v2`'s point of view:
 |---|---|
 | `hubPath: spec.size` → `spokePath: spec.capacity` | `hubPath: spec.capacity` → `spokePath: spec.size` |
 
+Draft that rewrite with `convctl rehub` (review before apply):
+
+```console
+convctl rehub --config 02-add-v2/xrdconversionconfig.yaml --xrd 02-add-v2/xrd.yaml --to v2
+```
+
 **Composition changes** in this stage:
 
 | | Before (v1 hub) | After (v2 hub) |
@@ -240,7 +246,14 @@ Promoting `v3` is the same four edits as stage 3 — that is the next snapshot.
 `hubVersion: v3`, Composition `xwidgets-v3.example.org`, and every XR's
 `compositionRef` moved onto it.
 
-Rules are rewritten from `v3`'s point of view (`spec.name`, `spec.capacity`):
+Rules are rewritten from `v3`'s point of view (`spec.name`, `spec.capacity`).
+Draft with:
+
+```console
+convctl rehub --config 04-add-v3/xrdconversionconfig.yaml --xrd 04-add-v3/xrd.yaml --to v3
+```
+
+Expected shape:
 
 ```yaml
 hubVersion: v3

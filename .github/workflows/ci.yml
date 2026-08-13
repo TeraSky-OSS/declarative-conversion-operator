@@ -196,8 +196,27 @@ jobs:
 
       - name: CRD upgrade helper prints chart CRDs
         run: |
-          ./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print \
-            | grep -q 'kind: CustomResourceDefinition'
+          out="$(./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print)"
+          case "$out" in
+            *"kind: CustomResourceDefinition"*) ;;
+            *)
+              echo "FAIL: upgrade-crds --print did not emit a CustomResourceDefinition" >&2
+              exit 1
+              ;;
+          esac
+          for name in \
+            conversionwebhookservers.terasky.com \
+            crdconversionconfigs.terasky.com \
+            xrdconversionconfigs.terasky.com
+          do
+            case "$out" in
+              *"name: ${name}"*) ;;
+              *)
+                echo "FAIL: upgrade-crds --print missing CRD name ${name}" >&2
+                exit 1
+                ;;
+            esac
+          done
 
       - name: promtool test rules
         run: make test-prometheus

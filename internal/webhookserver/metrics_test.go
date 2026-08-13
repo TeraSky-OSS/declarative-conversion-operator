@@ -28,7 +28,7 @@ import (
 
 func TestSyncRegistryMetrics_ReflectsLoadedAndErrorEntries(t *testing.T) {
 	reg := NewRegistry()
-	metrics := NewMetrics(newTestRegisterer())
+	metrics := newTestMetrics()
 
 	reg.Set("ready.example.org", &CompiledEntry{
 		Router: &engine.Router{Hub: "v2", Plans: map[string]*engine.Plan{"v1": {}}},
@@ -61,7 +61,7 @@ func TestReconcileOneXRD_UpdatesRegistryReadinessMetrics(t *testing.T) {
 	server.Spec.Default = true
 
 	c := newFakeClient(xrd, cfg, server).Build()
-	metrics := NewMetrics(newTestRegisterer())
+	metrics := newTestMetrics()
 	r := &Reconciler{
 		Client: c, ServerName: "srv", Registry: NewRegistry(),
 		EnableXRDSupport: true, Metrics: metrics,

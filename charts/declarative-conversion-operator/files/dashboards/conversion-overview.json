@@ -13,7 +13,7 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le, target) (rate(xrdconv_webhook_conversion_review_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, target) (rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])))",
           "legendFormat": "{{target}}",
           "refId": "A"
         }
@@ -28,7 +28,7 @@
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (target, result) (rate(xrdconv_webhook_conversion_review_requests_total{result!=\"success\"}[5m]))",
+          "expr": "sum by (target, result) (rate(dco_webhook_conversion_review_requests_total{result!=\"success\"}[5m]))",
           "legendFormat": "{{target}} {{result}}",
           "refId": "A"
         }
@@ -42,7 +42,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "xrdconv_webhook_registry_size",
+          "expr": "dco_webhook_registry_size",
           "legendFormat": "{{pod}}",
           "refId": "A"
         }
@@ -56,7 +56,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum by (target, reason) (rate(xrdconv_webhook_registry_compile_errors_total[5m]))",
+          "expr": "sum by (target, reason) (rate(dco_webhook_registry_compile_errors_total[5m])) or vector(0)",
           "legendFormat": "{{target}} {{reason}}",
           "refId": "A"
         }
@@ -71,7 +71,7 @@
       "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
       "targets": [
         {
-          "expr": "xrdconv_webhook_ready",
+          "expr": "dco_webhook_ready",
           "legendFormat": "{{pod}}",
           "refId": "A"
         }
@@ -86,7 +86,7 @@
       "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
       "targets": [
         {
-          "expr": "xrdconv_webhook_registry_entry_loaded",
+          "expr": "dco_webhook_registry_entry_loaded",
           "legendFormat": "{{pod}} {{target}}",
           "refId": "A"
         }
@@ -100,7 +100,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum by (config_kind, target, reason) (rate(xrdconv_manager_analyze_failures_total[5m]))",
+          "expr": "sum by (config_kind, target, reason) (rate(dco_manager_analyze_failures_total[5m])) or vector(0)",
           "legendFormat": "{{config_kind}} {{target}} {{reason}}",
           "refId": "A"
         }
@@ -115,7 +115,7 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le, config_kind, target) (rate(xrdconv_manager_apply_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, config_kind, target) (rate(dco_manager_apply_duration_seconds_bucket[5m])))",
           "legendFormat": "{{config_kind}} {{target}}",
           "refId": "A"
         }
@@ -129,7 +129,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum by (config_kind, from_phase, to_phase, reason) (rate(xrdconv_manager_phase_transitions_total[5m]))",
+          "expr": "sum by (config_kind, from_phase, to_phase, reason) (rate(dco_manager_phase_transitions_total[5m])) or vector(0)",
           "legendFormat": "{{config_kind}} {{from_phase}}→{{to_phase}} ({{reason}})",
           "refId": "A"
         }
@@ -154,6 +154,6 @@
   "time": { "from": "now-1h", "to": "now" },
   "timezone": "browser",
   "title": "Conversion Overview",
-  "uid": "xrdconv-conversion-overview",
+  "uid": "dco-conversion-overview",
   "version": 1
 }

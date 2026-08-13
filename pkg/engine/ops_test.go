@@ -17,6 +17,7 @@ limitations under the License.
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -162,11 +163,10 @@ func TestToLabel_RestoreOnReverse(t *testing.T) {
 	}
 }
 
-// TestToLabel_JSONSerializationNeedsLabelSanitization is the ToLabel edge:
-// default JSON serialization wraps string values in quotes (e.g. `"gold"`),
-// which is not a valid Kubernetes label value without further sanitization /
-// choosing serialization=String. The engine stores the JSON form as-is.
-func TestToLabel_JSONSerializationNeedsLabelSanitization(t *testing.T) {
+// TestToLabel_JSONSerializationRejectedAtConvert verifies label writes fail
+// closed when JSON serialization produces a quoted value that is not a valid
+// Kubernetes label value. Prefer serialization=String for ToLabel/FromLabel.
+func TestToLabel_JSONSerializationRejectedAtConvert(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"tier": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{})
 	rs := RuleSet{Rules: []Rule{
@@ -178,17 +178,12 @@ func TestToLabel_JSONSerializationNeedsLabelSanitization(t *testing.T) {
 	plan := mustCompile(t, rs, &hub, &spoke)
 
 	in := map[string]any{"tier": "gold", "metadata": map[string]any{"name": "x"}}
-	out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
-	if err != nil {
-		t.Fatalf("convert h2s: %v", err)
+	_, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+	if err == nil {
+		t.Fatal("expected convert to reject JSON-quoted label value")
 	}
-	md, _ := out["metadata"].(map[string]any)
-	labels, _ := md["labels"].(map[string]any)
-	got, _ := labels["tier"].(string)
-	// JSON encoding of a string includes the surrounding quotes — not a
-	// valid k8s label value without sanitization or serialization=String.
-	if got != `"gold"` {
-		t.Fatalf("expected JSON-quoted label value %q, got %q (metadata=%#v)", `"gold"`, got, md)
+	if !strings.Contains(err.Error(), "label value") {
+		t.Fatalf("expected label-value error, got: %v", err)
 	}
 }
 

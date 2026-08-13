@@ -26,6 +26,7 @@ import (
 	"text/template"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // identityOp copies a value verbatim from input to output at the same path.
@@ -229,6 +230,14 @@ func (o stashAnnotationOp) apply(ctx *execContext) error {
 			return fmt.Errorf("stashAnnotation: marshal %q: %w", o.hubPath, err)
 		}
 		strVal = string(b)
+	}
+	if o.metadataField == "labels" {
+		if msgs := k8svalidation.IsQualifiedName(o.key); len(msgs) > 0 {
+			return fmt.Errorf("stashAnnotation: label key %q is invalid: %s", o.key, strings.Join(msgs, "; "))
+		}
+		if msgs := k8svalidation.IsValidLabelValue(strVal); len(msgs) > 0 {
+			return fmt.Errorf("stashAnnotation: label value for key %q is invalid: %s", o.key, strings.Join(msgs, "; "))
+		}
 	}
 	return setValue(ctx.output, FieldPath{"metadata", o.metadataField, o.key}, strVal)
 }

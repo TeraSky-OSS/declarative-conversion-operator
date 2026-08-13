@@ -28,21 +28,21 @@ relabel/`namespace` matchers to your scrape labels):
 
 ```yaml
 rules:
-  - seriesQuery: 'xrdconv_webhook_conversion_review_requests_total{namespace!="",pod!=""}'
+  - seriesQuery: 'dco_webhook_conversion_review_requests_total{namespace!="",pod!=""}'
     resources:
       overrides:
         namespace: { resource: "namespace" }
         pod: { resource: "pod" }
     name:
-      matches: "^xrdconv_webhook_conversion_review_requests_total$"
-      as: "xrdconv_webhook_conversion_qps"
+      matches: "^dco_webhook_conversion_review_requests_total$"
+      as: "dco_webhook_conversion_qps"
     metricsQuery: 'sum by (<<.GroupBy>>) (rate(<<.Series>>{<<.LabelMatchers>>}[1m]))'
 ```
 
 After reload, confirm discovery:
 
 ```console
-kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/<ns>/pods/*/xrdconv_webhook_conversion_qps" | jq .
+kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/<ns>/pods/*/dco_webhook_conversion_qps" | jq .
 ```
 
 ## Example HorizontalPodAutoscaler
@@ -67,17 +67,17 @@ spec:
     - type: Pods
       pods:
         metric:
-          name: xrdconv_webhook_conversion_qps
+          name: dco_webhook_conversion_qps
         target:
           type: AverageValue
           averageValue: "20"   # scale out when average pod QPS exceeds 20
 ```
 
 Tune `averageValue` from observed
-`rate(xrdconv_webhook_conversion_review_requests_total[5m])` under normal
+`rate(dco_webhook_conversion_review_requests_total[5m])` under normal
 load. Latency-based scaling is possible the same way by exposing a
 prometheus-adapter rule on
-`xrdconv_webhook_conversion_review_duration_seconds` (histogram →
+`dco_webhook_conversion_review_duration_seconds` (histogram →
 summary/quantile in the adapter `metricsQuery`).
 
 ## Related

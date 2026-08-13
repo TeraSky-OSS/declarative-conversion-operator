@@ -21,8 +21,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -64,7 +66,7 @@ func TestHandleConvert_Success(t *testing.T) {
 	registry.Set("xfoos.example.org", &CompiledEntry{
 		Router: &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{spoke: plan}},
 	})
-	s := &Server{Registry: registry, Metrics: NewMetrics(newTestRegisterer())}
+	s := &Server{Registry: registry, Metrics: newTestMetrics()}
 
 	obj := map[string]any{"apiVersion": "example.org/v1", "kind": "Foo", "metadata": map[string]any{"name": "x"}}
 	raw, _ := json.Marshal(obj)
@@ -156,7 +158,7 @@ func TestHandleConvert_NoCompiledPlanForRequestedVersion_FailsClosed(t *testing.
 	plan := &engine.Plan{HubVersion: hub, SpokeVersion: spoke, HubToSpoke: []engine.Op{}, SpokeToHub: []engine.Op{}}
 	registry := NewRegistry()
 	registry.Set("xfoos.example.org", &CompiledEntry{Router: &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{spoke: plan}}})
-	s := &Server{Registry: registry, Metrics: NewMetrics(newTestRegisterer())}
+	s := &Server{Registry: registry, Metrics: newTestMetrics()}
 
 	obj := map[string]any{"apiVersion": "example.org/v1", "kind": "Foo", "metadata": map[string]any{"name": "x"}}
 	raw, _ := json.Marshal(obj)
@@ -186,7 +188,7 @@ func TestHandleConvert_LossyConversion_IncrementsMetric(t *testing.T) {
 		Router:   &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{spoke: plan}},
 		Lossless: map[string]engine.LosslessVerdict{spoke: {HubToSpoke: false, SpokeToHub: true}},
 	})
-	metrics := NewMetrics(newTestRegisterer())
+	metrics := newTestMetrics()
 	s := &Server{Registry: registry, Metrics: metrics}
 
 	obj := map[string]any{"apiVersion": "example.org/v2", "kind": "Foo", "metadata": map[string]any{"name": "x"}}
@@ -209,7 +211,7 @@ func TestHandleConvert_LossyConversion_IncrementsMetric(t *testing.T) {
 }
 
 func TestHandleReadyz(t *testing.T) {
-	s := &Server{Registry: NewRegistry(), Metrics: NewMetrics(newTestRegisterer())}
+	s := &Server{Registry: NewRegistry(), Metrics: newTestMetrics()}
 	req := httptest.NewRequest("GET", "/readyz", nil)
 	rec := httptest.NewRecorder()
 	s.handleReadyz(rec, req)
@@ -268,5 +270,56 @@ func TestHandleDebugRegistry(t *testing.T) {
 	}
 	if byXRD["broken.example.org"]["lastError"] != "schema drift" {
 		t.Fatalf("unexpected lastError: %v", byXRD["broken.example.org"]["lastError"])
+	}
+}
+
+func TestPlainMux_ExposesDedicatedRegistryMetrics(t *testing.T) {
+	metrics := newTestMetrics()
+	metrics.Ready.Set(1)
+	metrics.RegistrySize.Set(3)
+	s := &Server{Registry: NewRegistry(), Metrics: metrics}
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	s.PlainMux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"dco_webhook_ready 1",
+		"dco_webhook_registry_size 3",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected /metrics to contain %q; body starts with:\n%.500s", want, body)
+		}
+	}
+}
+
+func TestMetrics_HandlerWithoutGatherer(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	wrapped := prometheus.WrapRegistererWith(prometheus.Labels{"pod": "a"}, reg)
+	metrics := NewMetrics(wrapped, nil)
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	(&Server{Registry: NewRegistry(), Metrics: metrics}).PlainMux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when gatherer is nil, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetrics_HandlerWithWrappedRegisterer(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	wrapped := prometheus.WrapRegistererWith(prometheus.Labels{"pod": "a"}, reg)
+	metrics := NewMetrics(wrapped, reg)
+	metrics.Ready.Set(1)
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	(&Server{Registry: NewRegistry(), Metrics: metrics}).PlainMux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "dco_webhook_ready") {
+		t.Fatalf("expected dedicated metrics in body, got:\n%.500s", rec.Body.String())
 	}
 }

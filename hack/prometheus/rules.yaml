@@ -4,7 +4,7 @@ groups:
   - name: declarative-conversion-operator
     rules:
       - alert: ConversionWebhookRegistryCompileErrors
-        expr: increase(xrdconv_webhook_registry_compile_errors_total[15m]) > 0
+        expr: increase(dco_webhook_registry_compile_errors_total[15m]) > 0
         for: 15m
         labels:
           severity: warning
@@ -12,15 +12,15 @@ groups:
           summary: "ConversionWebhookServer replica failing to (re)compile plan for {{ $labels.target }}"
           description: "Check the corresponding XRDConversionConfig/CRDConversionConfig status and the replica's /debug/registry endpoint."
       - alert: ConversionWebhookNotReady
-        expr: (max(xrdconv_webhook_ready) or on() vector(0)) == 0
+        expr: (max(dco_webhook_ready) or on() vector(0)) == 0
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "No ConversionWebhookServer replica is ready"
-          description: "Every scraped webhook-server replica reports xrdconv_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
+          description: "Every scraped webhook-server replica reports dco_webhook_ready=0 (or no series exist). Conversion traffic cannot be served."
       - alert: ConversionWebhookHighLatency
-        expr: histogram_quantile(0.99, sum(rate(xrdconv_webhook_conversion_review_duration_seconds_bucket[5m])) by (le, target)) > 1
+        expr: histogram_quantile(0.99, sum(rate(dco_webhook_conversion_review_duration_seconds_bucket[5m])) by (le, target)) > 1
         for: 10m
         labels:
           severity: warning
@@ -28,7 +28,7 @@ groups:
           summary: "p99 ConversionReview latency exceeds 1s for {{ $labels.target }}"
           description: "The conversion webhook is on the API admission critical path; sustained high latency slows apiserver requests for the affected target."
       - alert: ConversionWebhookLossyRate
-        expr: sum by (target, direction) (rate(xrdconv_webhook_lossy_conversion_total[5m])) > 0.01
+        expr: sum by (target, direction) (rate(dco_webhook_lossy_conversion_total[5m])) > 0.01
         for: 10m
         labels:
           severity: warning
@@ -38,9 +38,9 @@ groups:
       - alert: ConversionWebhookErrorRatio
         expr: |
           (
-            sum by (target) (rate(xrdconv_webhook_conversion_review_requests_total{result="error"}[5m]))
+            sum by (target) (rate(dco_webhook_conversion_review_requests_total{result="error"}[5m]))
             /
-            clamp_min(sum by (target) (rate(xrdconv_webhook_conversion_review_requests_total[5m])), 1e-9)
+            clamp_min(sum by (target) (rate(dco_webhook_conversion_review_requests_total[5m])), 1e-9)
           ) > 0.05
         for: 10m
         labels:
@@ -49,7 +49,7 @@ groups:
           summary: "Conversion error ratio >5% for {{ $labels.target }}"
           description: "More than 5% of ConversionReview requests for this target are failing with result=error."
       - alert: ManagerReconcileAnalyzeFailures
-        expr: increase(xrdconv_manager_analyze_failures_total[15m]) > 0
+        expr: increase(dco_manager_analyze_failures_total[15m]) > 0
         for: 5m
         labels:
           severity: warning
@@ -57,7 +57,7 @@ groups:
           summary: "Manager analyze/compile failures for {{ $labels.target }}"
           description: "config_kind={{ $labels.config_kind }} reason={{ $labels.reason }}. Check the config status conditions and recent manager logs."
       - alert: ManagerPhaseStaleOrFailClosed
-        expr: increase(xrdconv_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[15m]) > 0
+        expr: increase(dco_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[15m]) > 0
         for: 1m
         labels:
           severity: warning
@@ -65,7 +65,7 @@ groups:
           summary: "Config {{ $labels.target }} phase transitioned to {{ $labels.to_phase }}"
           description: "config_kind={{ $labels.config_kind }} from={{ $labels.from_phase }} reason={{ $labels.reason }}. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
       - alert: ConversionWebhookReplicaNotReady
-        expr: xrdconv_webhook_ready == 0
+        expr: dco_webhook_ready == 0
         for: 5m
         labels:
           severity: critical

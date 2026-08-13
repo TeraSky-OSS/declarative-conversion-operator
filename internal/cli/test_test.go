@@ -98,6 +98,7 @@ var allStrategies = []string{
 	"FieldRename", "ScalarToObject", "ObjectToScalar",
 	"SingletonArrayToObject", "ObjectToSingletonArray",
 	"FieldsToMap", "MapToFields", "ToAnnotation", "ToLabel",
+	"FromAnnotation", "FromLabel",
 	"EnumRemap", "DefaultValue", "Constant", "Delete", "JSONPatch", "ForEach",
 	"TypeCoerce", "ScalarToFields", "FieldsToScalar",
 	"ArrayToMapByKey", "MapToArrayByKey", "NumericScale", "ListJoin", "ListSplit",
