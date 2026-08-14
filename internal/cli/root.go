@@ -333,6 +333,7 @@ drops straight into a CI gate.`,
 	registerOutputCompletions(cmd, "json", "table")
 	return cmd
 }
+
 // docs/cli.md for the full threshold × outcome exit-code matrix.
 const (
 	// failOnNone reports results but never fails the process.
