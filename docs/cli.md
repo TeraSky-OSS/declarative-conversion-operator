@@ -337,7 +337,7 @@ After you promote a new storage version (`storage: true` on a CRD, `referenceabl
 
 `migrate-storage` does the rewrite with an **empty server-side-apply patch** (`apiVersion`, `kind`, `metadata.name`, and `metadata.namespace` only) under a dedicated field manager, with force-conflicts. The apply claims only identity fields; the write still goes through the persist path, so etcd is re-encoded at the current storage version. Conversion webhooks — including this operator — run as they would on any write.
 
-This is **not** the Kubernetes 1.30+ [`StorageVersionMigration`](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#upgrade-existing-objects-to-a-new-stored-version) API and does not need the storage-version-migrator. It is the standard empty-SSA approach that works on any cluster. A second run with the same field manager is a no-op once objects are already stored at the current version.
+This is **not** the Kubernetes 1.30+ [`StorageVersionMigration`](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#upgrade-existing-objects-to-a-new-stored-version) API and does not need the storage-version-migrator. It is the standard empty-SSA approach that works on any supported cluster (Kubernetes 1.27+; Server-Side Apply is required). A second run with the same field manager is a no-op once objects are already stored at the current version.
 
 ```console
 convctl migrate-storage --xrd xwidgets.example.org
@@ -356,7 +356,7 @@ convctl migrate-storage --crd widgets.example.org --prune-stored-versions
 | `--dry-run` | Same Apply call with server-side dry-run (`DryRun: All`) — exercises conversion, does not persist. Also skips `--prune-stored-versions`. |
 | `--concurrency` | How many objects to patch in parallel. Defaults to **1** (this is a write). |
 | `--field-manager` | SSA field manager. Defaults to `convctl`. Always applied with force-conflicts. |
-| `--prune-stored-versions` | After **every** object apply succeeds, set the generated/native CRD's `status.storedVersions` to the current storage version only. Skipped (with a warning) if any object failed, or with `--dry-run`. |
+| `--prune-stored-versions` | After **every** object apply succeeds, set the generated/native CRD's `status.storedVersions` to the current storage version only. Skipped (with a warning) if any object failed, or with `--dry-run`. Refused with `--namespace` on a namespaced type: other namespaces may still store an older version. |
 | `-o, --output` | `table` (default) or `json`. |
 | `--quiet` | Suppress the progress line written to stderr. |
 
@@ -368,7 +368,7 @@ For an XRD, the command reads the XRD, then the generated CRD (`{plural}.{group}
 |---|---|
 | `0` | Every object apply succeeded (and prune, if requested). |
 | `1` | One or more object applies failed, or a requested prune failed. Remaining objects are still attempted. |
-| `2` | Usage or cluster/schema error (bad flags, missing XRD/CRD, list failed, no/multiple storage versions). |
+| `2` | Usage or cluster/schema error (bad flags, `--prune-stored-versions` with `--namespace`, missing XRD/CRD, list failed, no/multiple storage versions). |
 
 ### RBAC
 

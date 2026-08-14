@@ -113,6 +113,7 @@ users:
 func TestMigrateStorageRegistersLiveCompletions(t *testing.T) {
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "missing"))
 	cmd := newMigrateStorageCmd()
+	cmd.SetContext(context.Background())
 	for _, flag := range []string{"xrd", "crd", "context", "namespace"} {
 		fn, ok := cmd.GetFlagCompletionFunc(flag)
 		if !ok {

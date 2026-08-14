@@ -126,7 +126,11 @@ func completeLiveNames(cmd *cobra.Command, gvr schema.GroupVersionResource, toCo
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	ctx, cancel := context.WithTimeout(cmd.Context(), completionTimeout)
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, completionTimeout)
 	defer cancel()
 	names, err := listResourceNames(ctx, dyn, gvr, toComplete)
 	if err != nil {

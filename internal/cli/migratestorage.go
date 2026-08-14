@@ -219,6 +219,9 @@ func RunMigrateStorage(ctx context.Context, dyn dynamic.Interface, opts MigrateS
 	} else if opts.Namespace != "" {
 		warnings = append(warnings, fmt.Sprintf("--namespace %q ignored: %s %s is cluster-scoped", opts.Namespace, target.resourceKind, target.resource))
 	}
+	if opts.PruneStoredVersions && listNS != "" {
+		return nil, fmt.Errorf("--prune-stored-versions cannot be combined with --namespace: objects in other namespaces may still be stored at an older version")
+	}
 
 	items, err := listAllByGVR(ctx, dyn, gvr, listNS)
 	if err != nil {
@@ -585,7 +588,7 @@ customresourcedefinitions/status.`,
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Apply with server-side dry-run (exercises conversion, does not persist)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 1, "Number of objects to patch in parallel")
 	cmd.Flags().StringVar(&opts.FieldManager, "field-manager", defaultMigrateFieldManager, "SSA field manager name")
-	cmd.Flags().BoolVar(&opts.PruneStoredVersions, "prune-stored-versions", false, "After every object succeeds, set the CRD's status.storedVersions to the current storage version only")
+	cmd.Flags().BoolVar(&opts.PruneStoredVersions, "prune-stored-versions", false, "After every object succeeds, set the CRD's status.storedVersions to the current storage version only (refused with --namespace)")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
 	cmd.Flags().BoolVar(&opts.Quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.MarkFlagsOneRequired("xrd", "crd")

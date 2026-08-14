@@ -428,6 +428,53 @@ func TestRunMigrateStorage_NamespaceIgnoredWhenClusterScoped(t *testing.T) {
 	}
 }
 
+func TestRunMigrateStorage_PruneRefusedWithNamespace(t *testing.T) {
+	dyn := newMigrateFake(
+		migrateCRD("xwidgets.e2e.example.org", "e2e.example.org", "XWidget", "xwidgets", "v2", []string{"v1", "v2"}, true),
+		widget("default", "a", "v2", nil),
+		widget("prod", "b", "v2", nil),
+	)
+
+	_, err := RunMigrateStorage(context.Background(), dyn, MigrateStorageOptions{
+		CRDName:             "xwidgets.e2e.example.org",
+		Namespace:           "prod",
+		PruneStoredVersions: true,
+		Quiet:               true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--prune-stored-versions") || !strings.Contains(err.Error(), "--namespace") {
+		t.Fatalf("expected prune+namespace refusal, got %v", err)
+	}
+	if n := len(applyPatches(t, dyn)); n != 0 {
+		t.Fatalf("refused prune must not apply objects, got %d patches", n)
+	}
+	for _, a := range dyn.Actions() {
+		u, ok := a.(clienttesting.UpdateAction)
+		if ok && u.GetSubresource() == "status" {
+			t.Fatal("refused prune must not update CRD status")
+		}
+	}
+}
+
+func TestRunMigrateStorage_PruneAllowedWhenNamespaceIgnored(t *testing.T) {
+	dyn := newMigrateFake(
+		migrateCRD("xwidgets.e2e.example.org", "e2e.example.org", "XWidget", "xwidgets", "v2", []string{"v1", "v2"}, false),
+		widget("", "a", "v2", nil),
+	)
+
+	rep, err := RunMigrateStorage(context.Background(), dyn, MigrateStorageOptions{
+		CRDName:             "xwidgets.e2e.example.org",
+		Namespace:           "default",
+		PruneStoredVersions: true,
+		Quiet:               true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.Pruned {
+		t.Fatalf("cluster-scoped --namespace should be ignored, prune should proceed: %+v", rep)
+	}
+}
+
 func TestRunMigrateStorage_MissingXRD(t *testing.T) {
 	dyn := newMigrateFake()
 	_, err := RunMigrateStorage(context.Background(), dyn, MigrateStorageOptions{
