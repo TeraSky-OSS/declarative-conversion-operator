@@ -344,5 +344,7 @@ suggestions merge in by hand with no reshaping.`,
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	registerOfflineFlagCompletions(cmd)
+	registerOutputCompletions(cmd, "yaml", "json")
 	return cmd
 }

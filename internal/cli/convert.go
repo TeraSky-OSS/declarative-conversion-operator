@@ -211,5 +211,7 @@ through the hub exactly as they do in production.`,
 	_ = cmd.MarkFlagRequired("to")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	registerOfflineFlagCompletions(cmd)
+	registerOutputCompletions(cmd, "yaml", "json")
 	return cmd
 }

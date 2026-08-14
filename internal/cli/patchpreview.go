@@ -206,5 +206,6 @@ preview of being applied.`,
 	_ = cmd.MarkFlagRequired("service-namespace")
 	_ = cmd.MarkFlagRequired("ca-bundle")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	registerOfflineFlagCompletions(cmd)
 	return cmd
 }

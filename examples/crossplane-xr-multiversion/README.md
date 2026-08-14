@@ -17,7 +17,7 @@ ConfigMap.
 | 3 | [`03-promote-v2/`](03-promote-v2/) | Flip `referenceable` to `v2`, rewrite conversion rules, create a new Composition, retarget every XR's `compositionRef`. |
 | 4 | [`04-add-v3/`](04-add-v3/) | Serve `v3` the same way `v2` was added in stage 2. |
 | 5 | [`05-promote-v3/`](05-promote-v3/) | Promote `v3` to the hub (the new standard). New Composition + retarget `compositionRef`. |
-| 6 | [`06-deprecate-v1/`](06-deprecate-v1/) | Stop serving `v1` and drop it from the conversion config. `v2` remains a spoke. |
+| 6 | [`06-deprecate-v1/`](06-deprecate-v1/) | Stop serving `v1`, prune `storedVersions` (etcd is usually already at `v3` from the compositionRef retarget), drop the `v1` block. `v2` remains a spoke. |
 
 ## Prerequisites (cluster)
 
@@ -203,9 +203,12 @@ kubectl apply -f 03-promote-v2/composition.yaml
 ```
 
 Objects already stored at `v1` keep working: the apiserver converts them
-through the webhook. Rewriting etcd bytes to the new storage version is
-optional Kubernetes housekeeping (`kubectl get … -o json | kubectl replace -f -`),
-not something this operator does.
+through the webhook. Retargeting `compositionRef` (required because
+`compositeTypeRef` is immutable) also **writes** every XR, so etcd is
+typically already at the new storage version after this stage. Native CRDs
+have no such write; there the empty-SSA rewrite is the real migration. For
+XRDs, `storedVersions` on the generated CRD still has to be pruned later —
+that is stage 6.
 
 ---
 
@@ -291,21 +294,48 @@ live API. Hub stays `v3`; `v2` remains a served spoke. Do this in order:
 2. **Drop `v1` from `XRDConversionConfig`** before (or in the same apply as)
    un-serving it. A spoke whose version is `served: false` fails validation
    (`spoke version "v1" is not served`).
-3. **Set `served: false` on `v1`** in the XRD. The version block can stay so
-   stored objects are still understood; the apiserver stops serving the
-   `example.org/v1` endpoint.
-4. **Remove the `v1` version block** from the XRD only after stored objects
-   have been rewritten at the current storage version (Crossplane's
-   `referenceable` version — `v3` here) **and** `v1` is gone from the
-   generated CRD's `status.storedVersions`. Kubernetes rejects dropping a
-   version that is still listed there; “no live `v1` objects” is not enough
-   because `storedVersions` keeps historical versions until you prune it.
+3. **Set `served: false` on `v1`** in the XRD ([`xrd.yaml`](06-deprecate-v1/xrd.yaml)).
+   The version block stays so stored objects are still understood; the apiserver
+   stops serving the `example.org/v1` endpoint.
+4. **Prune `status.storedVersions` (and rewrite any stragglers).** Kubernetes
+   refuses to delete a version still listed in `storedVersions`, which never
+   shrinks on its own — “no live `v1` objects” is not enough.
+
+   On an XRD this is unlike a native CRD. Stages 3 and 5 already patched
+   `compositionRef` on every XR (new Composition; `compositeTypeRef` is
+   immutable). Those writes persist objects at the current `referenceable`
+   version, so etcd root `apiVersion` is usually already `v3` before this
+   step. What still blocks dropping the `v1` *block* is the generated CRD's
+   `storedVersions`. Native CRDs have no equivalent must-write, so empty SSA
+   is the actual etcd rewrite there.
+
+   Still run `convctl migrate-storage` here: it is cheap if everything is
+   already at `v3`, and it catches XRs that were never retargeted. `--prune-stored-versions`
+   is the part that unblocks step 5.
+
+   [`show-storage.sh`](show-storage.sh) prints the CRD's `storedVersions`,
+   each XR's `managedFields` apiVersions (historical field-manager GVKs, **not**
+   the etcd encoding), and — on kind — each etcd value's **root** `apiVersion`
+   (that is the stored version):
 
    ```console
    kubectl get crd xwidgets.example.org -o jsonpath='{.status.storedVersions}{"\n"}'
-   # rewrite remaining objects at the storage version, then prune storedVersions
-   kubectl get xwidgets.example.org -A -o json | kubectl replace -f -
+   ./show-storage.sh
+
+   convctl migrate-storage --xrd xwidgets.example.org --prune-stored-versions
+
+   ./show-storage.sh
+   kubectl get crd xwidgets.example.org -o jsonpath='{.status.storedVersions}{"\n"}'
+   # ["v3"]
    ```
+
+   `migrate-storage` empty-SSA-patches every XR at the storage GVK (a no-op
+   when compositionRef retarget already rewrote them). Nested
+   `"apiVersion":"example.org/v2"` strings in `managedFields` can remain; they
+   do not keep `v2` as a stored version.
+5. **Remove the `v1` version block** ([`xrd-drop-v1.yaml`](06-deprecate-v1/xrd-drop-v1.yaml))
+   only after step 4. Applying this file *before* prune is rejected (or the
+   generated CRD keeps `v1`) because `storedVersions` still lists it.
 
 ```console
 convctl validate --config 06-deprecate-v1/xrdconversionconfig.yaml --xrd 06-deprecate-v1/xrd.yaml
@@ -314,11 +344,16 @@ convctl test     --config 06-deprecate-v1/xrdconversionconfig.yaml --xrd 06-depr
 
 kubectl apply -f 06-deprecate-v1/xrdconversionconfig.yaml
 kubectl apply -f 06-deprecate-v1/xrd.yaml
+# served: false only — v1 block still present
+
+convctl migrate-storage --xrd xwidgets.example.org --prune-stored-versions
+kubectl apply -f 06-deprecate-v1/xrd-drop-v1.yaml
 ```
 
 What remains: hub `v3`, spoke `v2`, Composition `xwidgets-v3.example.org`,
-native ConfigMap. Deprecating `v2` later is the same drop-from-config then
-`served: false` sequence.
+native ConfigMap, no `v1` on the XRD. Deprecating `v2` later is the same
+drop-from-config, `served: false`, `migrate-storage --prune-stored-versions`,
+then drop-the-block sequence.
 
 ---
 
@@ -326,6 +361,6 @@ native ConfigMap. Deprecating `v2` later is the same drop-from-config then
 
 - [Field Rename](https://terasky-oss.github.io/declarative-conversion-operator/strategies/field-rename/)
 - [Changing the hub version](https://terasky-oss.github.io/declarative-conversion-operator/configuration/xrdconversionconfig/#changing-the-hub-version)
-- [CLI Reference](https://terasky-oss.github.io/declarative-conversion-operator/cli/) — `convctl test` exit codes and `--live`
+- [CLI Reference](https://terasky-oss.github.io/declarative-conversion-operator/cli/) — `convctl test`, `--live`, and [`migrate-storage`](https://terasky-oss.github.io/declarative-conversion-operator/cli/#convctl-migrate-storage)
 - [function-go-templating](https://github.com/crossplane-contrib/function-go-templating) ·
   [function-auto-ready](https://github.com/crossplane-contrib/function-auto-ready)

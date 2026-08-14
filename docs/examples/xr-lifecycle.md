@@ -3,8 +3,9 @@
 The staged example under
 [`examples/crossplane-xr-multiversion/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion)
 walks an XRD from a single version through a conversion webhook, two hub
-promotions (`v2` then `v3` as the standard), and deprecating the original. Each
-directory is a complete snapshot.
+promotions (`v2` then `v3` as the standard), deprecating `v1`, rewriting etcd
+at the new storage version, and dropping the `v1` block. Each directory is a
+complete snapshot.
 
 The Composition emits a native `ConfigMap` via `function-go-templating` and
 marks the XR ready with `function-auto-ready`. There is no cloud provider and
@@ -28,7 +29,7 @@ against intentional mistakes before the good config is applied.
 | 3. Promote `v2` | [`03-promote-v2/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/03-promote-v2) | Flip `referenceable`, rewrite rules, new Composition, retarget every XR `compositionRef`. |
 | 4. Add `v3` as a spoke | [`04-add-v3/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/04-add-v3) | Same pattern as stage 2, now with hub `v2`. |
 | 5. Promote `v3` | [`05-promote-v3/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/05-promote-v3) | `v3` becomes the hub (the new standard). New Composition + retarget `compositionRef`. |
-| 6. Deprecate `v1` | [`06-deprecate-v1/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/06-deprecate-v1) | Drop `v1` from the conversion config, then `served: false`. `v2` stays a spoke. |
+| 6. Deprecate `v1` | [`06-deprecate-v1/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/06-deprecate-v1) | Drop `v1` from the conversion config, `served: false`, prune `storedVersions` (`compositionRef` retarget already rewrote etcd — unlike a native CRD), then [`xrd-drop-v1.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/examples/crossplane-xr-multiversion/06-deprecate-v1/xrd-drop-v1.yaml) to remove the version block. `v2` stays a spoke. |
 
 Offline checks (from a repo checkout):
 

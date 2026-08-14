@@ -51,27 +51,3 @@ spec:
               properties:
                 phase:
                   type: string
-    # Stopped serving. Drop this block entirely only after
-    # `convctl migrate-storage --xrd xwidgets.example.org --prune-stored-versions`
-    # (see xrd-drop-v1.yaml). compositionRef retarget already rewrote etcd;
-    # storedVersions on the generated CRD still has to be pruned or Kubernetes
-    # rejects removing this version.
-    - name: v1
-      served: false
-      referenceable: false
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                widgetName:
-                  type: string
-                size:
-                  type: string
-            status:
-              type: object
-              properties:
-                phase:
-                  type: string

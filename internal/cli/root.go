@@ -53,7 +53,8 @@ cluster. Every command works against either resource type:
 	}
 	root.AddCommand(
 		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
-		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newPatchPreviewCmd(), newVersionCmd(),
+		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newPatchPreviewCmd(),
+		newMigrateStorageCmd(), newVersionCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -121,6 +122,8 @@ schemas.`,
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	registerOfflineFlagCompletions(cmd)
+	registerOutputCompletions(cmd, "table", "json")
 	return cmd
 }
 
@@ -156,6 +159,8 @@ are lossy in which direction, and whether every schema field is covered.`,
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	registerOfflineFlagCompletions(cmd)
+	registerOutputCompletions(cmd, "table", "json")
 	return cmd
 }
 
@@ -261,6 +266,10 @@ results are collected by sample index, never by completion order.`,
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	cmd.MarkFlagsOneRequired("samples", "live")
 	cmd.MarkFlagsMutuallyExclusive("samples", "live")
+	registerOfflineFlagCompletions(cmd)
+	registerKubeFlagCompletions(cmd)
+	registerOutputCompletions(cmd, "table", "json", "junit")
+	_ = cmd.RegisterFlagCompletionFunc("fail-on", cobra.FixedCompletions([]string{failOnNone, failOnWarn, failOnLoss}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 
@@ -319,10 +328,12 @@ drops straight into a CI gate.`,
 	cmd.Flags().StringVarP(&output, "output", "o", "json", "Output format: json|table")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	registerOfflineFlagCompletions(cmd)
+	registerKubeFlagCompletions(cmd)
+	registerOutputCompletions(cmd, "json", "table")
 	return cmd
 }
 
-// The accepted --fail-on thresholds, in increasing order of tolerance. See
 // docs/cli.md for the full threshold × outcome exit-code matrix.
 const (
 	// failOnNone reports results but never fails the process.
