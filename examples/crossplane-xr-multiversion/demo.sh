@@ -3,7 +3,8 @@
 # XWidget API lifecycle demo, driven by upstream demo-magic:
 #   https://github.com/paxtonhare/demo-magic  (vendored as ./demo-magic.sh)
 #
-# Walks v1-only → add v2 → promote v2 → add v3 → promote v3 → deprecate v1.
+# Walks v1-only → add v2 → promote v2 → add v3 → promote v3 → deprecate v1
+# → rewrite etcd at v3 and drop the v1 block from the XRD.
 # Each kubectl/convctl command is typed out. Press Enter to type, Enter again
 # to run (unless -n). Intentional mistakes are run through convctl *before*
 # apply so you see the CLI catch them.
@@ -153,7 +154,7 @@ This walkthrough evolves xwidgets.example.org:
   3. Promote v2 to the hub; new Composition; retarget existing XRs.
   4. Add v3 as a spoke (widgetName ↔ name).
   5. Promote v3 to the hub (the new standard).
-  6. Deprecate v1.
+  6. Deprecate v1 (served: false), rewrite etcd at v3, drop the v1 block.
 
 Before each apply we run convctl against both the correct snapshot and an
 intentional mistake, so you see the CLI catch a bad mapping before it hits
@@ -367,10 +368,40 @@ pe "kubectl get xwidgets.v3.example.org from-v3 -n ${NS} -o yaml | sed -n '/^spe
 note "v1 is no longer served:"
 pe_fail "kubectl get xwidgets.v1.example.org from-v2 -n ${NS}" "# ↑ expected: the v1 API is gone"
 
+note "The v1 version *block* is still on the XRD. Kubernetes will not let us delete it while the generated CRD's status.storedVersions still lists v1 — even if etcd is already at v3."
+pe "kubectl get crd xwidgets.example.org -o jsonpath='storage={.spec.versions[?(@.storage==true)].name}{\"\\nstoredVersions=\"}{.status.storedVersions}{\"\\n\"}'"
+
+note "Unlike a native CRD, promoting an XRD hub already wrote every XR (compositionRef retarget — compositeTypeRef is immutable). etcd root apiVersion is usually already v3. storedVersions still has to be pruned. managedFields can still mention old GVKs; that is not the stored version."
+pe "./show-storage.sh"
+
+note "migrate-storage anyway (no-op on already-v3 objects; catches stragglers), then prune storedVersions. For native CRDs the empty SSA pass is the actual rewrite — here the prune is what unblocks dropping v1."
+pe "convctl migrate-storage --xrd xwidgets.example.org --prune-stored-versions"
+
+note "After: etcd root apiVersion v3, storedVersions [v3]. Leftover v2 in managedFields is normal."
+pe "./show-storage.sh"
+pe "kubectl get crd xwidgets.example.org -o jsonpath='{.status.storedVersions}{\"\\n\"}'"
+
+note "Now the v1 block can actually leave the XRD:"
+pe "cat 06-deprecate-v1/xrd-drop-v1.yaml"
+pe "kubectl apply -f 06-deprecate-v1/xrd-drop-v1.yaml"
+pe "kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.example.org"
+pe "kubectl wait --for=condition=Established --timeout=60s compositeresourcedefinition.apiextensions.crossplane.io/xwidgets.example.org"
+
+pe "kubectl get compositeresourcedefinition xwidgets.example.org -o jsonpath='{range .spec.versions[*]}{.name}  served={.served}  referenceable={.referenceable}{\"\\n\"}{end}'"
+pe "kubectl get crd xwidgets.example.org -o jsonpath='{range .spec.versions[*]}{.name}  served={.served}  storage={.storage}{\"\\n\"}{end}'"
+note "v1 is gone from both the XRD and the generated CRD. v2 is still a served spoke."
+
+pe "kubectl get xwidgets.v2.example.org from-v3 -n ${NS} -o yaml | sed -n '/^spec:/,/^status:/p'"
+pe "kubectl get xwidgets.v3.example.org from-v3 -n ${NS} -o yaml | sed -n '/^spec:/,/^status:/p'"
+
 section "Done"
 cat <<EOF
 Hub is v3 (the standard), spoke is v2, Composition is xwidgets-v3.example.org.
-Deprecating v2 later is the same drop-from-config then served:false sequence.
+v1 has been un-served, storedVersions pruned, and removed from the XRD
+(etcd was already at v3 from the compositionRef retarget; migrate-storage
+was belt-and-suspenders plus the prune).
+Deprecating v2 later is the same sequence: drop-from-config, served:false,
+convctl migrate-storage --prune-stored-versions, then drop the version block.
 
 Objects left in ${NS}: demo, from-v2, after-promote, from-v3, on-v3.
 

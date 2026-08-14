@@ -120,9 +120,12 @@ The same fail-closed coverage rule applies too: a `status` field that differs in
 convctl validate --config config.yaml [--xrd xrd.yaml]
 convctl analyze   --xrd xrd.yaml --config config.yaml
 convctl test       --xrd xrd.yaml --config config.yaml --samples ./samples/
+convctl migrate-storage --xrd xwidgets.example.org
 ```
 
 `test` runs every sample object through every served-version conversion path (round-tripping through the hub), reporting timing, fields converted, rules exercised, and — for any detected loss — exactly which field diverged between which versions and whether it was acknowledged. Exit code `0` means every path passed or only had acknowledged loss; `1` means an unacknowledged loss or failure was found; `2` means a usage/tooling error.
+
+`migrate-storage` is the live housekeeping command for rewriting objects at the current storage version (`--xrd` / `--crd` are cluster names, not files). On an XRD, promoting the hub already writes every XR (`compositionRef` retarget), so the empty SSA pass is usually a no-op — pruning `status.storedVersions` is what unblocks dropping an old version. On a native CRD there is no such write, and the rewrite is critical. See the [CLI reference](docs/cli.md#convctl-migrate-storage).
 
 ### Pre-upgrade check: testing against everything that already exists
 

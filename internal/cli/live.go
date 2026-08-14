@@ -121,27 +121,49 @@ func FetchLiveSamplesCRD(ctx context.Context, dyn dynamic.Interface, crd *extv1.
 // pre-upgrade check that silently missed some fraction of live objects
 // would report false confidence — worse than not running it at all.
 func fetchLiveSamplesByGVR(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, hubVersion string) ([]Sample, error) {
-	var samples []Sample
+	items, err := listAllByGVR(ctx, dyn, gvr, "")
+	if err != nil {
+		return nil, fmt.Errorf("listing %s (version %s): %w", gvr.GroupResource().String(), hubVersion, err)
+	}
+	samples := make([]Sample, 0, len(items))
+	for i := range items {
+		item := items[i]
+		samples = append(samples, Sample{
+			File:    "cluster:" + objectLabel(&item),
+			Object:  item.Object,
+			Version: versionFromAPIVersion(item.GetAPIVersion()),
+		})
+	}
+	return samples, nil
+}
+
+// listAllByGVR paginates through every instance of gvr. An empty namespace
+// lists cluster-wide (all namespaces for a namespaced type). A non-empty
+// namespace lists only that namespace.
+func listAllByGVR(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, namespace string) ([]unstructured.Unstructured, error) {
+	var items []unstructured.Unstructured
 	continueToken := ""
 	for {
-		list, err := dyn.Resource(gvr).List(ctx, metav1.ListOptions{Continue: continueToken, Limit: 200})
+		opts := metav1.ListOptions{Continue: continueToken, Limit: 200}
+		var (
+			list *unstructured.UnstructuredList
+			err  error
+		)
+		if namespace != "" {
+			list, err = dyn.Resource(gvr).Namespace(namespace).List(ctx, opts)
+		} else {
+			list, err = dyn.Resource(gvr).List(ctx, opts)
+		}
 		if err != nil {
-			return nil, fmt.Errorf("listing %s (version %s): %w", gvr.GroupResource().String(), hubVersion, err)
+			return nil, err
 		}
-		for i := range list.Items {
-			item := list.Items[i]
-			samples = append(samples, Sample{
-				File:    "cluster:" + objectLabel(&item),
-				Object:  item.Object,
-				Version: versionFromAPIVersion(item.GetAPIVersion()),
-			})
-		}
+		items = append(items, list.Items...)
 		continueToken = list.GetContinue()
 		if continueToken == "" {
 			break
 		}
 	}
-	return samples, nil
+	return items, nil
 }
 
 // The GroupVersionResources `convctl diff --live` addresses. Both target

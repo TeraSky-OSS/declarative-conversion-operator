@@ -165,7 +165,13 @@ A worked, apply-able walkthrough of this sequence — including creating a new C
 
 `DriftPolicy: FailClosed` does **not** offer this safety net — a mismatch under `FailClosed` stops serving conversions immediately, so plan the two updates as a single fast operation (or temporarily switch to `KeepServingStale` for the migration) if you use that policy.
 
-One K8s-level detail this doesn't handle: objects already in etcd remain physically encoded at whichever version was `referenceable` when they were last written. The apiserver's conversion machinery serves them correctly regardless, but if you want them actually *rewritten* at the new storage version, that's standard Kubernetes housekeeping unrelated to this operator — e.g. `kubectl get <resource> --all-namespaces -o json | kubectl replace -f -`, or a [`StorageVersionMigration`](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#upgrade-existing-objects-to-a-new-stored-version) if your cluster runs the storage-version-migrator.
+One K8s-level detail this doesn't handle automatically: `status.storedVersions` on the generated CRD never shrinks, so Kubernetes rejects dropping an old version from the XRD until that list is pruned — even when every XR has already been rewritten.
+
+On an XRD that is not true of the etcd bytes themselves. Promoting the hub requires a new Composition (`compositeTypeRef` is immutable) and a `compositionRef` patch on every existing XR; those writes persist objects at the new `referenceable` version. Native CRDs have no equivalent "must write every object" step, so empty SSA is the actual rewrite there. For XRDs, run [`convctl migrate-storage --prune-stored-versions`](../cli.md#convctl-migrate-storage) anyway (catches anything you forgot to retarget) — the prune is the part that unblocks deleting the version block:
+
+```console
+convctl migrate-storage --xrd xwidgets.example.org --prune-stored-versions
+```
 
 ## Deletion safety
 

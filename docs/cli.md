@@ -1,6 +1,6 @@
 # CLI Reference: `convctl`
 
-`convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Every command works identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch.
+`convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Most commands work identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch. `migrate-storage` is the exception: it is a live, mutating housekeeping command that takes cluster resource names (not files) and does not need a conversion config.
 
 ```console
 convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
@@ -12,9 +12,10 @@ convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --s
 convctl suggest       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
 convctl rehub         --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --to v3 [-o yaml|json]
 convctl patch-preview --config config.yaml --service-name NAME --service-namespace NS --ca-bundle B64 [flags]
+convctl migrate-storage (--xrd NAME | --crd NAME) [flags]
 ```
 
-Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit.
+Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`).
 
 ## `convctl validate`
 
@@ -321,6 +322,62 @@ The patch is built by `internal/conversionpatch`, the same package the controlle
 
 Note that this is the *patch*, not the resulting object. It is applied with `ForceOwnership` under the `declarative-conversion-operator` field manager, so it claims exactly the fields shown and leaves every other field on the XRD or CRD to whoever owns it.
 
+## `convctl migrate-storage`
+
+Rewrites every live instance of a target XRD or CRD so etcd stores it at the current storage version. This is the first **mutating** `convctl` command: `test --live` / `diff --live` are read-only, and `patch-preview` never constructs a client.
+
+`--xrd` and `--crd` here are **cluster resource names**, not local YAML files. No conversion config is required. The live schema is the source of truth for GVK, scope, storage version, and `status.storedVersions`.
+
+After you promote a new storage version (`storage: true` on a CRD, `referenceable: true` on an XRD), objects already in etcd stay physically encoded at whichever version was storage when they were last written — **unless something writes them again**. The apiserver serves them correctly either way, but Kubernetes rejects dropping an old version from the CRD/XRD until `status.storedVersions` no longer lists it.
+
+**XRD vs CRD — this command is not equally urgent.**
+
+- **XRDs.** Crossplane will not let a Composition's `compositeTypeRef` change, so promoting the hub means a *new* Composition and a `compositionRef` patch on every existing XR. That write persists the object at the new `referenceable` version, so etcd is usually already rewritten by the time you deprecate an old spoke. What still blocks dropping the version block is the generated CRD's `status.storedVersions`, which never shrinks on its own. `--prune-stored-versions` is the step that matters; the empty SSA pass is belt-and-suspenders (XRs you forgot to retarget, or anything that was never patched).
+- **CRDs.** Flipping `storage: true` does **not** write existing objects. There is no Crossplane-style retarget. Empty SSA is the actual etcd rewrite, and skipping it leaves CRs encoded at the old version indefinitely. This is the critical path.
+
+`migrate-storage` does the rewrite with an **empty server-side-apply patch** (`apiVersion`, `kind`, `metadata.name`, and `metadata.namespace` only) under a dedicated field manager, with force-conflicts. The apply claims only identity fields; the write still goes through the persist path, so etcd is re-encoded at the current storage version. Conversion webhooks — including this operator — run as they would on any write.
+
+This is **not** the Kubernetes 1.30+ [`StorageVersionMigration`](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#upgrade-existing-objects-to-a-new-stored-version) API and does not need the storage-version-migrator. It is the standard empty-SSA approach that works on any cluster. A second run with the same field manager is a no-op once objects are already stored at the current version.
+
+```console
+convctl migrate-storage --xrd xwidgets.example.org
+convctl migrate-storage --crd widgets.example.org
+convctl migrate-storage --xrd xwidgets.example.org --dry-run
+convctl migrate-storage --crd widgets.example.org --prune-stored-versions
+```
+
+| Flag | Description |
+|---|---|
+| `-x, --xrd` | Cluster name of the `CompositeResourceDefinition`. Mutually exclusive with `--crd`; exactly one is required. **Not a file path.** |
+| `--crd` | Cluster name of the `CustomResourceDefinition`. **Not a file path.** |
+| `--kubeconfig` | Path to a kubeconfig file. Resolves exactly like `kubectl`. |
+| `--context` | Kubeconfig context to use. |
+| `-n, --namespace` | Limit to this namespace. Default: all namespaces. Ignored (with a warning) for cluster-scoped types. |
+| `--dry-run` | Same Apply call with server-side dry-run (`DryRun: All`) — exercises conversion, does not persist. Also skips `--prune-stored-versions`. |
+| `--concurrency` | How many objects to patch in parallel. Defaults to **1** (this is a write). |
+| `--field-manager` | SSA field manager. Defaults to `convctl`. Always applied with force-conflicts. |
+| `--prune-stored-versions` | After **every** object apply succeeds, set the generated/native CRD's `status.storedVersions` to the current storage version only. Skipped (with a warning) if any object failed, or with `--dry-run`. |
+| `-o, --output` | `table` (default) or `json`. |
+| `--quiet` | Suppress the progress line written to stderr. |
+
+For an XRD, the command reads the XRD, then the generated CRD (`{plural}.{group}`) for `status.storedVersions` and as a cross-check of `storage: true`. If the XRD's `referenceable` version and the CRD's storage version disagree, the CRD wins (that is what etcd stores) and a warning is printed.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Every object apply succeeded (and prune, if requested). |
+| `1` | One or more object applies failed, or a requested prune failed. Remaining objects are still attempted. |
+| `2` | Usage or cluster/schema error (bad flags, missing XRD/CRD, list failed, no/multiple storage versions). |
+
+### RBAC
+
+The invoking identity — not the operator's ServiceAccount — needs:
+
+- `get` on the target XRD and/or CRD
+- `list` and `patch` on the target CRs/XRs
+- `update` on `customresourcedefinitions/status` only if you pass `--prune-stored-versions`
+
 ## Pre-upgrade checks: testing against everything that already exists
 
 `--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of the target XRD's generated composite resource type (or, for a `CRDConversionConfig`, the native CRD's own resource type), fetched at its hub/storage version (so it works even *before* any conversion webhook is wired up, since the storage version is always readable):
@@ -342,3 +399,12 @@ source <(convctl completion bash)
 ```
 
 See `convctl completion --help` for how to install it permanently for your shell.
+
+Once installed, flags complete as follows:
+
+- `--xrd` / `--crd` / `--config` / `--sample` on offline commands complete YAML files; `--samples` completes directories.
+- `migrate-storage --xrd` / `--crd` complete **cluster resource names** (XRDs and CRDs listed from the current kubeconfig context), not files. `--namespace` completes live namespaces the same way.
+- `--context` on `test`, `diff`, and `migrate-storage` completes kubeconfig context names. `--kubeconfig` already on the command line is honored, so `convctl migrate-storage --kubeconfig ./other --context <tab>` lists contexts from that file.
+- `--output` and `test --fail-on` complete their allowed values.
+
+Cluster lookups during completion time out after two seconds and fall back to no suggestions if the apiserver is unreachable, so a hung cluster cannot freeze tab-complete.
