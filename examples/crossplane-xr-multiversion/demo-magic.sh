@@ -12,7 +12,7 @@
 ###############################################################################
 
 # the speed to simulate typing the text
-TYPE_SPEED=200
+TYPE_SPEED=20
 
 # no wait after "p" or "pe"
 NO_WAIT=false
@@ -250,6 +250,6 @@ done
 # Do not check for pv. This trusts the user to not set TYPE_SPEED later in the
 # demo in which case an error will occur if pv is not installed.
 ##
-# if [[ -n "$TYPE_SPEED" ]]; then
-#   check_pv
-# fi
+if [[ -n "$TYPE_SPEED" ]]; then
+  check_pv
+fi
