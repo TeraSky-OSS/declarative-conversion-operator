@@ -17,6 +17,7 @@ limitations under the License.
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -485,6 +486,66 @@ func TestRunTest_DropSpokeLeavesV1App(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected to test the v1 demo XR from gitops/apps")
+	}
+}
+
+func TestRunTest_VersionPairDoesNotErrorConfiguredSample(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:              "testdata/xrd.yaml",
+		ConfigPath:           "testdata/config.yaml",
+		SamplesDir:           "testdata/samples",
+		RestrictVersionPairs: []string{"v2"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("--version-pair must not treat a still-configured sample version as missing a plan, got %d errors", rep.Summary.Errors)
+	}
+	var sawV1ToV2 bool
+	for _, s := range rep.Samples {
+		for _, p := range s.Paths {
+			if p.To != "v2" {
+				t.Fatalf("--version-pair v2 should only test destinations in {v2}, got %s→%s", p.From, p.To)
+			}
+			if s.AssertedVersion == "v1" && p.To == "v2" {
+				sawV1ToV2 = true
+			}
+		}
+	}
+	if !sawV1ToV2 {
+		t.Fatal("expected the v1 sample to still convert to the restricted v2 target")
+	}
+}
+
+func TestFilterSamplesByGVK_IgnoresUnrelatedAndRejectsKindWithoutAPIVersion(t *testing.T) {
+	dir := t.TempDir()
+	unrelated := "replicaCount: 2\n"
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), []byte(unrelated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	samples, err := LoadSamples(dir)
+	if err != nil {
+		t.Fatalf("Helm values without apiVersion must be loadable: %v", err)
+	}
+	got, err := filterSamplesByGVK(samples, "example.org", "Foo")
+	if err != nil {
+		t.Fatalf("unrelated YAML should be ignored: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no Foo samples, got %+v", got)
+	}
+
+	bad := "kind: Foo\nspec: {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "orphan.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	samples, err = LoadSamples(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := filterSamplesByGVK(samples, "example.org", "Foo"); err == nil {
+		t.Fatal("expected error for a Foo object with no apiVersion")
 	}
 }
 

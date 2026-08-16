@@ -49,6 +49,13 @@ usage() { sed -n '2,30p' "$0"; }
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# shift 2 is a no-op when only the flag remains, which would loop forever.
+require_flag_value() {
+  if [[ $# -lt 2 || -z "${2}" || "${2}" == -* ]]; then
+    die "$1 requires a value"
+  fi
+}
+
 # Long flags we own; everything else is forwarded to demo-magic's getopts
 # (-h -d -n -c -w).
 forward=()
@@ -56,7 +63,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --cleanup) CLEANUP_ONLY=1; shift ;;
     --demo-mode)
-      DEMO_MODE="${2:-}"
+      require_flag_value "$@"
+      DEMO_MODE="$2"
       shift 2
       ;;
     --demo-mode=*)
@@ -64,7 +72,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --gitops-engine)
-      GITOPS_ENGINE="${2:-}"
+      require_flag_value "$@"
+      GITOPS_ENGINE="$2"
       shift 2
       ;;
     --gitops-engine=*)
@@ -72,7 +81,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --github-repo)
-      GITHUB_REPO_FLAG="${2:-}"
+      require_flag_value "$@"
+      GITHUB_REPO_FLAG="$2"
       shift 2
       ;;
     --github-repo=*)
@@ -94,7 +104,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --git-prefix)
-      GIT_PREFIX="${2:-}"
+      require_flag_value "$@"
+      GIT_PREFIX="$2"
       shift 2
       ;;
     --git-prefix=*)
@@ -102,7 +113,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --repo-visibility)
-      REPO_VISIBILITY="${2:-}"
+      require_flag_value "$@"
+      REPO_VISIBILITY="$2"
       shift 2
       ;;
     --repo-visibility=*)
@@ -111,7 +123,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --delete-repo) DELETE_REPO=1; shift ;;
     --from-stage)
-      FROM_STAGE="${2:-}"
+      require_flag_value "$@"
+      FROM_STAGE="$2"
       shift 2
       ;;
     --from-stage=*)
@@ -185,9 +198,12 @@ cleanup_demo() {
 command -v kubectl >/dev/null 2>&1 || die "kubectl not found on PATH"
 
 if [[ "${CLEANUP_ONLY}" -eq 1 ]]; then
-  cleanup_demo
+  # Stop Flux/Argo first so they cannot recreate objects during cleanup_demo.
   if gitops_is_live || [[ "${DELETE_REPO}" -eq 1 ]] || [[ -f "${GITOPS_STATE_FILE}" ]]; then
     gitops_cleanup_cluster
+  fi
+  cleanup_demo
+  if gitops_is_live || [[ "${DELETE_REPO}" -eq 1 ]] || [[ -f "${GITOPS_STATE_FILE}" ]]; then
     gitops_cleanup_repo
   fi
   echo "demo objects removed"
@@ -311,6 +327,7 @@ EOF
 note "Each command is typed. Press Enter to reveal it, Enter again to run it."
 
 note "Wiping leftover objects from a previous run (untyped cleanup)…"
+gitops_stop_reconcile
 cleanup_demo
 
 if gitops_is_live; then

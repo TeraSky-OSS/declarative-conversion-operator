@@ -186,10 +186,11 @@ gitops_resolve_repo() {
 # ---------------------------------------------------------------------------
 
 gitops_set_push_url() {
-  local token
-  token="$(gh auth token)"
-  git -C "${GITOPS_WORKTREE}" remote set-url origin \
-    "https://x-access-token:${token}@github.com/${GITHUB_REPO}.git"
+  # Do not embed gh auth token in origin — git stores remotes in plaintext
+  # .git/config. The worktree uses gh's credential helper instead.
+  git -C "${GITOPS_WORKTREE}" config --local credential.https://github.com.helper ""
+  git -C "${GITOPS_WORKTREE}" config --local --add credential.https://github.com.helper "!gh auth git-credential"
+  git -C "${GITOPS_WORKTREE}" remote set-url origin "https://github.com/${GITHUB_REPO}.git"
 }
 
 gitops_create_or_use_repo() {
@@ -356,6 +357,7 @@ gitops_build_convctl_image() {
   platform="$(gitops_docker_platform)"
   runner_flat="xwidget-demo-actions-runner:dev"
   mkdir -p "${GITOPS_DIR}/runner"
+  [[ -x "${REPO_ROOT}/bin/convctl" ]] || die "bin/convctl missing; demo.sh should have built it"
   cp "${REPO_ROOT}/bin/convctl" "${GITOPS_DIR}/runner/convctl"
   docker build --platform "${platform}" --provenance=false --sbom=false \
     -t "${GITOPS_CONVCTL_IMAGE}" -f "${GITOPS_DIR}/runner/Dockerfile" "${GITOPS_DIR}/runner"
@@ -388,6 +390,7 @@ gitops_install_runner() {
   name="kind-xwidget-demo-$(date +%s)"
   echo "Requesting Actions runner registration token for ${GITHUB_REPO} (name ${name})…"
   token="$(gh api -X POST "repos/${GITHUB_REPO}/actions/runners/registration-token" --jq .token)"
+  [[ -n "${token}" ]] || die "failed to get Actions runner registration token for ${GITHUB_REPO}"
 
   kubectl create namespace actions-runner --dry-run=client -o yaml | kubectl apply -f -
   kubectl -n actions-runner delete configmap runner-entrypoint --ignore-not-found
@@ -532,21 +535,14 @@ gitops_install_argo() {
     --set configs.cm."timeout\.reconciliation"=30s \
     --wait --timeout 10m
 
-  kubectl -n argocd delete secret repo-${GITOPS_APP_NAME} --ignore-not-found
-  kubectl -n argocd apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: repo-${GITOPS_APP_NAME}
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: repository
-stringData:
-  type: git
-  url: https://github.com/${GITHUB_REPO}
-  username: git
-  password: $(gitops_git_secret_token)
-EOF
+  kubectl -n argocd delete secret "repo-${GITOPS_APP_NAME}" --ignore-not-found
+  kubectl -n argocd create secret generic "repo-${GITOPS_APP_NAME}" \
+    --from-literal=type=git \
+    --from-literal=url="https://github.com/${GITHUB_REPO}" \
+    --from-literal=username=git \
+    --from-literal=password="$(gitops_git_secret_token)"
+  kubectl -n argocd label secret "repo-${GITOPS_APP_NAME}" \
+    argocd.argoproj.io/secret-type=repository --overwrite
 
   local path
   path="$(gitops_rel_prefix)"
@@ -1008,6 +1004,13 @@ gitops_remove_github_runner() {
   done < <(gh api "repos/${GITHUB_REPO}/actions/runners" --jq \
     '.runners[] | select((.name | startswith("kind-xwidget-demo")) or ([.labels[].name] | index("xwidget-demo"))) | .id' \
     2>/dev/null || true)
+}
+
+# Delete demo Flux/Argo apps so they stop recreating objects. Safe when
+# those engines are not installed.
+gitops_stop_reconcile() {
+  kubectl delete kustomization "${GITOPS_APP_NAME}" "${GITOPS_APP_NAME}-conversion" "${GITOPS_APP_NAME}-apps" -n flux-system --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete application "${GITOPS_APP_NAME}" "${GITOPS_APP_NAME}-conversion" -n argocd --ignore-not-found >/dev/null 2>&1 || true
 }
 
 gitops_cleanup_cluster() {

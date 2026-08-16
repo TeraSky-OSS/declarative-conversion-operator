@@ -143,7 +143,10 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		if gvkErr != nil {
 			return nil, gvkErr
 		}
-		samples = filterSamplesByGVK(samples, group, kind)
+		samples, err = filterSamplesByGVK(samples, group, kind)
+		if err != nil {
+			return nil, err
+		}
 		if len(samples) == 0 {
 			return nil, fmt.Errorf("no %s.%s objects under %s", kind, group, opts.SamplesDir)
 		}
@@ -195,7 +198,10 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 		if err != nil {
 			return nil, err
 		}
-		samples = filterSamplesByGVK(samples, crd.Spec.Group, crd.Spec.Names.Kind)
+		samples, err = filterSamplesByGVK(samples, crd.Spec.Group, crd.Spec.Names.Kind)
+		if err != nil {
+			return nil, err
+		}
 		if len(samples) == 0 {
 			return nil, fmt.Errorf("no %s.%s objects under %s", crd.Spec.Names.Kind, crd.Spec.Group, opts.SamplesDir)
 		}
@@ -221,7 +227,8 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 // AnalyzeReport already exist.
 func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, start time.Time) (*Report, error) {
 	served := servedVersions(versions)
-	targets := configuredVersions(hubVersion, report, served)
+	configured := configuredVersions(hubVersion, report, served)
+	targets := configured
 	if len(opts.RestrictVersionPairs) > 0 {
 		targets = restrictTargets(targets, opts.RestrictVersionPairs)
 	}
@@ -259,7 +266,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], targets)
+				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets)
 
 				mu.Lock()
 				results[i] = sr
@@ -313,11 +320,11 @@ type sampleCounts struct {
 // a sample stay sequential: they're cheap next to the coordination cost,
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
-func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, targets []string) (SampleResult, sampleCounts, map[string]int) {
+func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string) (SampleResult, sampleCounts, map[string]int) {
 	sr := SampleResult{File: s.File, AssertedVersion: s.Version}
 	var counts sampleCounts
 	usage := map[string]int{}
-	if !containsString(targets, s.Version) {
+	if !containsString(configured, s.Version) {
 		pr := PathResult{From: s.Version, To: s.Version, Result: "error"}
 		pr.Issues = append(pr.Issues, Issue{
 			Field:  "(sample)",
