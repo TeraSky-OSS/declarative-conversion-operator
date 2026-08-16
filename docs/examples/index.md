@@ -20,6 +20,10 @@ isolation, these show a complete, runnable config you can copy and adapt.
 | [`crossplane-xr-multiversion/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion) | Staged Crossplane XR lifecycle: one-version XRD + ConfigMap Composition, add a spoke, promote the hub (new Composition + retarget `compositionRef`), add `v3`, promote `v3` as the standard, deprecate `v1` (including `convctl migrate-storage` and dropping the version block). GitOps alternative: [`gitops/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops) + [`convctl generate kyverno`](../cli.md#convctl-generate-kyverno) (`--gitops-engine simulate\|flux\|argo`). | [`FieldRename`](../strategies/field-rename.md) — see the [lifecycle walkthrough](xr-lifecycle.md) |
 | [`native-crd/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/native-crd) | The same model against a plain Kubernetes CRD, with no Crossplane anywhere. | [`FieldRename`](../strategies/field-rename.md), [`Delete`](../strategies/delete.md) |
 
+Operator install via Flux or Argo (apply order and `driftPolicy`) is
+[`examples/gitops/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/gitops)
+— see [GitOps operator sync](../gitops/operator-sync.md).
+
 For a single fixture that exercises *every* built-in strategy at once, see the
 [kitchen-sink walkthrough](kitchen-sink.md).
 

@@ -151,3 +151,8 @@ helm lint charts/declarative-conversion-operator
 helm template declarative-conversion-operator charts/declarative-conversion-operator \
   --namespace declarative-conversion-system
 ```
+
+For Flux or Argo, use the [GitOps operator sync](gitops/operator-sync.md)
+examples (`examples/gitops/flux`, `examples/gitops/argo`). Keep
+`driftPolicy: KeepServingStale` on GitOps-managed configs — `FailClosed`
+drops conversions while the schema and config reconcile independently.
