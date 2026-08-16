@@ -513,7 +513,7 @@ else
 fi
 if [[ "${DEMO_MODE}" == gitops ]]; then
   note "Kyverno 1.18.1 never runs MutatingPolicy mutateExisting (kyverno#16255). Admission needs a write."
-  pe 'for xr in $(kubectl get xwidgets.example.org -n '"${NS}"' -o name); do kubectl annotate "$xr" -n '"${NS}"' demo.example.org/retarget="$(date +%s)" --overwrite; done'
+  pe 'xrs=$(kubectl get xwidgets.example.org -n '"${NS}"' -o name) && [[ -n "$xrs" ]] && for xr in $xrs; do kubectl annotate "$xr" -n '"${NS}"' demo.example.org/retarget="$(date +%s)" --overwrite; done'
 fi
 pe "kubectl wait --for=condition=Ready --timeout=90s xwidgets.example.org/demo -n ${NS}"
 pe "kubectl wait --for=condition=Synced --timeout=90s xwidgets.example.org/demo -n ${NS}"
@@ -631,7 +631,7 @@ else
 fi
 if [[ "${DEMO_MODE}" == gitops ]]; then
   note "Same as stage 3: mutateExisting is a no-op on 1.18.1, so write each XR."
-  pe 'for xr in $(kubectl get xwidgets.example.org -n '"${NS}"' -o name); do kubectl annotate "$xr" -n '"${NS}"' demo.example.org/retarget="$(date +%s)" --overwrite; done'
+  pe 'xrs=$(kubectl get xwidgets.example.org -n '"${NS}"' -o name) && [[ -n "$xrs" ]] && for xr in $xrs; do kubectl annotate "$xr" -n '"${NS}"' demo.example.org/retarget="$(date +%s)" --overwrite; done'
 fi
 pe 'for xr in $(kubectl get xwidgets.example.org -n '"${NS}"' -o name); do kubectl wait --for=condition=Ready --timeout=90s -n '"${NS}"' "$xr"; kubectl wait --for=condition=Synced --timeout=90s -n '"${NS}"' "$xr"; done'
 note "Storage is now v3. Same migrate-storage step as after the v2 promote."

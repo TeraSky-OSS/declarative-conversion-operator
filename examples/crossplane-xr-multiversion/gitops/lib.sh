@@ -913,12 +913,9 @@ gitops_ship() {
   if [[ "${fix_open_pr}" -eq 1 ]]; then
     echo "Pushed fix to ${pr}"
     gh pr edit "${pr}" --repo "${GITHUB_REPO}" --title "${title}" || true
-    local sha
+    local sha rc=0
     sha="$(gitops_git rev-parse HEAD)"
-    set +e
-    gitops_wait_pr_checks "${pr}" "${sha}"
-    local rc=$?
-    set -e
+    gitops_wait_pr_checks "${pr}" "${sha}" || rc=$?
     if [[ "${rc}" -ne 0 ]]; then
       gitops_git checkout "${base}"
       die "CI failed for fix-up on ${pr}"
@@ -939,12 +936,9 @@ gitops_ship() {
     --body "${body}")"
   echo "Opened ${pr}"
 
-  local sha
+  local sha rc=0
   sha="$(gitops_git rev-parse HEAD)"
-  set +e
-  gitops_wait_pr_checks "${pr}" "${sha}"
-  local rc=$?
-  set -e
+  gitops_wait_pr_checks "${pr}" "${sha}" || rc=$?
 
   if [[ "${expect_fail}" -eq 1 ]]; then
     if [[ "${rc}" -eq 0 ]]; then
