@@ -22,6 +22,11 @@ spec:
   wait: true
   timeout: 10m
   path: ./examples/gitops/flux/operator
+  healthChecks:
+    - apiVersion: terasky.com/v1alpha1
+      kind: ConversionWebhookServer
+      name: default
+      namespace: declarative-conversion-system
   sourceRef:
     kind: GitRepository
     name: declarative-conversion-operator

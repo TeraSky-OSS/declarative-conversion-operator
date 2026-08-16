@@ -456,9 +456,9 @@ This is the tool to run before applying a new or changed `XRDConversionConfig`/`
 
 To run the same pair of checks (`diff --live` + `test --live`) against every
 cluster in a fleet before merge, see [Fleet CI](gitops/fleet-ci.md).
-`convctl test --live --contexts east,west -o junit` produces one JUnit
-document with a `<testsuite>` per cluster (a cluster that cannot be
-reached is an `<error>` suite, not a silent skip).
+`convctl test --xrd xrd.yaml --config proposed.yaml --live --contexts east,west -o junit`
+produces one JUnit document with a `<testsuite>` per cluster (a cluster
+that cannot be reached is an `<error>` suite, not a silent skip).
 
 ## Shell completion
 

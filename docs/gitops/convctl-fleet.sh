@@ -14,11 +14,14 @@
 #   KUBECONFIG       kubeconfig used with CONTEXTS (kubectl default if unset)
 #   OUT_DIR          where per-cluster JUnit/JSON land (default: ./convctl-fleet-out)
 #   SKIP_DIFF        set to 1 to run only test --live
+#   FAIL_ON_DIFF     set to 1 to fail the gate on a coverage/claim delta (diff exit 1).
+#                    Default: treat exit 1 as a review artifact; fail only on exit 2.
 set -euo pipefail
 
 CONVCTL="${CONVCTL:-convctl}"
 OUT_DIR="${OUT_DIR:-./convctl-fleet-out}"
 SKIP_DIFF="${SKIP_DIFF:-0}"
+FAIL_ON_DIFF="${FAIL_ON_DIFF:-0}"
 
 die() { echo "error: $*" >&2; exit 2; }
 
@@ -56,11 +59,18 @@ run_one() {
 
   echo "=== ${label} ==="
   if [[ "${SKIP_DIFF}" != 1 ]]; then
-    if ! "${CONVCTL}" diff --config "${CONVCTL_CONFIG}" --live \
+    local diff_rc=0
+    "${CONVCTL}" diff --config "${CONVCTL_CONFIG}" --live \
       "${kube_flags[@]}" -o json \
-      > "${OUT_DIR}/${safe}.diff.json"; then
-      echo "diff --live failed on ${label}" >&2
+      > "${OUT_DIR}/${safe}.diff.json" || diff_rc=$?
+    if [[ "${diff_rc}" -eq 2 ]]; then
+      echo "diff --live usage/cluster error on ${label}" >&2
       failed=1
+    elif [[ "${diff_rc}" -eq 1 && "${FAIL_ON_DIFF}" == 1 ]]; then
+      echo "diff --live reported a delta on ${label} (FAIL_ON_DIFF=1)" >&2
+      failed=1
+    elif [[ "${diff_rc}" -eq 1 ]]; then
+      echo "diff --live reported a delta on ${label} (review ${OUT_DIR}/${safe}.diff.json)" >&2
     fi
   fi
   if ! "${CONVCTL}" test --config "${CONVCTL_CONFIG}" --live \

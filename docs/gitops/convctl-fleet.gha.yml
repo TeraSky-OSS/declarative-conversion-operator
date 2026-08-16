@@ -42,13 +42,20 @@ jobs:
           chmod 600 "${HOME}/.kube/config"
 
       - name: convctl diff --live
+        # Exit 1 is a coverage/claim delta (review artifact). Exit 2 is a
+        # usage/cluster error and must fail the job.
         run: |
           mkdir -p fleet-out
+          set +e
           convctl diff --config path/to/xrdconversionconfig.yaml --live \
             --context "${{ matrix.context }}" -o json \
             > "fleet-out/${{ matrix.context }}.diff.json"
+          rc=$?
+          if [ "${rc}" -eq 2 ]; then exit 2; fi
+          exit 0
 
       - name: convctl test --live
+        if: ${{ always() }}
         run: |
           convctl test --config path/to/xrdconversionconfig.yaml \
             --xrd path/to/xrd.yaml --live \

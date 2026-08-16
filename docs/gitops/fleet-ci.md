@@ -75,11 +75,12 @@ strategy:
 | `convctl diff --live` | Cluster config and the file are equivalent | Any coverage/claim/lossy delta | Usage or cluster error |
 | `convctl test --live` | Every path passed, or every loss was already `acknowledgeLossy` | Unacknowledged loss or conversion error | Usage or cluster error |
 
-A fleet gate should fail the PR if **any** cluster returns 1 or 2. A
-delta on `diff` is not automatically a bug — it is the change you are
-about to roll out. Typical pattern: require `test --live` green on every
-cluster, and treat `diff --live` as a required review artifact (upload
-the JSON) unless you are enforcing "no accidental coverage change."
+A fleet gate should fail the PR if **any** cluster's `test --live`
+returns 1 or 2, or if `diff --live` returns 2 (usage / cannot reach the
+cluster). A `diff` exit 1 is a coverage/claim delta — the change you are
+about to roll out — so the reference script and workflow treat it as a
+review artifact by default. Set `FAIL_ON_DIFF=1` when you want that
+delta to fail the gate.
 
 ## Two-cluster check
 
