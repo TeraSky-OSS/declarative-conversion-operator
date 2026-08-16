@@ -1,0 +1,13 @@
+# App-team YAML. No compositionRef — Crossplane writes that pin on create.
+# GitOps tools should ignore spec.crossplane.compositionRef and
+# spec.crossplane.compositionRevisionRef (same class of mutation as resourceRefs).
+# Hub promotes leave this file alone. Dropping a spoke does not: bump
+# apiVersion (and field names) before that version leaves the conversion plan.
+apiVersion: example.org/v1
+kind: XWidget
+metadata:
+  name: demo
+  namespace: default
+spec:
+  widgetName: demo-widget
+  size: Large

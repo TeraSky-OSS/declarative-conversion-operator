@@ -12,7 +12,8 @@ Enable chart `ServiceMonitor`s with `metrics.serviceMonitor.enabled=true`
 (and optional `PrometheusRule` / Grafana dashboard ConfigMaps — see
 [Installation](installation.md)). `make dev-up` turns those on automatically
 and installs kube-prometheus-stack with anonymous Grafana
-(`hack/dev-monitoring-values.yaml`). Trust boundary and NetworkPolicy:
+(`hack/dev-monitoring-values.yaml`) unless you pass `DEV_MONITORING=false`.
+Trust boundary and NetworkPolicy:
 [security/metrics.md](security/metrics.md).
 
 **Label note:** target identity uses the Prometheus label `target` (XRD or

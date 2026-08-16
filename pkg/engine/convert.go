@@ -45,8 +45,14 @@ func Convert(in ConvertInput) (map[string]any, error) {
 	if kind, ok := in.Object["kind"]; ok {
 		output["kind"] = kind
 	}
-	if md, ok := in.Object["metadata"]; ok {
+	// Kubernetes rejects a ConversionReview object with no metadata
+	// ("missing metadata in converted object"). SSA prune can send a
+	// partial object whose metadata is absent or JSON null — still emit
+	// an object so the apiserver can merge.
+	if md, ok := in.Object["metadata"]; ok && md != nil {
 		output["metadata"] = deepCopyValue(md)
+	} else {
+		output["metadata"] = map[string]any{}
 	}
 	ctx := &execContext{input: in.Object, output: output}
 	for _, op := range in.Plan.ops(in.Direction) {

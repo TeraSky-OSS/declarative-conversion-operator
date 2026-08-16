@@ -14,12 +14,21 @@ no `provider-kubernetes`.
 On a cluster with Crossplane and this operator already installed (`make
 dev-up`), [`demo.sh`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/examples/crossplane-xr-multiversion/demo.sh)
 is a demo-magic walkthrough: each command is typed out, and `convctl` is run
-against intentional mistakes before the good config is applied.
+against intentional mistakes before the good config is applied. Default
+`--demo-mode patches` retargets with `kubectl patch`; `--demo-mode gitops`
+uses [`convctl generate kyverno`](../cli.md#convctl-generate-kyverno).
+`--gitops-engine` defaults to `simulate`. `flux` or `argo` drive a real
+GitHub repo (PRs, in-cluster self-hosted Actions runner, then Flux/Argo
+sync). GitHub-hosted Actions cannot reach kind; the demo does not use ACT.
+`convctl migrate-storage` stays local.
 
 ```console
-./examples/crossplane-xr-multiversion/demo.sh          # Enter to type, Enter to run
-./examples/crossplane-xr-multiversion/demo.sh -n       # no pauses
+./examples/crossplane-xr-multiversion/demo.sh                    # patches (default)
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops # Kyverno retarget (simulate)
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops --gitops-engine flux --create-repo
+./examples/crossplane-xr-multiversion/demo.sh -n                 # no pauses
 ./examples/crossplane-xr-multiversion/demo.sh --cleanup
+./examples/crossplane-xr-multiversion/demo.sh --cleanup --delete-repo  # only if this run created the repo
 ```
 
 | Stage | Snapshot | What to notice |
@@ -48,3 +57,12 @@ ordering, lives in the [example README](https://github.com/terasky-oss/declarati
 Hub-promotion safety (`KeepServingStale`) is documented in
 [XRDConversionConfig: Changing the hub version](../configuration/xrdconversionconfig.md#changing-the-hub-version).
 Use [`convctl rehub`](../cli.md#convctl-rehub) as the draft step when rewriting rules for a new hub.
+
+To retarget existing XRs without a per-object `compositionRef` patch, see the
+[GitOps example](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops)
+and [`convctl generate kyverno`](../cli.md#convctl-generate-kyverno). Do not use
+XRD `enforcedCompositionRef` for hub flips — the field is immutable.
+`--gitops-engine flux|argo` adds GitHub PRs and an in-cluster self-hosted
+Actions runner so CI can run `convctl test --live`; `migrate-storage` stays
+a local command. `--delete-repo` with `--cleanup` only deletes a repo the
+demo created.

@@ -30,13 +30,16 @@ make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
 make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)
 make test-e2e-scale     # kind + generated CRD fleet + parallel Get/List (TARGETS/INSTANCES)
-make dev-up             # kind + cert-manager + Crossplane + kube-prometheus-stack + operator
+make dev-up             # kind + cert-manager + Crossplane + operator (+ monitoring + Kyverno)
+make dev-up DEV_MONITORING=false DEV_KYVERNO=false   # skip those extras
 make dev-down           # delete the kind cluster from dev-up
 ```
 
-`make dev-up` enables chart ServiceMonitors / PrometheusRules / Grafana dashboards and
-installs kube-prometheus-stack with anonymous Grafana (see
-`hack/dev-monitoring-values.yaml`). After it finishes:
+`make dev-up` installs kube-prometheus-stack (anonymous Grafana; see
+`hack/dev-monitoring-values.yaml`) and Kyverno unless you set
+`DEV_MONITORING=false` / `DEV_KYVERNO=false`. With monitoring on it also
+enables chart ServiceMonitors / PrometheusRules / Grafana dashboards. After
+it finishes:
 
 ```console
 kubectl -n monitoring-system port-forward svc/monitoring-grafana 3000:80

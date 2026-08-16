@@ -53,8 +53,8 @@ cluster. Every command works against either resource type:
 	}
 	root.AddCommand(
 		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
-		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newPatchPreviewCmd(),
-		newMigrateStorageCmd(), newVersionCmd(),
+		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
+		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -175,8 +175,10 @@ func newTestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Round-trip samples through every conversion path",
-		Long: `Run every sample through every served-version conversion path and report pass/loss,
-timing, and rule coverage.
+		Long: `Run every sample through every conversion path the config declares (hub plus
+each compiled spoke, among served versions) and report pass/loss, timing, and
+rule coverage. A served version that is not a spoke is skipped — drop the
+spoke from the config before setting served: false, then un-serve.
 
 Works against an XRDConversionConfig (--xrd) or a CRDConversionConfig (--crd). The
 config's own kind decides which schema flag is required.

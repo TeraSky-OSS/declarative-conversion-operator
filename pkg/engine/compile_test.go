@@ -197,6 +197,31 @@ func TestConvert_PreservesKindAndMetadata(t *testing.T) {
 	}
 }
 
+func TestConvert_AlwaysEmitsMetadata(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"storageGB": strSchema()})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"storageSize": strSchema()})
+	rs := RuleSet{HubVersion: "v2", SpokeVersion: "v1", Rules: []Rule{
+		{Strategy: StrategyFieldRename, Params: FieldRenameParams{HubPath: ParsePath("storageGB"), SpokePath: ParsePath("storageSize")}},
+	}}
+	plan, _, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, in := range []map[string]any{
+		{"kind": "XWidget", "storageGB": "100"},
+		{"kind": "XWidget", "metadata": nil, "storageGB": "100"},
+	} {
+		out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: in})
+		if err != nil {
+			t.Fatalf("convert: %v", err)
+		}
+		md, ok := out["metadata"].(map[string]any)
+		if !ok || md == nil {
+			t.Fatalf("SSA prune objects have no metadata; converted object must still have a metadata map, got %v", out)
+		}
+	}
+}
+
 func TestUncoveredField_FailsClosedByDefault(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema(), "b": strSchema()})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{"a": strSchema()})

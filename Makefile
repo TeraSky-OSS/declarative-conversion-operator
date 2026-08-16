@@ -168,12 +168,16 @@ test-prometheus: promtool ## Run promtool unit tests for chart PrometheusRule al
 
 # Same shape as hack/e2e-common.sh's setup (kind + cert-manager + Crossplane
 # + this operator's own Helm chart), but left running afterward for
-# interactive use instead of being torn down by a test script. Also installs
-# kube-prometheus-stack with anonymous Grafana and enables the chart's
-# ServiceMonitors / PrometheusRules / dashboard ConfigMaps. A fixed image
-# tag (rather than e2e's timestamped one) keeps `make dev-up` idempotent and
-# safe to re-run after every code change: it rebuilds, reloads, and restarts
-# the running pods so the new code actually takes effect.
+# interactive use instead of being torn down by a test script. Optionally
+# installs kube-prometheus-stack (anonymous Grafana) and Kyverno
+# (MutatingPolicy). A fixed image tag (rather than e2e's timestamped one)
+# keeps `make dev-up` idempotent and safe to re-run after every code change:
+# it rebuilds, reloads, and restarts the running pods so the new code
+# actually takes effect.
+#
+# Toggle extras (both default on):
+#   make dev-up DEV_MONITORING=false
+#   make dev-up DEV_KYVERNO=false
 DEV_CLUSTER_NAME ?= declarative-conversion-dev
 DEV_NAMESPACE ?= declarative-conversion-system
 DEV_RELEASE_NAME ?= declarative-conversion-operator
@@ -181,13 +185,20 @@ DEV_IMG_TAG ?= dev
 DEV_MANAGER_IMG ?= ghcr.io/terasky-oss/declarative-conversion-operator:$(DEV_IMG_TAG)
 DEV_WEBHOOK_IMG ?= ghcr.io/terasky-oss/declarative-conversion-webhook-server:$(DEV_IMG_TAG)
 DEV_CERT_MANAGER_VERSION ?= v1.21.1
+DEV_MONITORING ?= true
 DEV_MONITORING_NAMESPACE ?= monitoring-system
 DEV_MONITORING_RELEASE ?= monitoring
 # Pin so re-runs stay reproducible; bump deliberately when upgrading the stack.
 DEV_KUBE_PROM_STACK_VERSION ?= 88.3.0
+DEV_KYVERNO ?= true
+DEV_KYVERNO_NAMESPACE ?= kyverno
+DEV_KYVERNO_RELEASE ?= kyverno
+# Chart 3.8.x ships Kyverno 1.18. MutatingPolicy mutateExisting is a no-op
+# until #16255; generated migrate policies rely on admission instead.
+DEV_KYVERNO_CHART_VERSION ?= 3.8.1
 
 .PHONY: dev-up
-dev-up: ## Stand up (or refresh) a full local dev environment: kind + cert-manager + Crossplane + kube-prometheus-stack (anonymous Grafana) + this operator with metrics/dashboards enabled. Safe to re-run after code changes. Requires docker, kind, kubectl, and helm on PATH.
+dev-up: ## Stand up (or refresh) a local kind env: cert-manager + Crossplane + this operator. DEV_MONITORING=true (default) adds kube-prometheus-stack; DEV_KYVERNO=true (default) adds Kyverno. Safe to re-run after code changes. Requires docker, kind, kubectl, and helm on PATH.
 	@command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
 	@command -v kind >/dev/null 2>&1 || { echo "kind is required (https://kind.sigs.k8s.io)" >&2; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required" >&2; exit 1; }
@@ -218,24 +229,51 @@ dev-up: ## Stand up (or refresh) a full local dev environment: kind + cert-manag
 	helm upgrade --install crossplane crossplane-stable/crossplane \
 		--namespace crossplane-system --create-namespace \
 		--wait --timeout 180s
-	@echo "==> Installing kube-prometheus-stack (Prometheus + Grafana, anonymous auth)"
-	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
-	helm repo update prometheus-community
-	helm upgrade --install $(DEV_MONITORING_RELEASE) prometheus-community/kube-prometheus-stack \
-		--namespace $(DEV_MONITORING_NAMESPACE) --create-namespace \
-		--version $(DEV_KUBE_PROM_STACK_VERSION) \
-		--values hack/dev-monitoring-values.yaml \
-		--wait --timeout 600s
-	@echo "==> Installing/upgrading $(DEV_RELEASE_NAME) with the locally-built dev images + monitoring"
-	helm upgrade --install $(DEV_RELEASE_NAME) charts/declarative-conversion-operator \
-		--namespace $(DEV_NAMESPACE) --create-namespace \
-		--set image.manager.tag=$(DEV_IMG_TAG) \
-		--set image.webhookServer.tag=$(DEV_IMG_TAG) \
-		--set image.pullPolicy=Never \
-		--set metrics.serviceMonitor.enabled=true \
-		--set metrics.prometheusRule.enabled=true \
-		--set dashboards.enabled=true \
-		--wait --timeout 180s
+	@if [ "$(DEV_MONITORING)" = "true" ]; then \
+		echo "==> Installing kube-prometheus-stack (Prometheus + Grafana, anonymous auth)"; \
+		helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update; \
+		helm repo update prometheus-community; \
+		helm upgrade --install $(DEV_MONITORING_RELEASE) prometheus-community/kube-prometheus-stack \
+			--namespace $(DEV_MONITORING_NAMESPACE) --create-namespace \
+			--version $(DEV_KUBE_PROM_STACK_VERSION) \
+			--values hack/dev-monitoring-values.yaml \
+			--wait --timeout 600s; \
+	else \
+		echo "==> Skipping kube-prometheus-stack (DEV_MONITORING=$(DEV_MONITORING))"; \
+	fi
+	@if [ "$(DEV_KYVERNO)" = "true" ]; then \
+		echo "==> Installing Kyverno $(DEV_KYVERNO_CHART_VERSION) (MutatingPolicy)"; \
+		helm repo add kyverno https://kyverno.github.io/kyverno/ --force-update; \
+		helm repo update kyverno; \
+		helm upgrade --install $(DEV_KYVERNO_RELEASE) kyverno/kyverno \
+			--namespace $(DEV_KYVERNO_NAMESPACE) --create-namespace \
+			--version $(DEV_KYVERNO_CHART_VERSION) \
+			--set crds.groups.policies.mutatingpolicies=true \
+			--wait --timeout 300s; \
+		kubectl -n $(DEV_KYVERNO_NAMESPACE) wait --for=condition=Available --timeout=180s deployment --all; \
+		kubectl wait --for=condition=Established --timeout=60s crd/mutatingpolicies.policies.kyverno.io; \
+	else \
+		echo "==> Skipping Kyverno (DEV_KYVERNO=$(DEV_KYVERNO))"; \
+	fi
+	@echo "==> Installing/upgrading $(DEV_RELEASE_NAME) with the locally-built dev images"
+	@if [ "$(DEV_MONITORING)" = "true" ]; then \
+		helm upgrade --install $(DEV_RELEASE_NAME) charts/declarative-conversion-operator \
+			--namespace $(DEV_NAMESPACE) --create-namespace \
+			--set image.manager.tag=$(DEV_IMG_TAG) \
+			--set image.webhookServer.tag=$(DEV_IMG_TAG) \
+			--set image.pullPolicy=Never \
+			--set metrics.serviceMonitor.enabled=true \
+			--set metrics.prometheusRule.enabled=true \
+			--set dashboards.enabled=true \
+			--wait --timeout 180s; \
+	else \
+		helm upgrade --install $(DEV_RELEASE_NAME) charts/declarative-conversion-operator \
+			--namespace $(DEV_NAMESPACE) --create-namespace \
+			--set image.manager.tag=$(DEV_IMG_TAG) \
+			--set image.webhookServer.tag=$(DEV_IMG_TAG) \
+			--set image.pullPolicy=Never \
+			--wait --timeout 180s; \
+	fi
 	@echo "==> Restarting pods so the freshly-loaded image content takes effect (tag is fixed across re-runs)"
 	kubectl -n $(DEV_NAMESPACE) rollout restart deployment/$(DEV_RELEASE_NAME)-manager
 	kubectl -n $(DEV_NAMESPACE) rollout status deployment/$(DEV_RELEASE_NAME)-manager --timeout=120s
@@ -247,12 +285,21 @@ dev-up: ## Stand up (or refresh) a full local dev environment: kind + cert-manag
 	@echo "==> Local dev environment ready."
 	@echo "    kubectl context: kind-$(DEV_CLUSTER_NAME)"
 	@echo "    Operator ns:     $(DEV_NAMESPACE)"
-	@echo "    Monitoring ns:   $(DEV_MONITORING_NAMESPACE)"
-	@echo "    Grafana (no login):"
-	@echo "      kubectl -n $(DEV_MONITORING_NAMESPACE) port-forward svc/$(DEV_MONITORING_RELEASE)-grafana 3000:80"
-	@echo "      open http://localhost:3000  (anonymous Admin; dashboards under search)"
-	@echo "    Prometheus:"
-	@echo "      kubectl -n $(DEV_MONITORING_NAMESPACE) port-forward svc/$(DEV_MONITORING_RELEASE)-kube-prometheus-prometheus 9090:9090"
+	@if [ "$(DEV_MONITORING)" = "true" ]; then \
+		echo "    Monitoring ns:   $(DEV_MONITORING_NAMESPACE)"; \
+		echo "    Grafana (no login):"; \
+		echo "      kubectl -n $(DEV_MONITORING_NAMESPACE) port-forward svc/$(DEV_MONITORING_RELEASE)-grafana 3000:80"; \
+		echo "      open http://localhost:3000  (anonymous Admin; dashboards under search)"; \
+		echo "    Prometheus:"; \
+		echo "      kubectl -n $(DEV_MONITORING_NAMESPACE) port-forward svc/$(DEV_MONITORING_RELEASE)-kube-prometheus-prometheus 9090:9090"; \
+	else \
+		echo "    Monitoring:      skipped (DEV_MONITORING=$(DEV_MONITORING))"; \
+	fi
+	@if [ "$(DEV_KYVERNO)" = "true" ]; then \
+		echo "    Kyverno ns:      $(DEV_KYVERNO_NAMESPACE)"; \
+	else \
+		echo "    Kyverno:         skipped (DEV_KYVERNO=$(DEV_KYVERNO))"; \
+	fi
 	@echo "    Made a code change? Just run 'make dev-up' again to rebuild, reload, and restart."
 	@echo "    Tear it down with: make dev-down"
 

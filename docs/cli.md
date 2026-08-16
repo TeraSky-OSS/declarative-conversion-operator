@@ -11,11 +11,12 @@ convctl diff          --config config.yaml --live [-o json|table]
 convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
 convctl suggest       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
 convctl rehub         --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --to v3 [-o yaml|json]
+convctl generate kyverno --xrd xrd.yaml --to v2 [--from v1] [-o yaml|json]
 convctl patch-preview --config config.yaml --service-name NAME --service-namespace NS --ca-bundle B64 [flags]
 convctl migrate-storage (--xrd NAME | --crd NAME) [flags]
 ```
 
-Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`).
+Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch.
 
 ## `convctl validate`
 
@@ -52,7 +53,11 @@ convctl analyze --crd crd.yaml --config crdconversionconfig.yaml
 
 ## `convctl test`
 
-Runs every sample object through every served-version conversion path (round-tripping through the hub) and reports timing, fields converted, rules exercised, and — for any detected loss — exactly which field diverged between which versions and whether it was acknowledged.
+Runs every sample object through every conversion path the config declares — hub plus each compiled spoke, among served versions (round-tripping through the hub) — and reports timing, fields converted, rules exercised, and — for any detected loss — exactly which field diverged between which versions and whether it was acknowledged.
+
+A served version that is not a spoke is not a conversion path. Drop the spoke from the config before setting `served: false`; `convctl test` still runs in that window. A sample whose own `apiVersion` is that dropped version is an **ERROR** — move the object in git to a remaining spoke or the hub first.
+
+`--samples` may be a GitOps `apps/` tree. Documents that are not the XRD/CRD's group and kind (for example `kustomization.yaml`) are ignored.
 
 ```console
 convctl test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./samples/
@@ -274,6 +279,63 @@ convctl rehub --config examples/crossplane-xr-multiversion/04-add-v3/xrdconversi
 See [Changing the hub version](configuration/xrdconversionconfig.md#changing-the-hub-version)
 for the in-cluster promote sequence (`referenceable` / Composition retarget).
 
+## `convctl generate kyverno`
+
+Drafts two [`policies.kyverno.io/v1` MutatingPolicies](https://kyverno.io/docs/policy-types/mutating-policy/)
+that retarget existing Crossplane XRs onto a new hub Composition. XRD-only
+(native CRDs have no Composition). Prints YAML/JSON to stdout and **never
+applies** it.
+
+```console
+convctl generate kyverno --xrd xrd.yaml --to v2
+convctl generate kyverno --xrd xrd.yaml --from v1 --to v2
+```
+
+| Flag | Description |
+|---|---|
+| `-x, --xrd` | Path to an XRD YAML file. **Required.** Group + kind scope the Composition labeler; group, plural, and every served version fill the migrate policy's `matchConstraints`. |
+| `--to` | Target `xrd-api-version` label. Must be a version on the XRD. **Required.** |
+| `--from` | Optional canary: only migrate XRs whose selector is missing or equals this version. Without `--from`, anything not already labeled `--to` is migrated. |
+| `--label-key` | Label key (default `xrd-api-version`). |
+| `--composition-policy-name` | Name of the Composition labeler (default `label-compositions-<plural>`). |
+| `--migrate-policy-name` | Name of the XR migrate policy (default `set-composition-version-selector-<plural>`). Same object on every hub flip — update `--from` / `--to`, do not create a new policy. |
+| `-o, --output` | `yaml` (default, multi-doc) or `json`. |
+
+**Document 1 — per-XRD Composition labeler.** Admission writes
+`xrd-api-version` from the version element of `compositeTypeRef.apiVersion`
+(`example.org/v2` → `v2`). **Do not** put that label on Composition YAML in
+git — Kyverno is the source of truth. XRD targeting (kind + group) lives in
+the mutation CEL; Kyverno 1.18 silently ignores `matchConditions` that read
+`object.spec`. Not a cluster-wide catch-all: XRDs that never evolve their API
+do not need this policy. Admission and `mutateExisting` are on.
+
+**Document 2 — standing XR migrate policy** (`set-composition-version-selector-<plural>`).
+One object per XRD. Re-generate with the new `--from` / `--to` on a hub flip
+and apply the same `metadata.name` — do not create `migrate-*-to-vN`.
+Admission and `mutateExisting` are on. Removes `spec.crossplane.compositionRef`
+and `compositionRevisionRef`, then sets `compositionSelector.matchLabels` to
+`--to`. Extra admin selector keys are left intact. Crossplane then re-selects;
+`Automatic` writes a new revision pin. That write also persists the XR at the
+new `referenceable` version. Admission is the path that works on Kyverno
+1.18.1 — `mutateExisting` alone never creates UpdateRequests
+([kyverno#16255](https://github.com/kyverno/kyverno/pull/16255)), so
+already-existing XRs need a write (re-apply or annotate) after the policy
+lands. UPDATE matches on `oldObject` so a later pin write does not rematch.
+
+Crossplane pins `compositionRef` at create time and ignores the selector until
+that pin is removed. `compositionUpdatePolicy: Automatic` only walks revisions
+of the already-pinned Composition. **Do not** use XRD `enforcedCompositionRef`
+to chase hub versions — that field is immutable.
+
+If more than one Composition matches the selector after the pin is cleared,
+Crossplane picks at random. A version-only selector is safe only when there is
+one Composition per hub version.
+
+A worked apply order lives in
+[`examples/crossplane-xr-multiversion/gitops/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops).
+Run it with the main demo: `./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops`
+(add `--gitops-engine flux|argo` for a live GitHub + in-cluster runner walkthrough).
+
 ## `convctl patch-preview`
 
 Prints the exact server-side-apply object the operator would send to the target XRD or CRD to point its `spec.conversion` at a webhook server. Useful for reviewing a change before granting the operator write access to a production XRD, and for understanding what "the operator patches your XRD" actually means in concrete YAML.
@@ -332,7 +394,7 @@ After you promote a new storage version (`storage: true` on a CRD, `referenceabl
 
 **XRD vs CRD — this command is not equally urgent.**
 
-- **XRDs.** Crossplane will not let a Composition's `compositeTypeRef` change, so promoting the hub means a *new* Composition and a `compositionRef` patch on every existing XR. That write persists the object at the new `referenceable` version, so etcd is usually already rewritten by the time you deprecate an old spoke. What still blocks dropping the version block is the generated CRD's `status.storedVersions`, which never shrinks on its own. `--prune-stored-versions` is the step that matters; the empty SSA pass is belt-and-suspenders (XRs you forgot to retarget, or anything that was never patched).
+- **XRDs.** Crossplane will not let a Composition's `compositeTypeRef` change, so promoting the hub means a *new* Composition and a write of every existing XR (a `compositionRef` name patch, or the GitOps [`generate kyverno`](#convctl-generate-kyverno) migrate policy that strips the pin and re-selects). That write persists the object at the new `referenceable` version, so etcd is usually already rewritten by the time you deprecate an old spoke. What still blocks dropping the version block is the generated CRD's `status.storedVersions`, which never shrinks on its own. `--prune-stored-versions` is the step that matters; the empty SSA pass is belt-and-suspenders (XRs you forgot to retarget, or anything that was never patched).
 - **CRDs.** Flipping `storage: true` does **not** write existing objects. There is no Crossplane-style retarget. Empty SSA is the actual etcd rewrite, and skipping it leaves CRs encoded at the old version indefinitely. This is the critical path.
 
 `migrate-storage` does the rewrite with an **empty server-side-apply patch** (`apiVersion`, `kind`, `metadata.name`, and `metadata.namespace` only) under a dedicated field manager, with force-conflicts. The apply claims only identity fields; the write still goes through the persist path, so etcd is re-encoded at the current storage version. Conversion webhooks — including this operator — run as they would on any write.

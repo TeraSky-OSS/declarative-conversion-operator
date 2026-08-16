@@ -75,10 +75,16 @@ func (o TestOptions) effectiveConcurrency(samples int) int {
 
 // RunTest loads the config, its target XRD or CRD, and samples, validates
 // the configuration exactly like the controller and admission webhook
-// would, then tests every sample across every served-version pair
+// would, then tests every sample across every configured-version pair
 // (spoke_i -> hub -> spoke_j, including the hub itself as source or
 // target), reporting timing, pass/loss/fail, rules exercised, and
 // precisely which fields diverged where.
+//
+// Targets are the hub plus every spoke the config compiled a plan for,
+// intersected with served versions. A served version the config does not
+// claim is not a conversion path — dropping a spoke before setting
+// served:false is the required order, and test must still run in that
+// window. --version-pair further restricts that set.
 //
 // Which of XRDPath/CRDPath applies is determined by the config's own
 // kind, not by which field the caller happened to set.
@@ -133,8 +139,16 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		if err != nil {
 			return nil, err
 		}
+		group, kind, gvkErr := xrdGroupKind(xrd)
+		if gvkErr != nil {
+			return nil, gvkErr
+		}
+		samples, err = filterSamplesByGVK(samples, group, kind)
+		if err != nil {
+			return nil, err
+		}
 		if len(samples) == 0 {
-			return nil, fmt.Errorf("no sample files found under %s", opts.SamplesDir)
+			return nil, fmt.Errorf("no %s.%s objects under %s", kind, group, opts.SamplesDir)
 		}
 	}
 
@@ -184,8 +198,12 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 		if err != nil {
 			return nil, err
 		}
+		samples, err = filterSamplesByGVK(samples, crd.Spec.Group, crd.Spec.Names.Kind)
+		if err != nil {
+			return nil, err
+		}
 		if len(samples) == 0 {
-			return nil, fmt.Errorf("no sample files found under %s", opts.SamplesDir)
+			return nil, fmt.Errorf("no %s.%s objects under %s", crd.Spec.Names.Kind, crd.Spec.Group, opts.SamplesDir)
 		}
 	}
 
@@ -204,14 +222,15 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 }
 
 // runTestCommon is runTestXRD/runTestCRD's shared tail: exercising every
-// sample across every served-version pair is entirely independent of
+// sample across every configured-version pair is entirely independent of
 // whether the target is an XRD or a native CRD, once a Router and an
 // AnalyzeReport already exist.
 func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, start time.Time) (*Report, error) {
 	served := servedVersions(versions)
-	targets := served
+	configured := configuredVersions(hubVersion, report, served)
+	targets := configured
 	if len(opts.RestrictVersionPairs) > 0 {
-		targets = restrictTargets(served, opts.RestrictVersionPairs)
+		targets = restrictTargets(targets, opts.RestrictVersionPairs)
 	}
 
 	lossyPaths := buildLossyPathIndex(report)
@@ -247,7 +266,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], targets)
+				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets)
 
 				mu.Lock()
 				results[i] = sr
@@ -301,10 +320,25 @@ type sampleCounts struct {
 // a sample stay sequential: they're cheap next to the coordination cost,
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
-func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, targets []string) (SampleResult, sampleCounts, map[string]int) {
+func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string) (SampleResult, sampleCounts, map[string]int) {
 	sr := SampleResult{File: s.File, AssertedVersion: s.Version}
 	var counts sampleCounts
 	usage := map[string]int{}
+	if !containsString(configured, s.Version) {
+		pr := PathResult{From: s.Version, To: s.Version, Result: "error"}
+		pr.Issues = append(pr.Issues, Issue{
+			Field:  "(sample)",
+			From:   s.Version,
+			To:     s.Version,
+			Type:   "error",
+			Detail: fmt.Sprintf("sample is %s but the conversion config has no compiled plan for that version — move the object to a remaining spoke or the hub before dropping this version", s.Version),
+			Sample: s.File,
+		})
+		sr.Paths = append(sr.Paths, pr)
+		counts.pathsTested++
+		counts.errors++
+		return sr, counts, usage
+	}
 	for _, target := range targets {
 		if opts.SkipIdentity && target == s.Version {
 			continue
@@ -328,6 +362,32 @@ func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, l
 
 func ruleID(spokeVersion string, rr engine.RuleResult) string {
 	return fmt.Sprintf("%s:rule[%d]:%s", spokeVersion, rr.Index, rr.Strategy)
+}
+
+// configuredVersions is hub + every spoke with a compiled plan, keeping
+// the XRD/CRD served-version order. Served versions the config does not
+// declare are omitted — the same reason validate allows a still-served
+// version that is no longer a spoke.
+func configuredVersions(hub string, report engine.AnalyzeReport, served []string) []string {
+	want := map[string]bool{}
+	if hub != "" {
+		want[hub] = true
+	}
+	for _, sr := range report.SpokeReports {
+		if sr.CompiledPlan != nil {
+			want[sr.Version] = true
+		}
+	}
+	var out []string
+	for _, v := range served {
+		if want[v] {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return served
+	}
+	return out
 }
 
 func restrictTargets(served []string, pairs []string) []string {

@@ -44,8 +44,16 @@ needs [`pv`](https://www.ivarch.com/programs/pv.shtml); without it the script
 passes `-d` for you.
 
 ```console
-# Interactive (Enter to type, Enter to run)
+# Interactive (Enter to type, Enter to run). Default --demo-mode patches.
 ./examples/crossplane-xr-multiversion/demo.sh
+
+# Same lifecycle; retarget via generated Kyverno policies (needs make dev-up)
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops
+
+# Live GitOps: GitHub PRs + in-cluster Actions runner + Flux or Argo
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops --gitops-engine flux --create-repo
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops --gitops-engine argo \
+  --github-repo "$USER/platform" --git-prefix xwidget-demo
 
 # No pauses — good for recording
 ./examples/crossplane-xr-multiversion/demo.sh -n
@@ -56,8 +64,13 @@ passes `-d` for you.
 # Auto-advance after 3s
 ./examples/crossplane-xr-multiversion/demo.sh -w 3
 
-# Wipe leftover XRs / XRD / conversion config
+# Wipe leftover XRs / XRD / conversion config (and Flux/Argo/runner if this run installed them)
 ./examples/crossplane-xr-multiversion/demo.sh --cleanup
+# Also delete the GitHub repo only if this process created it:
+./examples/crossplane-xr-multiversion/demo.sh --cleanup --delete-repo
+
+# Resume after a failure (does not wipe cluster or git)
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops --gitops-engine flux --from-stage 6
 ```
 
 The broken configs live in [`mistakes/`](mistakes/). They are never applied.
@@ -354,6 +367,39 @@ What remains: hub `v3`, spoke `v2`, Composition `xwidgets-v3.example.org`,
 native ConfigMap, no `v1` on the XRD. Deprecating `v2` later is the same
 drop-from-config, `served: false`, `migrate-storage --prune-stored-versions`,
 then drop-the-block sequence.
+
+---
+
+## GitOps: retarget without naming every XR
+
+The patches in this walkthrough (`patches/retarget-v2.json`) are the honest
+Crossplane default: `compositionRef` is pinned at create time and
+`defaultCompositionRef` does not move existing objects.
+
+[`gitops/`](gitops/) is the platform-repo shape of the same lifecycle.
+`convctl generate kyverno` emits a per-XRD Composition labeler (admission
+writes `xrd-api-version` from `compositeTypeRef`; that label is never in git)
+and a migrate policy (admission, not background-only) that strips both pins and sets
+`compositionSelector.matchLabels.xrd-api-version`. App-team YAML never names a
+Composition.
+
+Do **not** use XRD `enforcedCompositionRef` to chase hub versions — that field
+is immutable.
+
+```console
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops
+# Kyverno is installed by make dev-up (DEV_KYVERNO=true, the default)
+
+# Optional: real GitHub + Flux or Argo (see gitops/README.md)
+./examples/crossplane-xr-multiversion/demo.sh --demo-mode gitops --gitops-engine flux --create-repo
+```
+
+`--gitops-engine` defaults to `simulate` (direct apply of the `gitops/` tree).
+`flux` and `argo` need `gh` authenticated (`gh auth status`), plus `git`,
+`helm`, `docker`, and `kind`. They register an **in-cluster self-hosted
+Actions runner** so PR jobs can run `convctl test --live` against kind.
+GitHub-hosted Actions cannot reach kind; this demo does not use ACT.
+`convctl migrate-storage` stays a local command even with a live engine.
 
 ---
 

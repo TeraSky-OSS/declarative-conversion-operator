@@ -9,3 +9,6 @@ dist/
 *.swp
 cover.out
 site/
+examples/crossplane-xr-multiversion/gitops/.worktree/
+examples/crossplane-xr-multiversion/gitops/.demo-state
+examples/crossplane-xr-multiversion/gitops/runner/convctl

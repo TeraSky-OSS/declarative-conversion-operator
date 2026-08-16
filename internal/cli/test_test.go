@@ -17,6 +17,8 @@ limitations under the License.
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -432,5 +434,142 @@ func TestRunTest_NoSamples_IsAnError(t *testing.T) {
 	_, err := RunTest(TestOptions{XRDPath: "testdata/xrd.yaml", ConfigPath: "testdata/config.yaml", SamplesDir: dir})
 	if err == nil {
 		t.Fatalf("expected an error when the samples directory is empty")
+	}
+}
+
+// Drop the spoke from the config before setting served:false. The XRD still
+// serves the dropped version; test must exercise hub + remaining spokes only.
+func TestRunTest_DropSpokeWhileStillServed(t *testing.T) {
+	root := filepath.Join("..", "..", "examples", "crossplane-xr-multiversion")
+	rep, err := RunTest(TestOptions{
+		XRDPath:    filepath.Join(root, "05-promote-v3", "xrd.yaml"),
+		ConfigPath: filepath.Join(root, "06-deprecate-v1", "xrdconversionconfig.yaml"),
+		SamplesDir: filepath.Join(root, "06-deprecate-v1", "samples"),
+	})
+	if err != nil {
+		t.Fatalf("drop-spoke-first must be testable against the still-serving XRD: %v", err)
+	}
+	for _, s := range rep.Samples {
+		for _, p := range s.Paths {
+			if p.From == "v1" || p.To == "v1" {
+				t.Fatalf("v1 is no longer a spoke; should not test %s→%s", p.From, p.To)
+			}
+		}
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("expected 0 errors, got %d", rep.Summary.Errors)
+	}
+}
+
+func TestRunTest_DropSpokeLeavesV1App(t *testing.T) {
+	root := filepath.Join("..", "..", "examples", "crossplane-xr-multiversion")
+	rep, err := RunTest(TestOptions{
+		XRDPath:    filepath.Join(root, "05-promote-v3", "xrd.yaml"),
+		ConfigPath: filepath.Join(root, "06-deprecate-v1", "xrdconversionconfig.yaml"),
+		SamplesDir: filepath.Join(root, "gitops", "apps"),
+	})
+	if err != nil {
+		t.Fatalf("apps/ is a valid --samples tree: %v", err)
+	}
+	if rep.Summary.Errors == 0 {
+		t.Fatal("expected ERROR: gitops/apps/widget.yaml is still v1 after the spoke was dropped")
+	}
+	found := false
+	for _, s := range rep.Samples {
+		if s.AssertedVersion != "v1" {
+			continue
+		}
+		found = true
+		if len(s.Paths) == 0 || s.Paths[0].Result != "error" {
+			t.Fatalf("v1 app XR should error, got %+v", s.Paths)
+		}
+	}
+	if !found {
+		t.Fatal("expected to test the v1 demo XR from gitops/apps")
+	}
+}
+
+func TestRunTest_VersionPairDoesNotErrorConfiguredSample(t *testing.T) {
+	rep, err := RunTest(TestOptions{
+		XRDPath:              "testdata/xrd.yaml",
+		ConfigPath:           "testdata/config.yaml",
+		SamplesDir:           "testdata/samples",
+		RestrictVersionPairs: []string{"v2"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("--version-pair must not treat a still-configured sample version as missing a plan, got %d errors", rep.Summary.Errors)
+	}
+	var sawV1ToV2 bool
+	for _, s := range rep.Samples {
+		for _, p := range s.Paths {
+			if p.To != "v2" {
+				t.Fatalf("--version-pair v2 should only test destinations in {v2}, got %s→%s", p.From, p.To)
+			}
+			if s.AssertedVersion == "v1" && p.To == "v2" {
+				sawV1ToV2 = true
+			}
+		}
+	}
+	if !sawV1ToV2 {
+		t.Fatal("expected the v1 sample to still convert to the restricted v2 target")
+	}
+}
+
+func TestFilterSamplesByGVK_IgnoresUnrelatedAndRejectsKindWithoutAPIVersion(t *testing.T) {
+	dir := t.TempDir()
+	unrelated := "replicaCount: 2\n"
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), []byte(unrelated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	samples, err := LoadSamples(dir)
+	if err != nil {
+		t.Fatalf("Helm values without apiVersion must be loadable: %v", err)
+	}
+	got, err := filterSamplesByGVK(samples, "example.org", "Foo")
+	if err != nil {
+		t.Fatalf("unrelated YAML should be ignored: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no Foo samples, got %+v", got)
+	}
+
+	bad := "kind: Foo\nspec: {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "orphan.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	samples, err = LoadSamples(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := filterSamplesByGVK(samples, "example.org", "Foo"); err == nil {
+		t.Fatal("expected error for a Foo object with no apiVersion")
+	}
+}
+
+func TestRunTest_DropSpokeWithV2App(t *testing.T) {
+	root := filepath.Join("..", "..", "examples", "crossplane-xr-multiversion")
+	rep, err := RunTest(TestOptions{
+		XRDPath:    filepath.Join(root, "05-promote-v3", "xrd.yaml"),
+		ConfigPath: filepath.Join(root, "06-deprecate-v1", "xrdconversionconfig.yaml"),
+		SamplesDir: filepath.Join(root, "06-deprecate-v1"),
+	})
+	if err != nil {
+		t.Fatalf("06-deprecate-v1/widget.yaml + samples should test: %v", err)
+	}
+	if rep.Summary.Errors != 0 {
+		t.Fatalf("v2 app + v2/v3 fixtures must pass after dropping the v1 spoke, got %d errors", rep.Summary.Errors)
+	}
+	for _, s := range rep.Samples {
+		if s.AssertedVersion == "v1" {
+			t.Fatalf("should not pick up non-XR YAML as a v1 sample: %+v", s)
+		}
+		for _, p := range s.Paths {
+			if p.From == "v1" || p.To == "v1" {
+				t.Fatalf("v1 is no longer a spoke; should not test %s→%s", p.From, p.To)
+			}
+		}
 	}
 }

@@ -156,9 +156,6 @@ func LoadSamples(dir string) ([]Sample, error) {
 		}
 		for i, doc := range docs {
 			apiVersion, _ := doc["apiVersion"].(string)
-			if apiVersion == "" {
-				return fmt.Errorf("%s (document %d): missing apiVersion; samples must declare which version they represent", rel, i)
-			}
 			samples = append(samples, Sample{File: rel, Index: i, Object: doc, Version: versionFromAPIVersion(apiVersion)})
 		}
 		return nil
@@ -167,6 +164,37 @@ func LoadSamples(dir string) ([]Sample, error) {
 		return nil, err
 	}
 	return samples, nil
+}
+
+// filterSamplesByGVK keeps objects of the XRD/CRD's group and kind so a
+// GitOps apps/ tree (XRs plus kustomization.yaml or Helm values) can be
+// passed to --samples. Other documents are ignored, not errors. A document
+// of the target kind with no apiVersion is an error — that object cannot
+// declare which version it represents.
+func filterSamplesByGVK(samples []Sample, group, kind string) ([]Sample, error) {
+	var out []Sample
+	for _, s := range samples {
+		k, _ := s.Object["kind"].(string)
+		if k != kind {
+			continue
+		}
+		api, _ := s.Object["apiVersion"].(string)
+		if api == "" {
+			return nil, fmt.Errorf("%s: %s object missing apiVersion; samples must declare which version they represent", s.File, kind)
+		}
+		if apiGroup(api) != group {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func apiGroup(apiVersion string) string {
+	if i := strings.LastIndex(apiVersion, "/"); i >= 0 {
+		return apiVersion[:i]
+	}
+	return ""
 }
 
 func decodeAllDocuments(path string) ([]map[string]any, error) {

@@ -1,0 +1,39 @@
+# Extra verbs Kyverno's controllers need so MutatingPolicy is Ready and
+# mutateExisting can label Compositions and retarget XWidgets.
+#
+# RBACPermissionsGranted is a *reports* check ("Policy is not ready for
+# reporting"). Admission + background aggregation alone leaves the migrate
+# policy Ready=false even when those SAs can patch.
+# https://kyverno.io/docs/installation/customization/
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-xwidgets-view
+  labels:
+    app.kubernetes.io/part-of: declarative-conversion-operator
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+rules:
+  - apiGroups: [example.org]
+    resources: [xwidgets]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.crossplane.io]
+    resources: [compositions]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-xwidgets-mutate
+  labels:
+    app.kubernetes.io/part-of: declarative-conversion-operator
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+rules:
+  - apiGroups: [example.org]
+    resources: [xwidgets]
+    verbs: [patch, update]
+  - apiGroups: [apiextensions.crossplane.io]
+    resources: [compositions]
+    verbs: [patch, update]
