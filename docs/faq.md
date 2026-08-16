@@ -72,6 +72,16 @@ Yes — `convctl test --live` fetches every existing instance of the target type
 
 ## Operations and scaling
 
+### Can one webhook-server serve conversions for resources in another cluster?
+
+No. Each cluster runs its own operator install. Cross-cluster webhook
+failover (cluster A's pods converting objects for cluster B's apiserver)
+is out of scope — the runtime has no shared state and no leader election
+to make that safe. Use the same config YAML in each cluster and
+`convctl test --live` / `diff --live` per kubecontext to keep them
+consistent. See
+[Architecture: One cluster, one install](architecture.md#one-cluster-one-install).
+
 ### Can I run more than one `ConversionWebhookServer`?
 
 Yes — it's designed for this. Each instance is cluster-scoped, deployable, and independently scalable (Deployment, Service, cert-manager Certificate, optional HPA/PodDisruptionBudget). The chart installs exactly one, marked `default: true`; you can create more for tenancy or scale-out and assign specific configs to them via `webhookServerRef`. Every replica of every instance is symmetric and self-sufficient — no leader election, no shared state — so horizontal scaling is just adding pods.

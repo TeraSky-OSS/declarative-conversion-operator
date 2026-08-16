@@ -35,7 +35,7 @@ if one of them matters to you sooner.
 
 - **Strategies stay additive.** A new strategy is a `*Params` type, an `Op`, a compile resolver, webhook validation, a CLI fixture, and a docs page — see [Adding a strategy](contributing/adding-a-strategy.md).
 - **Observability is chart-optional.** ServiceMonitor / PrometheusRule / Grafana dashboards ship with the chart and stay off unless enabled.
-- **No cross-cluster coordination.** Every operator and webhook-server replica assumes a single cluster ([Limitations](limitations.md)).
+- **No cross-cluster coordination.** Every operator and webhook-server replica assumes a single cluster ([Architecture: One cluster, one install](architecture.md#one-cluster-one-install), [Limitations](limitations.md)).
 
 ---
 

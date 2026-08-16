@@ -53,6 +53,28 @@ Each `ConversionWebhookServer` replica is symmetric and self-sufficient — ther
 - **Readiness** gates on both informer cache sync *and* a completed first reconcile pass over every currently-existing config, closing the classic "added to Service endpoints before the registry is populated" gap.
 - A registry miss (a `ConversionReview` for an XRD this replica has no compiled plan for) fails closed with a clear `503`, rather than guessing.
 
+## One cluster, one install
+
+Every operator replica and every `ConversionWebhookServer` replica is
+self-sufficient **inside a single Kubernetes cluster**. There is no leader
+election on the webhook-server path, no shared conversion state, and no
+network hop to another cluster on a `ConversionReview`. That is a design
+constraint, not a current gap.
+
+**Cross-cluster webhook failover is out of scope.** A webhook-server in
+cluster A must not serve conversions for a resource whose apiserver lives
+in cluster B. Each cluster runs its own fully independent install
+(chart + `ConversionWebhookServer` + configs). Fleet consistency is a
+**CI problem**, not an operator feature: run the same config through
+[`convctl test --live`](cli.md#pre-upgrade-checks-testing-against-everything-that-already-exists)
+and [`convctl diff --live`](cli.md#convctl-diff) against every kubecontext
+before merge.
+
+Asking the operator to fail over conversion state across clusters would
+need a redesign (shared registry, cross-cluster identity, a different
+availability model). Until that exists, do not point `spec.conversion`
+at a Service in another cluster.
+
 ## Safety by construction: the hazards this design closes
 
 | Scenario | Mitigation |
