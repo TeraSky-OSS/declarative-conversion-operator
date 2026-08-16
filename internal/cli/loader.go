@@ -169,6 +169,32 @@ func LoadSamples(dir string) ([]Sample, error) {
 	return samples, nil
 }
 
+// filterSamplesByGVK keeps objects of the XRD/CRD's group and kind so a
+// GitOps apps/ tree (XRs plus kustomization.yaml) can be passed to
+// --samples. Other documents are ignored, not errors.
+func filterSamplesByGVK(samples []Sample, group, kind string) []Sample {
+	var out []Sample
+	for _, s := range samples {
+		k, _ := s.Object["kind"].(string)
+		if k != kind {
+			continue
+		}
+		api, _ := s.Object["apiVersion"].(string)
+		if apiGroup(api) != group {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func apiGroup(apiVersion string) string {
+	if i := strings.LastIndex(apiVersion, "/"); i >= 0 {
+		return apiVersion[:i]
+	}
+	return ""
+}
+
 func decodeAllDocuments(path string) ([]map[string]any, error) {
 	f, err := os.Open(path)
 	if err != nil {

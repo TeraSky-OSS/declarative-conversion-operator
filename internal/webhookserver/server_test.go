@@ -100,6 +100,45 @@ func TestHandleConvert_Success(t *testing.T) {
 	}
 }
 
+func TestHandleConvert_PartialObjectStillHasMetadata(t *testing.T) {
+	hub := "v3"
+	spoke := "v2"
+	plan := &engine.Plan{
+		HubVersion: hub, SpokeVersion: spoke,
+		HubToSpoke: []engine.Op{}, SpokeToHub: []engine.Op{},
+	}
+	registry := NewRegistry()
+	registry.Set("xwidgets.example.org", &CompiledEntry{
+		Router: &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{spoke: plan}},
+	})
+	s := &Server{Registry: registry, Metrics: newTestMetrics()}
+
+	// Flux SSA prune sends a field-set fragment — often no metadata.
+	obj := map[string]any{"apiVersion": "example.org/v2", "kind": "XWidget", "spec": map[string]any{"widgetName": "demo"}}
+	raw, _ := json.Marshal(obj)
+	review := extv1.ConversionReview{Request: &extv1.ConversionRequest{
+		UID: "ssa", DesiredAPIVersion: "example.org/v3",
+		Objects: []runtime.RawExtension{{Raw: raw}},
+	}}
+	body, _ := json.Marshal(review)
+	req := httptest.NewRequest("POST", "/convert/xwidgets.example.org", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+
+	var got extv1.ConversionReview
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Response.Result.Status != metav1.StatusSuccess {
+		t.Fatalf("expected Success, got %+v", got.Response.Result)
+	}
+	var converted map[string]any
+	_ = json.Unmarshal(got.Response.ConvertedObjects[0].Raw, &converted)
+	if converted["metadata"] == nil {
+		t.Fatalf("apiserver rejects converted objects with no metadata, got %v", converted)
+	}
+}
+
 func TestRegistry_RecordErrorPreservesRouter(t *testing.T) {
 	r := NewRegistry()
 	router := &engine.Router{Hub: "v2"}

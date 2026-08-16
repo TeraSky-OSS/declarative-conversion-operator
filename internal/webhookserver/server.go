@@ -213,6 +213,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		}
 		objSpan.End()
 		out["apiVersion"] = review.Request.DesiredAPIVersion
+		ensureConvertedMetadata(out, obj)
 		b, err := json.Marshal(out)
 		if err != nil {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf("marshaling converted object: %v", err))
@@ -268,6 +269,21 @@ func (s *Server) writeReview(w http.ResponseWriter, uid types.UID, converted []r
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ensureConvertedMetadata keeps the ConversionReview contract: the
+// apiserver treats a missing or null metadata field as
+// "invalid metadata: missing metadata in converted object". Flux SSA
+// prune converts a field-set fragment that often has no metadata.
+func ensureConvertedMetadata(out, original map[string]any) {
+	if md, ok := out["metadata"]; ok && md != nil {
+		return
+	}
+	if md, ok := original["metadata"]; ok && md != nil {
+		out["metadata"] = md
+		return
+	}
+	out["metadata"] = map[string]any{}
 }
 
 func versionOf(apiVersion string) string {

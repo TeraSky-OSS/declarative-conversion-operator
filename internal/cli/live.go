@@ -82,6 +82,18 @@ func xrdResourceInfo(xrd *unstructured.Unstructured) (group, plural string, err 
 	return group, plural, nil
 }
 
+func xrdGroupKind(xrd *unstructured.Unstructured) (group, kind string, err error) {
+	group, found, err := unstructured.NestedString(xrd.Object, "spec", "group")
+	if err != nil || !found || group == "" {
+		return "", "", fmt.Errorf("xrd is missing spec.group")
+	}
+	kind, found, err = unstructured.NestedString(xrd.Object, "spec", "names", "kind")
+	if err != nil || !found || kind == "" {
+		return "", "", fmt.Errorf("xrd is missing spec.names.kind")
+	}
+	return group, kind, nil
+}
+
 // FetchLiveSamples lists every existing instance of the XRD's generated
 // composite resource type at hubVersion. See fetchLiveSamplesByGVR for why
 // hubVersion specifically, and why pagination isn't capped.

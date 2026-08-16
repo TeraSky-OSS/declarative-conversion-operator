@@ -1,0 +1,11 @@
+# App-team YAML after v1 leaves the conversion plan. The object must not
+# stay at example.org/v1 — convctl test against apps/ fails when a sample's
+# version has no compiled plan. v2 is still a served spoke.
+apiVersion: example.org/v2
+kind: XWidget
+metadata:
+  name: demo
+  namespace: default
+spec:
+  widgetName: demo-widget
+  capacity: Large

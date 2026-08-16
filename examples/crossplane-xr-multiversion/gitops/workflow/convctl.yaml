@@ -1,0 +1,117 @@
+# Seeded into the demo GitHub repo at .github/workflows/convctl.yaml.
+# Runs on the in-cluster self-hosted runner (label xwidget-demo) so
+# `convctl test --live` can reach the kind apiserver. GitHub-hosted
+# runners cannot; this demo does not use ACT.
+name: convctl
+
+on:
+  pull_request:
+  push:
+    branches: [__DEFAULT_BRANCH__]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  convctl:
+    runs-on: [self-hosted, xwidget-demo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add convctl to PATH
+        run: echo /opt/convctl >> "${GITHUB_PATH}"
+
+      - name: convctl validate / test
+        id: convctl
+        env:
+          CONVCTL_ROOT: __CONVCTL_ROOT__
+        run: |
+          set -euo pipefail
+          root="${CONVCTL_ROOT:-.}"
+          xrd="${root}/platform/xrd.yaml"
+          cfg="${root}/conversion/xrdconversionconfig.yaml"
+          if [[ ! -f "${cfg}" ]]; then
+            cfg="${root}/platform/xrdconversionconfig.yaml"
+          fi
+          samples="${root}/apps"
+          run_convctl() {
+            if [[ ! -f "${xrd}" ]]; then
+              echo "No XRD in this commit; skip convctl"
+              return 0
+            fi
+            if [[ ! -f "${cfg}" ]]; then
+              echo "No conversion config yet (one-version XRD); skip convctl"
+              return 0
+            fi
+            echo "=== validate ==="
+            convctl validate --config "${cfg}" --xrd "${xrd}"
+            if [[ -d "${samples}" ]]; then
+              echo
+              echo "=== test --samples (apps/ XRs of this XRD kind) ==="
+              convctl test --config "${cfg}" --xrd "${xrd}" --samples "${samples}"
+            fi
+            echo
+            echo "=== test --live ==="
+            convctl test --config "${cfg}" --xrd "${xrd}" --live
+          }
+          set +e
+          run_convctl > convctl-output.txt 2>&1
+          rc=$?
+          set -e
+          cat convctl-output.txt
+          exit "${rc}"
+
+      - name: Comment convctl output on the PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- convctl-ci -->';
+            let output = '(no convctl output)';
+            try {
+              output = fs.readFileSync('convctl-output.txt', 'utf8');
+            } catch (_) {}
+            if (output.length > 60000) {
+              output = output.slice(0, 60000) + '\n… truncated';
+            }
+            const passed = '${{ steps.convctl.outcome }}' === 'success';
+            const body = [
+              marker,
+              '## convctl',
+              '',
+              `**Result:** ${passed ? 'passed' : 'failed'}`,
+              '',
+              '<details open>',
+              '<summary>output</summary>',
+              '',
+              '```',
+              output.replace(/```/g, "'''"),
+              '```',
+              '',
+              '</details>',
+              '',
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
