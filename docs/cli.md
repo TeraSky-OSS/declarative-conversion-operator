@@ -318,8 +318,9 @@ and `compositionRevisionRef`, then sets `compositionSelector.matchLabels` to
 `Automatic` writes a new revision pin. That write also persists the XR at the
 new `referenceable` version. Admission is the path that works on Kyverno
 1.18.1 — `mutateExisting` alone never creates UpdateRequests
-([kyverno#16255](https://github.com/kyverno/kyverno/pull/16255)). UPDATE
-matches on `oldObject` so a later pin write does not rematch.
+([kyverno#16255](https://github.com/kyverno/kyverno/pull/16255)), so
+already-existing XRs need a write (re-apply or annotate) after the policy
+lands. UPDATE matches on `oldObject` so a later pin write does not rematch.
 
 Crossplane pins `compositionRef` at create time and ignores the selector until
 that pin is removed. `compositionUpdatePolicy: Automatic` only walks revisions

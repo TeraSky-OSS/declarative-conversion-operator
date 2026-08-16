@@ -100,7 +100,9 @@ delete+recreate.
 2. The per-XRD labeler (already in cluster) sets `xrd-api-version` on the new
    Composition from `compositeTypeRef`.
 3. Update the standing migrate policy (`--from` / `--to` the new hub). Same
-   `metadata.name`; Kyverno admission retargets live XRs.
+   `metadata.name`. Kyverno 1.18.1 never runs `mutateExisting`
+   ([kyverno#16255](https://github.com/kyverno/kyverno/pull/16255)), so
+   admission only sees a write — re-apply or annotate existing XRs.
 4. Crossplane re-selects. Wait `Synced` / `Ready`.
 
 [`policies/kyverno-rbac.yaml`](policies/kyverno-rbac.yaml) aggregates view

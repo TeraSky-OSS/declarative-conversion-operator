@@ -132,8 +132,13 @@ func TestHandleConvert_PartialObjectStillHasMetadata(t *testing.T) {
 	if got.Response.Result.Status != metav1.StatusSuccess {
 		t.Fatalf("expected Success, got %+v", got.Response.Result)
 	}
+	if len(got.Response.ConvertedObjects) != 1 {
+		t.Fatalf("expected exactly one converted object, got %d", len(got.Response.ConvertedObjects))
+	}
 	var converted map[string]any
-	_ = json.Unmarshal(got.Response.ConvertedObjects[0].Raw, &converted)
+	if err := json.Unmarshal(got.Response.ConvertedObjects[0].Raw, &converted); err != nil {
+		t.Fatalf("decoding converted object: %v", err)
+	}
 	if converted["metadata"] == nil {
 		t.Fatalf("apiserver rejects converted objects with no metadata, got %v", converted)
 	}

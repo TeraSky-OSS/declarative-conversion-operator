@@ -215,7 +215,7 @@ func TestConvert_AlwaysEmitsMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatalf("convert: %v", err)
 		}
-		md, ok := out["metadata"]
+		md, ok := out["metadata"].(map[string]any)
 		if !ok || md == nil {
 			t.Fatalf("SSA prune objects have no metadata; converted object must still have a metadata map, got %v", out)
 		}

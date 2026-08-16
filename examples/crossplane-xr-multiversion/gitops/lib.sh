@@ -111,8 +111,9 @@ gitops_rel_prefix() {
 # ---------------------------------------------------------------------------
 
 gitops_state_write() {
-  umask 077
-  cat > "${GITOPS_STATE_FILE}" <<EOF
+  (
+    umask 077
+    cat > "${GITOPS_STATE_FILE}" <<EOF
 CREATED_REPO=${CREATED_REPO:-0}
 GITHUB_REPO=${GITHUB_REPO:-}
 GITOPS_ENGINE=${GITOPS_ENGINE:-}
@@ -121,6 +122,7 @@ GITOPS_BASE_BRANCH=${GITOPS_BASE_BRANCH:-main}
 INSTALLED_ENGINE=${INSTALLED_ENGINE:-0}
 INSTALLED_RUNNER=${INSTALLED_RUNNER:-0}
 EOF
+  )
 }
 
 gitops_state_load() {
@@ -1020,7 +1022,7 @@ gitops_cleanup_cluster() {
     kubectl delete clusterrolebinding xwidget-demo-runner --ignore-not-found >/dev/null 2>&1 || true
   fi
   if [[ "${INSTALLED_ENGINE:-0}" -eq 1 || "${GITOPS_ENGINE:-}" == flux ]]; then
-    kubectl delete kustomization "${GITOPS_APP_NAME}" "${GITOPS_APP_NAME}-conversion" -n flux-system --ignore-not-found >/dev/null 2>&1 || true
+    kubectl delete kustomization "${GITOPS_APP_NAME}" "${GITOPS_APP_NAME}-conversion" "${GITOPS_APP_NAME}-apps" -n flux-system --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete gitrepository "${GITOPS_APP_NAME}" -n flux-system --ignore-not-found >/dev/null 2>&1 || true
     kubectl delete namespace flux-system --wait=true --timeout=180s >/dev/null 2>&1 || true
   fi
