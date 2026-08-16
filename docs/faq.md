@@ -68,9 +68,19 @@ Yes — `convctl test --live` fetches every existing instance of the target type
 
 ### Does this integrate with CI?
 
-`convctl test` supports `--output json` for scripting and `--output junit` for CI systems with JUnit test-result reporting (GitHub Actions, GitLab, Jenkins), plus `--output-file` to write the report to a specific path. Exit codes are deliberately distinct for "a test failed" (`1`) versus "the tool was used wrong" (`2`), so CI can tell the two apart.
+`convctl test` supports `--output json` for scripting and `--output junit` for CI systems with JUnit test-result reporting (GitHub Actions, GitLab, Jenkins), plus `--output-file` to write the report to a specific path. Exit codes are deliberately distinct for "a test failed" (`1`) versus "the tool was used wrong" (`2`), so CI can tell the two apart. For a fleet, `--live --contexts` / `--kubeconfig-dir` emit one aggregated JUnit document — see [Fleet CI](gitops/fleet-ci.md).
 
 ## Operations and scaling
+
+### Can one webhook-server serve conversions for resources in another cluster?
+
+No. Each cluster runs its own operator install. Cross-cluster webhook
+failover (cluster A's pods converting objects for cluster B's apiserver)
+is out of scope — the runtime has no shared state and no leader election
+to make that safe. Use the same config YAML in each cluster and
+`convctl test --live` / `diff --live` per kubecontext to keep them
+consistent ([Fleet CI](gitops/fleet-ci.md)). See
+[Architecture: One cluster, one install](architecture.md#one-cluster-one-install).
 
 ### Can I run more than one `ConversionWebhookServer`?
 

@@ -196,7 +196,7 @@ type junitMessage struct {
 // (informational, not a failure); "fail" (unacknowledged loss) and "error"
 // map to <failure>/<error> respectively, so CI systems that only surface
 // failed testcases still catch exactly what --fail-on would.
-func (r *Report) WriteJUnit(w io.Writer) error {
+func (r *Report) junitSuite() junitTestSuite {
 	suite := junitTestSuite{Name: fmt.Sprintf("%s/%s", r.Meta.ResourceKind, r.Meta.Resource)}
 	var totalTime float64
 	for _, s := range r.Samples {
@@ -223,16 +223,10 @@ func (r *Report) WriteJUnit(w io.Writer) error {
 	}
 	suite.Tests = len(suite.Cases)
 	suite.Time = fmt.Sprintf("%.6f", totalTime)
+	return suite
+}
 
-	root := junitTestSuites{
-		Name:     fmt.Sprintf("%s conversion test: %s", r.Meta.ResourceKind, r.Meta.Resource),
-		Tests:    suite.Tests,
-		Failures: suite.Failures,
-		Errors:   suite.Errors,
-		Time:     suite.Time,
-		Suites:   []junitTestSuite{suite},
-	}
-
+func writeJUnitSuites(w io.Writer, root junitTestSuites) error {
 	if _, err := io.WriteString(w, xml.Header); err != nil {
 		return err
 	}
@@ -243,6 +237,19 @@ func (r *Report) WriteJUnit(w io.Writer) error {
 	}
 	_, err := io.WriteString(w, "\n")
 	return err
+}
+
+func (r *Report) WriteJUnit(w io.Writer) error {
+	suite := r.junitSuite()
+	root := junitTestSuites{
+		Name:     fmt.Sprintf("%s conversion test: %s", r.Meta.ResourceKind, r.Meta.Resource),
+		Tests:    suite.Tests,
+		Failures: suite.Failures,
+		Errors:   suite.Errors,
+		Time:     suite.Time,
+		Suites:   []junitTestSuite{suite},
+	}
+	return writeJUnitSuites(w, root)
 }
 
 func issuesText(issues []Issue) string {

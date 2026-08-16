@@ -31,7 +31,8 @@ addition.
 
 `convctl test --live` is the one that matters most before a change lands: your
 fixtures are what you thought of, and the cluster is what people actually
-created.
+created. For more than one cluster, use the [fleet CI](../gitops/fleet-ci.md)
+loop or matrix — do not point one webhook-server at another cluster.
 
 Then apply and watch it through:
 

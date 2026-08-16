@@ -87,6 +87,8 @@ nav:
       - HA checklist: operations/ha-checklist.md
       - Capacity planning: operations/capacity.md
       - HPA on conversion QPS: operations/hpa-custom-metrics.md
+      - Fleet CI (many kubecontexts): gitops/fleet-ci.md
+      - GitOps operator sync (Flux/Argo): gitops/operator-sync.md
   - CLI Reference: cli.md
   - Strategy Reference:
       - strategies/index.md

@@ -5,7 +5,8 @@ conversion config, and `samples/` — everything `convctl` needs offline.
 [`crossplane-xr-multiversion/`](crossplane-xr-multiversion/) is a **staged**
 walkthrough (XRD + Composition that writes a ConfigMap) rather than a single
 end-state snapshot. [`demo.sh`](crossplane-xr-multiversion/demo.sh) runs the
-full lifecycle on a live cluster.
+full lifecycle on a live cluster. [`gitops/`](gitops/) is Flux/Argo YAML for
+installing the operator itself (CRDs → `ConversionWebhookServer` → config).
 
 | Example | Story | Strategies |
 |---|---|---|

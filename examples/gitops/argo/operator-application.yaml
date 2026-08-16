@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: conversion-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: declarative-conversion-system
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true
+  source:
+    repoURL: ghcr.io/terasky-oss/charts
+    chart: declarative-conversion-operator
+    targetRevision: 0.1.0
+    helm:
+      skipCrds: false
+      values: |
+        features:
+          crossplane:
+            enabled: true
+          nativeCRD:
+            enabled: true

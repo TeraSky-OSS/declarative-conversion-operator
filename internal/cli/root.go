@@ -169,7 +169,8 @@ func newTestCmd() *cobra.Command {
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
 		skipIdentity, strict, live, quiet                                    bool
 		versionPairs                                                         []string
-		kubeconfig, kubeContext                                              string
+		kubeconfig, kubeContext, kubeconfigDir                               string
+		contexts                                                             []string
 		concurrency                                                          int
 	)
 	cmd := &cobra.Command{
@@ -193,6 +194,11 @@ Samples come from exactly one of:
 the usual $KUBECONFIG and ~/.kube/config fallbacks). It only needs get/list on the
 target resource — no write access, and no access to the operator's own CRDs.
 
+--contexts and --kubeconfig-dir run the same --live test against every listed
+cluster and emit one aggregated JUnit report (one <testsuite> per cluster).
+A single context or a single kubeconfig file keeps the existing one-cluster
+report shape.
+
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
@@ -211,41 +217,51 @@ results are collected by sample index, never by completion order.`,
 			default:
 				return fmt.Errorf("invalid --fail-on value %q (want %s, %s, or %s)", failOn, failOnNone, failOnWarn, failOnLoss)
 			}
-			rep, err := RunTest(TestOptions{
+			if !live && (len(contexts) > 0 || kubeconfigDir != "") {
+				return fmt.Errorf("--contexts and --kubeconfig-dir require --live")
+			}
+			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
+				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
-			})
+			}
+			targets, err := resolveLiveTargets(opts)
 			if err != nil {
 				return err
 			}
 
-			var buf bytes.Buffer
-			switch output {
-			case "json":
-				err = writeJSONTo(&buf, rep)
-			case "junit":
-				err = rep.WriteJUnit(&buf)
-			default:
-				rep.WriteTable(&buf)
-			}
-			if err != nil {
-				return err
-			}
-
-			if outputFile != "" {
-				if err := os.WriteFile(outputFile, buf.Bytes(), 0o644); err != nil {
-					return fmt.Errorf("writing report to %s: %w", outputFile, err)
+			if !live || len(targets) <= 1 {
+				if live && len(targets) == 1 {
+					opts.Kubeconfig = targets[0].Kubeconfig
+					opts.KubeContext = targets[0].Context
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "output written to file %s\n", outputFile)
-				rep.WriteSummaryLine(cmd.OutOrStdout())
-			} else {
-				_, _ = cmd.OutOrStdout().Write(buf.Bytes())
+				rep, err := RunTest(opts)
+				if err != nil {
+					return err
+				}
+				return writeTestOutput(cmd, output, outputFile, failOn, strict, rep, nil)
 			}
 
-			exitCode = decideExitCode(rep, failOn, strict)
-			return nil
+			fleet := FleetReport{}
+			for _, t := range targets {
+				if !quiet {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "=== %s ===\n", t.Label)
+				}
+				one := opts
+				one.Kubeconfig = t.Kubeconfig
+				one.KubeContext = t.Context
+				one.Contexts = nil
+				one.KubeconfigDir = ""
+				rep, runErr := RunTest(one)
+				if runErr != nil {
+					fleet.Clusters = append(fleet.Clusters, ClusterResult{Label: t.Label, Error: runErr.Error()})
+					continue
+				}
+				fleet.Clusters = append(fleet.Clusters, ClusterResult{Label: t.Label, Report: rep})
+			}
+			return writeTestOutput(cmd, output, outputFile, failOn, strict, nil, &fleet)
 		},
 	}
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for an XRDConversionConfig)")
@@ -255,6 +271,8 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().BoolVar(&live, "live", false, "Fetch samples from a live cluster instead of --samples (a pre-upgrade check against real objects)")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file (default: $KUBECONFIG, then ~/.kube/config); only used with --live")
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
+	cmd.Flags().StringSliceVar(&contexts, "contexts", nil, "Run --live against each of these kubeconfig contexts and aggregate the report; mutually exclusive with --context")
+	cmd.Flags().StringVar(&kubeconfigDir, "kubeconfig-dir", "", "Directory of kubeconfig files; --live runs against each file (current-context unless --contexts is also set)")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|junit")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write the full report to this file instead of stdout; a short summary still prints to stdout")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
@@ -268,10 +286,18 @@ results are collected by sample index, never by completion order.`,
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	cmd.MarkFlagsOneRequired("samples", "live")
 	cmd.MarkFlagsMutuallyExclusive("samples", "live")
+	cmd.MarkFlagsMutuallyExclusive("context", "contexts")
+	cmd.MarkFlagsMutuallyExclusive("kubeconfig", "kubeconfig-dir")
 	registerOfflineFlagCompletions(cmd)
 	registerKubeFlagCompletions(cmd)
 	registerOutputCompletions(cmd, "table", "json", "junit")
 	_ = cmd.RegisterFlagCompletionFunc("fail-on", cobra.FixedCompletions([]string{failOnNone, failOnWarn, failOnLoss}, cobra.ShellCompDirectiveNoFileComp))
+	if cmd.Flags().Lookup("contexts") != nil {
+		_ = cmd.RegisterFlagCompletionFunc("contexts", completeKubeContexts)
+	}
+	if cmd.Flags().Lookup("kubeconfig-dir") != nil {
+		_ = cmd.MarkFlagDirname("kubeconfig-dir")
+	}
 	return cmd
 }
 
@@ -348,6 +374,53 @@ const (
 	// author already made explicitly, so it never fails here.
 	failOnLoss = "loss"
 )
+
+func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, strict bool, rep *Report, fleet *FleetReport) error {
+	var buf bytes.Buffer
+	var err error
+	switch {
+	case fleet != nil:
+		switch output {
+		case "json":
+			err = writeJSONTo(&buf, fleet)
+		case "junit":
+			err = fleet.WriteJUnit(&buf)
+		default:
+			fleet.WriteTable(&buf)
+		}
+	default:
+		switch output {
+		case "json":
+			err = writeJSONTo(&buf, rep)
+		case "junit":
+			err = rep.WriteJUnit(&buf)
+		default:
+			rep.WriteTable(&buf)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, buf.Bytes(), 0o644); err != nil {
+			return fmt.Errorf("writing report to %s: %w", outputFile, err)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "output written to file %s\n", outputFile)
+		if fleet != nil {
+			fleet.WriteSummaryLine(cmd.OutOrStdout())
+		} else {
+			rep.WriteSummaryLine(cmd.OutOrStdout())
+		}
+	} else {
+		_, _ = cmd.OutOrStdout().Write(buf.Bytes())
+	}
+	if fleet != nil {
+		exitCode = fleet.decideExitCode(failOn, strict)
+	} else {
+		exitCode = decideExitCode(rep, failOn, strict)
+	}
+	return nil
+}
 
 func decideExitCode(rep *Report, failOn string, strict bool) int {
 	if failOn == failOnNone {
