@@ -68,7 +68,7 @@ Yes — `convctl test --live` fetches every existing instance of the target type
 
 ### Does this integrate with CI?
 
-`convctl test` supports `--output json` for scripting and `--output junit` for CI systems with JUnit test-result reporting (GitHub Actions, GitLab, Jenkins), plus `--output-file` to write the report to a specific path. Exit codes are deliberately distinct for "a test failed" (`1`) versus "the tool was used wrong" (`2`), so CI can tell the two apart.
+`convctl test` supports `--output json` for scripting and `--output junit` for CI systems with JUnit test-result reporting (GitHub Actions, GitLab, Jenkins), plus `--output-file` to write the report to a specific path. Exit codes are deliberately distinct for "a test failed" (`1`) versus "the tool was used wrong" (`2`), so CI can tell the two apart. For a fleet, `--live --contexts` / `--kubeconfig-dir` emit one aggregated JUnit document — see [Fleet CI](gitops/fleet-ci.md).
 
 ## Operations and scaling
 

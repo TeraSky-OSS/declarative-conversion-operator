@@ -47,6 +47,12 @@ type TestOptions struct {
 	Live        bool
 	Kubeconfig  string
 	KubeContext string
+	// Contexts, when set, runs --live once per kubeconfig context and
+	// aggregates the reports. Mutually exclusive with KubeContext.
+	Contexts []string
+	// KubeconfigDir, when set, treats each regular file in the directory
+	// as a kubeconfig. Mutually exclusive with Kubeconfig.
+	KubeconfigDir string
 
 	// Concurrency is how many samples to test at once. Zero or negative
 	// means runtime.GOMAXPROCS(0). Testing a cluster's entire population

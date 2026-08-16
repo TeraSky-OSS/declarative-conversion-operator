@@ -14,6 +14,25 @@ cluster that will apply that YAML:
 Neither command writes to the cluster. The invoking identity only needs
 `get`/`list` on the target XRD/CRD and its instances.
 
+## Built-in: `convctl test --live --contexts`
+
+Once you have more than one context in a single kubeconfig:
+
+```console
+convctl test --xrd xrd.yaml --config proposed.yaml --live \
+  --contexts kind-fleet-a,kind-fleet-b \
+  --output junit --output-file fleet.junit.xml
+```
+
+`--kubeconfig-dir ./clusters/` is the same idea when each cluster has its
+own kubeconfig file. One context or one file keeps the existing
+single-cluster report. A connection error on one cluster is recorded as a
+failed suite; the others still run.
+
+`convctl diff` stays one cluster per invocation (`--context`). The
+[shell loop](#shell-loop) still wraps both commands when you want
+`diff --live` in the same gate.
+
 ## Shell loop
 
 [`convctl-fleet.sh`](convctl-fleet.sh) is a copy-pasteable wrapper. It

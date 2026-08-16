@@ -71,8 +71,10 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 | `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig` YAML file. **Required.** |
 | `-s, --samples` | Path to a directory of sample objects — one file per sample (or multi-doc YAML). Mutually exclusive with `--live`; exactly one of the two is required. |
 | `--live` | Fetch samples from a live cluster instead — see [Pre-upgrade checks](#pre-upgrade-checks-testing-against-everything-that-already-exists) below. |
-| `--kubeconfig` | Path to a kubeconfig file. Only used with `--live`. Falls back to `$KUBECONFIG`, then `~/.kube/config`, exactly like `kubectl`. |
-| `--context` | Kubeconfig context to use. Only used with `--live`. Falls back to the kubeconfig's `current-context`. |
+| `--kubeconfig` | Path to a kubeconfig file. Only used with `--live`. Falls back to `$KUBECONFIG`, then `~/.kube/config`, exactly like `kubectl`. Mutually exclusive with `--kubeconfig-dir`. |
+| `--context` | Kubeconfig context to use. Only used with `--live`. Falls back to the kubeconfig's `current-context`. Mutually exclusive with `--contexts`. |
+| `--contexts` | Repeatable / comma-separated kubeconfig context names. Runs `--live` once per context and aggregates the report. A single name keeps the one-cluster report shape. |
+| `--kubeconfig-dir` | Directory of kubeconfig files. `--live` runs against each file (that file's `current-context`, or each `--contexts` name). README / hidden files are skipped. |
 | `-o, --output` | `table` (default), `json`, or `junit` — see [Output formats](#output-formats) below. |
 | `--output-file` | Write the full report to this file instead of stdout. A short pass/loss/fail/error summary is still printed to stdout either way, so a CI log isn't empty on success. |
 | `--strict` | Escalate warnings (e.g. a rule that's never exercised by any sample) to failures. |
@@ -454,6 +456,9 @@ This is the tool to run before applying a new or changed `XRDConversionConfig`/`
 
 To run the same pair of checks (`diff --live` + `test --live`) against every
 cluster in a fleet before merge, see [Fleet CI](gitops/fleet-ci.md).
+`convctl test --live --contexts east,west -o junit` produces one JUnit
+document with a `<testsuite>` per cluster (a cluster that cannot be
+reached is an `<error>` suite, not a silent skip).
 
 ## Shell completion
 
@@ -469,7 +474,7 @@ Once installed, flags complete as follows:
 
 - `--xrd` / `--crd` / `--config` / `--sample` on offline commands complete YAML files; `--samples` completes directories.
 - `migrate-storage --xrd` / `--crd` complete **cluster resource names** (XRDs and CRDs listed from the current kubeconfig context), not files. `--namespace` completes live namespaces the same way.
-- `--context` on `test`, `diff`, and `migrate-storage` completes kubeconfig context names. `--kubeconfig` already on the command line is honored, so `convctl migrate-storage --kubeconfig ./other --context <tab>` lists contexts from that file.
+- `--context` on `test`, `diff`, and `migrate-storage` completes kubeconfig context names. `--contexts` on `test` uses the same list. `--kubeconfig` already on the command line is honored, so `convctl migrate-storage --kubeconfig ./other --context <tab>` lists contexts from that file.
 - `--output` and `test --fail-on` complete their allowed values.
 
 Cluster lookups during completion time out after two seconds and fall back to no suggestions if the apiserver is unreachable, so a hung cluster cannot freeze tab-complete.
