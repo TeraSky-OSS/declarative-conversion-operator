@@ -452,6 +452,9 @@ convctl test --crd crd.yaml --config new-crd-config.yaml --live \
 
 This is the tool to run before applying a new or changed `XRDConversionConfig`/`CRDConversionConfig`: does it hold up against every object that already exists in the cluster, not just your fixtures? `--kubeconfig`/`--context` resolve exactly like `kubectl` does. The invoking identity only needs `get`/`list` on the target resource type — no write access, and nothing related to this operator's own CRDs or webhook server.
 
+To run the same pair of checks (`diff --live` + `test --live`) against every
+cluster in a fleet before merge, see [Fleet CI](gitops/fleet-ci.md).
+
 ## Shell completion
 
 `convctl completion [bash|zsh|fish|powershell]` (built into Cobra) prints a completion script for your shell:

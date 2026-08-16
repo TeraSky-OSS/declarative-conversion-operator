@@ -68,7 +68,7 @@ in cluster B. Each cluster runs its own fully independent install
 **CI problem**, not an operator feature: run the same config through
 [`convctl test --live`](cli.md#pre-upgrade-checks-testing-against-everything-that-already-exists)
 and [`convctl diff --live`](cli.md#convctl-diff) against every kubecontext
-before merge.
+before merge — see [Fleet CI](gitops/fleet-ci.md).
 
 Asking the operator to fail over conversion state across clusters would
 need a redesign (shared registry, cross-cluster identity, a different

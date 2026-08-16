@@ -79,7 +79,7 @@ failover (cluster A's pods converting objects for cluster B's apiserver)
 is out of scope — the runtime has no shared state and no leader election
 to make that safe. Use the same config YAML in each cluster and
 `convctl test --live` / `diff --live` per kubecontext to keep them
-consistent. See
+consistent ([Fleet CI](gitops/fleet-ci.md)). See
 [Architecture: One cluster, one install](architecture.md#one-cluster-one-install).
 
 ### Can I run more than one `ConversionWebhookServer`?
