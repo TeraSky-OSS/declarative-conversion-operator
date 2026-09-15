@@ -26,6 +26,7 @@ import (
 
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // TestOptions configures RunTest.
@@ -128,6 +129,11 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		return nil, fmt.Errorf("configuration is structurally invalid: %w", err)
 	}
 	var samples []Sample
+	// Which fields Crossplane injects, and where they sit, is decided by
+	// the XRD's scope — so report it alongside the results rather than
+	// making an author infer it, and say so when the manifest does not
+	// settle the question.
+	scope := xrdadapter.ResolveScope(xrd)
 	if opts.Live {
 		dyn, err := buildDynamicClient(KubeOptions{Kubeconfig: opts.Kubeconfig, Context: opts.KubeContext})
 		if err != nil {
@@ -169,7 +175,12 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	rep, err := runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	if err != nil {
+		return nil, err
+	}
+	rep.Meta.Scope = scopeView(scope)
+	return rep, nil
 }
 
 func runTestCRD(opts TestOptions) (*Report, error) {

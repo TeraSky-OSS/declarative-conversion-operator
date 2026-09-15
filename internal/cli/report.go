@@ -71,6 +71,10 @@ type Report struct {
 		ServedVersions []string `json:"servedVersions"`
 		GeneratedAt    string   `json:"generatedAt,omitempty"`
 		DurationMs     float64  `json:"durationMs"`
+		// Scope is the detected Crossplane scope (XRD targets only) —
+		// which injected-field set is in play, and how much the resolver
+		// trusts the answer. See pkg/xrdadapter.ResolveScope.
+		Scope *ScopeView `json:"scope,omitempty"`
 	} `json:"meta"`
 	Summary struct {
 		Samples            int `json:"samples"`
@@ -91,6 +95,7 @@ type Report struct {
 func (r *Report) WriteTable(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "%s Conversion Test Report\n", r.Meta.ResourceKind)
 	_, _ = fmt.Fprintf(w, "%s: %s\tConfig: %s (hub: %s)\n", r.Meta.ResourceKind, r.Meta.Resource, r.Meta.Config, r.Meta.HubVersion)
+	r.Meta.Scope.write(w)
 	_, _ = fmt.Fprintf(w, "Samples: %d\tPaths tested: %d\tTotal time: %.1fms\n\n", r.Summary.Samples, r.Summary.PathsTested, r.Meta.DurationMs)
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
