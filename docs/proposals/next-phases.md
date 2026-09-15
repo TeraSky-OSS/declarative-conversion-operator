@@ -780,9 +780,10 @@ apiserver's write path".
   gate, Trivy image scan, OpenSSF Scorecard badge, issue/PR templates.
 - **`values.schema.json`** for the chart, plus `helm-unittest` for the template
   logic the CI job currently greps for.
-- **Graduate the API.** `v1alpha1` → `v1beta1` with a conversion path for this
-  operator's *own* CRDs — dogfooding the product on itself is both a good test
-  and a good demo. Pair with a documented deprecation policy.
+- **A documented deprecation policy.** What "beta" promises, how a breaking
+  change to the chart's values or the CLI's flags is announced, and how long a
+  deprecated flag keeps working. The CRD API group stays `terasky.com/v1alpha1`;
+  changing it is out of scope for this roadmap.
 
 ## Phase 15 — Scale
 

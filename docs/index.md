@@ -1,7 +1,7 @@
 # declarative-conversion-operator
 
 !!! note "Beta"
-    The conversion engine, both controllers, and `convctl` are feature-complete for the documented scope and covered by unit, e2e, and scale tests. The CRD API group stays `terasky.com/v1alpha1` for now — graduating it is tracked on the [Roadmap](roadmap.md). The Helm chart's values and CLI flags may still change in a minor release; breaking changes are called out in the release notes. Issues and feedback are welcome on [GitHub](https://github.com/terasky-oss/declarative-conversion-operator).
+    The conversion engine, both controllers, and `convctl` are feature-complete for the documented scope and covered by unit, e2e, and scale tests. The CRD API group stays `terasky.com/v1alpha1`. The Helm chart's values and CLI flags may still change in a minor release; breaking changes are called out in the release notes. Issues and feedback are welcome on [GitHub](https://github.com/terasky-oss/declarative-conversion-operator).
 
 **Declarative conversion webhooks for [Crossplane](https://crossplane.io) XRDs *and* plain native Kubernetes CRDs — configure hub/spoke version conversions without hand-writing a webhook.**
 
