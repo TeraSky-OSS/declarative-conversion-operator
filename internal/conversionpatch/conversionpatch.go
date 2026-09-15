@@ -48,6 +48,12 @@ const (
 type Params struct {
 	// TargetName is the XRD's or CRD's metadata.name.
 	TargetName string
+	// XRDAPIVersion is the apiVersion an XRD patch is addressed at. Empty
+	// means the current v2 API. It exists because Crossplane's v2 XRD
+	// schema has no claimNames field and REJECTS any write to an XRD that
+	// has one, so a claim-offering (LegacyCluster) XRD can only be patched
+	// at v1 — see xrdadapter.WriteGroupVersion. Ignored for CRD patches.
+	XRDAPIVersion string
 	// ConfigName is the XRDConversionConfig/CRDConversionConfig that owns
 	// this patch, recorded in the managed-by annotation.
 	ConfigName string
@@ -71,7 +77,7 @@ type Params struct {
 // controller has always applied.
 func BuildXRDConversionPatch(p Params) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": xrdadapter.GroupVersionKind.GroupVersion().String(),
+		"apiVersion": xrdWriteAPIVersion(p.XRDAPIVersion),
 		"kind":       xrdadapter.GroupVersionKind.Kind,
 		"metadata": map[string]any{
 			"name": p.TargetName,
@@ -131,10 +137,12 @@ func BuildCRDConversionPatch(p Params) (*applyextv1.CustomResourceDefinitionAppl
 
 // BuildXRDRevertPatch renders the patch that resets an XRD's
 // spec.conversion to strategy=None, relinquishing this operator's
-// ownership of the field.
-func BuildXRDRevertPatch(targetName string) *unstructured.Unstructured {
+// ownership of the field. apiVersion follows the same rule as
+// BuildXRDConversionPatch: empty means the current v2 API, and a
+// claim-offering XRD must be addressed at v1.
+func BuildXRDRevertPatch(targetName, apiVersion string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": xrdadapter.GroupVersionKind.GroupVersion().String(),
+		"apiVersion": xrdWriteAPIVersion(apiVersion),
 		"kind":       xrdadapter.GroupVersionKind.Kind,
 		"metadata":   map[string]any{"name": targetName},
 		"spec": map[string]any{
@@ -148,6 +156,14 @@ func BuildCRDRevertPatch(targetName string) *applyextv1.CustomResourceDefinition
 	return applyextv1.CustomResourceDefinition(targetName).
 		WithSpec(applyextv1.CustomResourceDefinitionSpec().
 			WithConversion(applyextv1.CustomResourceConversion().WithStrategy(extv1.NoneConverter)))
+}
+
+// xrdWriteAPIVersion defaults an unset apiVersion to the current v2 API.
+func xrdWriteAPIVersion(apiVersion string) string {
+	if apiVersion != "" {
+		return apiVersion
+	}
+	return xrdadapter.GroupVersionKind.GroupVersion().String()
 }
 
 func toAnySlice(ss []string) []any {

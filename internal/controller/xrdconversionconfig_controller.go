@@ -269,7 +269,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	}
 
 	applyStart := time.Now()
-	if err := r.applyConversionPatch(ctx, cfg, serverNamespace, cwsServiceName(serverName), path, port, caBundle, reviewVersions); err != nil {
+	if err := r.applyConversionPatch(ctx, cfg, xrd, serverNamespace, cwsServiceName(serverName), path, port, caBundle, reviewVersions); err != nil {
 		GetManagerMetrics().ApplyDuration.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "error").Observe(time.Since(applyStart).Seconds())
 		return ctrl.Result{}, fmt.Errorf("patching XRD conversion webhook config: %w", err)
 	}
@@ -480,10 +480,11 @@ func (r *XRDConversionConfigReconciler) readCABundle(ctx context.Context, server
 // couple of tracking annotations) onto the target XRD, using a field
 // manager scoped to exactly those fields so this operator never fights any
 // other owner of the XRD's spec.
-func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, serviceNamespace, serviceName, path string, port int32, caBundle string, reviewVersions []string) error {
+func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, xrd *unstructured.Unstructured, serviceNamespace, serviceName, path string, port int32, caBundle string, reviewVersions []string) error {
 	patch := conversionpatch.BuildXRDConversionPatch(conversionpatch.Params{
 		TargetName: cfg.Spec.TargetXRD.Name, ConfigName: cfg.Name, PlanHash: cfg.Status.SchemaHash,
-		ServiceName: serviceName, ServiceNamespace: serviceNamespace, Path: path, Port: port,
+		XRDAPIVersion: xrdadapter.WriteGroupVersion(xrd).String(),
+		ServiceName:   serviceName, ServiceNamespace: serviceNamespace, Path: path, Port: port,
 		CABundle: caBundle, ReviewVersions: reviewVersions,
 	})
 	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
@@ -492,7 +493,21 @@ func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context
 // revertXRD resets spec.conversion to strategy=None, relinquishing this
 // operator's ownership of the field.
 func (r *XRDConversionConfigReconciler) revertXRD(ctx context.Context, xrdName string) error {
-	patch := conversionpatch.BuildXRDRevertPatch(xrdName)
+	// Read the XRD to learn which API version the write has to be
+	// addressed at — a claim-offering XRD cannot be written at v2. A read
+	// failure is not fatal here: WriteGroupVersion defaults to v2, which
+	// is right for every XRD that is not claim-offering, and the alternative
+	// is refusing to revert at all.
+	xrd := &unstructured.Unstructured{}
+	xrd.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+	if err := r.Get(ctx, types.NamespacedName{Name: xrdName}, xrd); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Nothing to revert.
+			return nil
+		}
+		xrd = nil
+	}
+	patch := conversionpatch.BuildXRDRevertPatch(xrdName, xrdadapter.WriteGroupVersion(xrd).String())
 	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 

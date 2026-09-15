@@ -112,6 +112,10 @@ func (g *XRDConversionGuard) Handle(ctx context.Context, req admission.Request) 
 		return admission.Allowed("")
 	}
 
+	// The response patches the object as submitted, at whatever XRD API
+	// version the write arrived at — so unlike the controller's own SSA
+	// apply (see xrdadapter.WriteGroupVersion), there is no version to
+	// choose here. A claim-offering XRD arrives at v1 and is patched at v1.
 	patched := xrd.DeepCopy()
 	if err := applyConversionToXRD(patched, cfg); err != nil {
 		logger.Error(err, "could not build the conversion stanza; allowing unchanged", "xrd", req.Name)

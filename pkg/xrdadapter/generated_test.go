@@ -120,3 +120,40 @@ func TestGeneratedCRDNames_Errors(t *testing.T) {
 		})
 	}
 }
+
+// TestWriteGroupVersion pins a constraint that is invisible until a real
+// apiserver rejects a write: reads are version-agnostic, but the v2 XRD
+// schema has no claimNames field and REFUSES any write to an XRD that has
+// one —
+//
+//	spec: Invalid value: Claims aren't supported in apiextensions.crossplane.io/v2
+//
+// so a claim-offering XRD can only be patched at v1. Found by the
+// LegacyCluster e2e leg, where every reconcile failed with that error and
+// the config never reached Applied.
+func TestWriteGroupVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		xrd  *unstructured.Unstructured
+		want string
+	}{
+		{"claim-offering XRD must be written at v1", scopeXRD("LegacyCluster", true, false), "apiextensions.crossplane.io/v1"},
+		{"claimNames with no explicit scope still means v1", scopeXRD("", true, false), "apiextensions.crossplane.io/v1"},
+		// A LegacyCluster XRD without claims is expressible at v2's schema
+		// (the value is outside v2's enum, but the apiserver does not
+		// re-validate an unchanged immutable field), so it needs no special
+		// case — and defaulting everything legacy to v1 would drag XRDs
+		// onto a deprecated API for no reason.
+		{"LegacyCluster without claims stays on v2", scopeXRD("LegacyCluster", false, false), "apiextensions.crossplane.io/v2"},
+		{"Namespaced", scopeXRD("Namespaced", false, false), "apiextensions.crossplane.io/v2"},
+		{"Cluster", scopeXRD("Cluster", false, false), "apiextensions.crossplane.io/v2"},
+		{"nil defaults to the current API", nil, "apiextensions.crossplane.io/v2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WriteGroupVersion(tc.xrd).String(); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

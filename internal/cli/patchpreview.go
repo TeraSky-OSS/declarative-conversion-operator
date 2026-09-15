@@ -25,6 +25,7 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/terasky-oss/declarative-conversion-operator/internal/conversionpatch"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // PatchPreviewOptions configures RunPatchPreview.
@@ -110,6 +111,11 @@ func RunPatchPreview(opts PatchPreviewOptions) ([]byte, error) {
 	if opts.CRDPath != "" {
 		return nil, fmt.Errorf("%s is an XRDConversionConfig; pass its target schema with --xrd, not --crd", opts.ConfigPath)
 	}
+	// The apiVersion the operator would address the patch at depends on the
+	// XRD: a claim-offering one cannot be written at v2. Without --xrd
+	// there is nothing to read that from, so the preview shows the v2 form
+	// — which is what the operator applies to every non-claim XRD.
+	var xrdAPIVersion string
 	if opts.XRDPath != "" {
 		xrd, err := LoadXRD(opts.XRDPath)
 		if err != nil {
@@ -122,10 +128,12 @@ func RunPatchPreview(opts PatchPreviewOptions) ([]byte, error) {
 		if report.HasErrors() {
 			return nil, fmt.Errorf("configuration is invalid against the XRD schema, the operator would never apply this patch:%s", summarizeSpokeErrors(report))
 		}
+		xrdAPIVersion = xrdadapter.WriteGroupVersion(xrd).String()
 	}
 	patch := conversionpatch.BuildXRDConversionPatch(conversionpatch.Params{
 		TargetName: cfg.Spec.TargetXRD.Name, ConfigName: cfg.Name, PlanHash: opts.PlanHash,
-		ServiceName: opts.ServiceName, ServiceNamespace: opts.ServiceNamespace,
+		XRDAPIVersion: xrdAPIVersion,
+		ServiceName:   opts.ServiceName, ServiceNamespace: opts.ServiceNamespace,
 		Path: orDefault(opts.Path, "/convert/"+cfg.Spec.TargetXRD.Name), Port: port,
 		CABundle: caBundle, ReviewVersions: reviewVersionsOrDefault(cfg.Spec.ConversionReviewVersions),
 	})
