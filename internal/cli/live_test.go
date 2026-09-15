@@ -19,7 +19,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -176,5 +178,76 @@ func TestObjectLabel(t *testing.T) {
 	}
 	if got := objectLabel(widget("default", "a", "v2", nil)); got != "default/a" {
 		t.Errorf("expected namespaced label 'default/a', got %q", got)
+	}
+}
+
+// The finding this covers is about streamLiveSamples, not the sampler in
+// isolation: the early return at the cap is what leaves seen == kept, and a
+// report keyed on that comparison said nothing — so a bounded run over a
+// larger population read as exhaustive in every output format.
+func TestStreamLiveSamples_EarlyStopIsReportedAsSampling(t *testing.T) {
+	const population, cap = 25, 5
+
+	gvr := schema.GroupVersionResource{Group: "example.org", Version: "v1", Resource: "xthings"}
+	var objs []runtime.Object
+	for i := 0; i < population; i++ {
+		o := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "example.org/v1",
+			"kind":       "XThing",
+			"metadata":   map[string]any{"name": fmt.Sprintf("thing-%02d", i)},
+		}}
+		objs = append(objs, o)
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{gvr: "XThingList"}, objs...)
+
+	s := newSampler(SamplingOptions{MaxSamples: cap, Strategy: SampleFirst})
+	if err := streamLiveSamples(context.Background(), dyn, gvr, "v1", "", s, "xthings.example.org", "composite"); err != nil {
+		t.Fatalf("streaming: %v", err)
+	}
+	samples, rep := s.result()
+
+	if len(samples) != cap {
+		t.Fatalf("collected %d samples, want the cap of %d", len(samples), cap)
+	}
+	if rep == nil {
+		t.Fatal("a bounded run over a larger population reported no sampling, so it reads as exhaustive")
+	}
+	if !rep.Truncated {
+		t.Error("the early stop was not recorded as truncation")
+	}
+	if rep.Population != 0 {
+		t.Errorf("Population = %d, but listing stopped before counting it", rep.Population)
+	}
+	if !strings.Contains(rep.String(), "total is unknown") {
+		t.Errorf("the report line claims to know the population: %s", rep.String())
+	}
+}
+
+// And a population that fits under the cap is not reported as sampled: the
+// walk reached the end, so "we tested everything" is true.
+func TestStreamLiveSamples_UnderTheCapIsExhaustive(t *testing.T) {
+	gvr := schema.GroupVersionResource{Group: "example.org", Version: "v1", Resource: "xthings"}
+	var objs []runtime.Object
+	for i := 0; i < 3; i++ {
+		objs = append(objs, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "example.org/v1",
+			"kind":       "XThing",
+			"metadata":   map[string]any{"name": fmt.Sprintf("thing-%d", i)},
+		}})
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{gvr: "XThingList"}, objs...)
+
+	s := newSampler(SamplingOptions{MaxSamples: 50, Strategy: SampleFirst})
+	if err := streamLiveSamples(context.Background(), dyn, gvr, "v1", "", s, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	samples, rep := s.result()
+	if len(samples) != 3 {
+		t.Fatalf("collected %d, want 3", len(samples))
+	}
+	if rep != nil {
+		t.Errorf("an exhaustive run was reported as sampled: %+v", rep)
 	}
 }
