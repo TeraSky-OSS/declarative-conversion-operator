@@ -28,7 +28,16 @@ groups:
           summary: "p99 ConversionReview latency exceeds 1s for {{ $labels.target }}"
           description: "The conversion webhook is on the API admission critical path; sustained high latency slows apiserver requests for the affected target."
       - alert: ConversionWebhookPanics
-        expr: increase(dco_webhook_conversion_panics_total[15m]) > 0
+        expr: |
+          (
+            increase(dco_webhook_conversion_panics_total[15m]) > 0
+          )
+          or
+          (
+            dco_webhook_conversion_panics_total > 0
+            unless
+            dco_webhook_conversion_panics_total offset 15m
+          )
         for: 0m
         labels:
           severity: critical

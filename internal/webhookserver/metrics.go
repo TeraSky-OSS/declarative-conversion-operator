@@ -146,5 +146,15 @@ func (m *Metrics) SyncRegistryMetrics(reg *Registry) {
 			loaded = 1
 		}
 		m.RegistryEntryLoaded.WithLabelValues(name).Set(loaded)
+
+		// Materialize the panic counter at zero for every known target.
+		// A CounterVec series does not exist until something increments it,
+		// so without this the first panic creates the series *at 1* — and
+		// increase() over a series whose first observed sample is already 1
+		// has no earlier sample to subtract, yielding 0. The alert that
+		// exists to catch a single panic would miss exactly that case.
+		// Deliberately not Reset() like the gauge above: resetting would
+		// discard the panic history this is meant to preserve.
+		m.PanicsTotal.WithLabelValues(name)
 	}
 }

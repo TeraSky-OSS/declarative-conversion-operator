@@ -448,3 +448,25 @@ tests:
       - eval_time: 20m
         alertname: ConversionWebhookPanics
         exp_alerts: []
+
+  - name: a series whose first observed sample is already 1 still fires
+    interval: 1m
+    input_series:
+      # The counter is materialized at 0 for every known target so this should
+      # not happen -- but a pod that panics before its first scrape would
+      # produce exactly this shape, and increase() over a series with no
+      # earlier sample has nothing to subtract and yields 0. The alert exists
+      # to catch a single panic, so it must not depend on having seen the
+      # zero.
+      - series: 'dco_webhook_conversion_panics_total{target="xfoos.example.org"}'
+        values: "1+0x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConversionWebhookPanics
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "The conversion webhook panicked while converting xfoos.example.org"
+              description: "A recovered panic is always a bug in declarative-conversion-operator, and every request that hits it fails a write on the apiserver's admission path. The pod log carries the stack trace. No `for:` delay: one panic is already worth waking up for."
