@@ -128,6 +128,124 @@ existing test mentions `spec.crossplane` in a comment but only exercises
 `status.conditions`, so the legacy layout is currently correct by accident
 rather than by assertion.
 
+## Deep dive: package-managed XRDs are reverted, repeatedly
+
+An XRD shipped inside a Crossplane `Configuration` package **does** lose its
+conversion webhook, and not only on upgrade. This was traced through
+Crossplane's package establisher and XRD definition controller at
+`3d8d7c1`; every claim below cites the line it came from.
+
+### The mechanism
+
+`APIEstablisher.update` ends like this
+(`internal/controller/pkg/revision/establisher.go:591`):
+
+```go
+// This should be a server side apply?
+return e.client.Update(ctx, desired, opts...)
+```
+
+That comment is upstream acknowledging exactly this problem. `desired` is the
+XRD **as it appears in the package**, with `ownerReferences` and
+`resourceVersion` copied from the live object and nothing else preserved: the
+`merge` step immediately above it special-cases only
+`ManagedResourceDefinition.spec.state` and returns `nil` for every other kind
+(`establisher.go:695`). A `client.Update` is a full replace — it is not
+merge-aware and does not respect Server-Side Apply field ownership — so
+**`spec.conversion` is removed**, along with the operator's
+`conversion.terasky.com/managed-by` and `plan-hash` annotations.
+
+Three things make this worse than a one-off:
+
+1. **`Establish` runs on every reconcile.** There is no early return for a
+   healthy revision, and `establish` calls `update` unconditionally for every
+   object that already exists — there is no diff check
+   (`establisher.go:505`).
+2. **Reconciles are not rare.** The manager's `SyncPeriod` is Crossplane's
+   `--sync` flag, which **defaults to one hour**
+   (`cmd/crossplane/core/core.go:112`). Each resync re-delivers every
+   `ConfigurationRevision` as an update event. A `Lock` change — any package
+   installed, upgraded or removed anywhere on the cluster — and any Crossplane
+   restart do the same.
+3. **The failure is silent, not loud.** Once `spec.conversion` is gone from the
+   XRD, Crossplane's definition controller re-renders the generated CRD without
+   it, and the CRD falls back to `strategy: None`. The apiserver then serves a
+   stored object at a different version by relabelling `apiVersion` and
+   returning the original field layout. Clients get wrong data with a 200, and
+   writes during the window persist the wrong shape. No error is raised
+   anywhere.
+
+The operator does re-apply — it watches XRDs, so Crossplane's write enqueues a
+reconcile immediately, and there is a 5-minute periodic self-check besides. The
+exposure is a race of seconds, roughly hourly, per package-managed XRD. That is
+small, and it is exactly the profile of a bug nobody can reproduce.
+
+### Why the obvious fix does not work
+
+The instinct is to patch the **generated CRD** instead of the XRD, on the
+theory that Crossplane only owns the XRD. It does not help. The definition
+controller applies the rendered CRD through
+`resource.NewAPIUpdatingApplicator` (`definition/reconciler.go:261`, directly
+under a `TODO(negz): Use server-side apply instead of a ClientApplicator`),
+and that applicator's `Apply` is a `Get` followed by a full `client.Update`
+(`crossplane-runtime/pkg/resource/api.go:103`). A CRD-level patch is reverted
+by the same mechanism, on a controller that reconciles on *every* XRD change
+rather than hourly. Both write paths are non-SSA full replaces; there is no
+object in the chain where field ownership survives.
+
+The other non-fix is to ask the platform team to put `spec.conversion` into the
+Configuration. That works, and it is what you would tell someone today — but it
+inverts the whole point of the operator (the conversion stanza would have to
+hard-code a service name, namespace and CA bundle into a portable package), and
+the brief here is explicitly to solve it **without** changing the Configuration.
+
+### The fix: guard the field in admission
+
+The only place a non-SSA `Update` can be corrected without the writer's
+cooperation is before it is persisted. A **mutating admission webhook on
+`compositeresourcedefinitions`** re-injects `spec.conversion` — and the two
+annotations — into any CREATE or UPDATE whose result would drop or alter what
+the operator has applied.
+
+Why this is the right shape:
+
+- **The window closes completely.** The field is restored inside the same
+  request, so there is no interval during which the generated CRD lacks
+  conversion. Compare the current behaviour, where correctness depends on
+  winning a race after the fact.
+- **Nothing outside this operator changes.** The Configuration package, the
+  `ConfigurationRevision`, and Crossplane itself are untouched. The package
+  manager's `Update` succeeds; it never re-reads the object to compare, and the
+  `ConfigurationRevision` controller does not watch the XRDs it establishes
+  (`revision/reconciler.go:295` — it watches only `ConfigurationRevision`,
+  `Lock` and `ImageConfig`), so there is no fight loop.
+- **The operator already has what it needs.** `TargetXRDNameIndex` is an
+  existing field index from XRD name to the config that targets it, built for
+  the admission webhook's uniqueness check. The guard is an in-memory lookup on
+  the request path — no extra API calls.
+- **It is a bridge, not a fixture.** Both upstream write paths carry a TODO to
+  move to Server-Side Apply. The day either one does, our SSA field ownership
+  holds on its own and the guard becomes a no-op that can be retired.
+
+Details that decide whether it is safe:
+
+- **`failurePolicy: Ignore`.** An admission guard that can block XRD writes when
+  the operator is down would make package installs depend on this operator's
+  availability — unacceptable for something that is meant to be additive. Fail
+  open, and keep the existing controller re-apply as the backstop: normal
+  operation has no window, degraded operation is exactly today's behaviour.
+- **Scope it by the index, not by a label.** The tempting `objectSelector` on a
+  label the operator sets is self-defeating: that label is wiped by the very
+  `Update` we are guarding against. Match all XRD CREATE/UPDATE and return
+  early on an index miss — XRDs are few and writes to them are rare.
+- **Only ever add.** The guard restores what the operator's own controller
+  would apply and refuses to touch a `spec.conversion` pointing anywhere else,
+  so an XRD deliberately wired to a hand-written webhook is left alone.
+- **Make it observable either way.** A `PackageManaged` condition (derived from
+  an owner reference to a `ConfigurationRevision`) and a
+  `dco_manager_conversion_reverts_total` counter, so an operator can see the
+  revert happening and confirm the guard caught it.
+
 ## Findings
 
 Ordered by severity. Each of these is a concrete, small change; they are folded
@@ -284,6 +402,22 @@ inside the loop and then used once for the whole batch. In a mixed-direction
 batch the histogram lands on whichever object happened to be last. Observe per
 object, or label the batch `mixed`.
 
+### F14 — A package-managed XRD loses its conversion webhook roughly hourly
+
+Crossplane's package establisher writes established objects with a full
+`client.Update` from the package contents, not a Server-Side Apply
+(`establisher.go:591-592`), and `Establish` runs on every revision reconcile —
+which the default one-hour `--sync` resync guarantees. So any XRD shipped in a
+`Configuration` has `spec.conversion` stripped on a recurring basis, and the
+generated CRD falls back to `strategy: None` until the operator re-applies.
+Objects served during that window come back relabelled but unconverted, with a
+200 and no error.
+
+Patching the generated CRD instead does not help — the definition controller
+applies it through `APIUpdatingApplicator`, which is also a full `Update`. The
+fix is a mutating admission guard on XRD writes; both the mechanism and the
+design are in the [deep dive](#deep-dive-package-managed-xrds-are-reverted-repeatedly).
+
 ## Phase 11 — Crossplane integration depth
 
 The theme: stop trusting that patching the XRD was enough, and cover the XRD
@@ -368,17 +502,34 @@ Deliverables:
   is pinned to, and which Compositions target which `compositeTypeRef` version.
   This is the missing "what state is my migration actually in" view.
 
-### 11.4 Package-managed XRDs
+### 11.4 Package-managed XRDs: the admission guard
 
-An XRD installed by a Crossplane `Configuration` package is owned by a
-`ConfigurationRevision`. Crossplane's package manager will re-apply its own
-rendering of that XRD on upgrade, which can revert the operator's
-`spec.conversion` patch — the operator will re-apply it on its next reconcile,
-but there is a real window, and nothing tells the user this is happening.
+Deliver F14. An XRD shipped in a `Configuration` is the mainstream way to ship
+a Crossplane API, and today this operator does not survive contact with one for
+more than an hour at a time.
 
-Deliverables: detect a package owner reference on the target XRD, surface
-`ManagedByPackage` on status, document the interaction and the recommended
-ordering, and add a metric for observed reverts.
+Deliverables:
+
+- **A mutating admission webhook on `compositeresourcedefinitions`** that
+  re-injects `spec.conversion` and the operator's two annotations into any
+  write that would drop them, resolved through the existing
+  `TargetXRDNameIndex`. `failurePolicy: Ignore`, add-only, and a no-op for an
+  XRD pointing at somebody else's webhook. Rationale and the failure modes it
+  has to respect are in the deep dive.
+- **A `PackageManaged` condition** on the config, derived from an owner
+  reference to a `ConfigurationRevision`, plus
+  `dco_manager_conversion_reverts_total` so the revert is visible whether or
+  not the guard caught it. This is worth shipping even before the guard: it
+  turns an invisible hazard into a number.
+- **An e2e leg that actually reverts.** Install a `Configuration` whose XRD has
+  no conversion stanza, apply an `XRDConversionConfig`, then force a revision
+  reconcile and assert that a read at a non-storage version stays correct
+  throughout. Without this the guard is untested against the thing it exists
+  for.
+- **Retire-ability.** Both upstream write paths carry a TODO to move to
+  Server-Side Apply. Gate the guard behind a flag so it can be turned off once
+  a Crossplane version lands that no longer needs it, and say in the docs which
+  version that is when it arrives.
 
 ### 11.5 Crossplane 2.x only, stated plainly
 
@@ -544,6 +695,70 @@ the tool installable the way people expect:
 cluster with tens of thousands of XRs, a pre-upgrade check is an OOM. Add
 `--max-samples N` with `--sample-strategy first|random|newest` and a note in
 the report that the run was sampled.
+
+### 13.7 Package-aware `convctl`
+
+For a platform shipped as a `Configuration`, **the unit of API change is a
+package version** — not a git commit, and not the live cluster. All three of
+`convctl`'s schema sources today (`--xrd`, `--crd`, `--live`) miss that unit,
+which means the team whose XRDs most need conversion testing is the team least
+able to run it.
+
+The proposal is one new **schema source**, not a new verb. `--package` slots in
+exactly where `--xrd` does, so `validate`, `analyze`, `test`, `diff`, `suggest`
+and `rehub` all get it at once:
+
+```console
+convctl test --package ./platform.xpkg        --config xrdconversionconfig.yaml --samples ./samples/
+convctl test --package ghcr.io/org/platform:v1.4.0 --config xrdconversionconfig.yaml --live
+convctl diff --package configuration/platform --live
+```
+
+Four forms, in rough order of how tight the feedback loop is:
+
+| Form | Reads | Answers |
+|---|---|---|
+| `./platform.xpkg` | the local `crossplane xpkg build` output | "does my conversion config hold against the XRDs I am about to publish?" — no registry, no cluster |
+| `ghcr.io/org/platform:v1.4.0` | a published package | "does it hold against the version I am about to install?" |
+| `configuration/<name>` | the **active** revision's image | "what does the package say the XRD should be?" |
+| `configurationrevision/<name>` | one specific revision | the same, pinned |
+
+**The composition that matters most** is `--package <candidate> --live`:
+schemas from the version you are about to roll out, sample objects from the
+cluster you are about to roll it out to. "If I bump this Configuration, do my
+4,000 existing composites still convert?" is the question a platform team
+actually has before a package upgrade, and nothing answers it today. The two
+flags are orthogonal axes — `--package` is a schema source, `--live` is a
+sample source — so this composes without new machinery.
+
+**`--package` and `--live` also disagree on purpose**, and that is a feature.
+`--package` reads the XRD *as the package declares it*; `--live` reads the XRD
+*as it currently exists on the cluster*. Diffing the two is drift detection,
+and given F14 it will immediately surface an XRD whose conversion stanza the
+package manager has stripped — as well as a schema change the next resync will
+revert. `convctl diff --package configuration/platform --live` is worth having
+for that reason alone.
+
+Supporting pieces:
+
+- **A `Configuration` ships many XRDs.** `--target <xrd-name>` selects one;
+  better, `convctl lint` (13.4) pairs every config in a directory against every
+  XRD in the package automatically. One command over a whole package and a
+  whole config tree is the Configuration repo's CI gate.
+- **The upgrade gate.** `convctl compat` (12.5) takes package refs as its two
+  sides, so "v1.3.0 → v1.4.0 makes this conversion lossy" becomes a required
+  status check on the Configuration repo's PR.
+- **Ordering.** `convctl plan` (12.1) needs a package-managed variant: the
+  conversion config has to be applied **before** the package upgrade lands, or
+  the new served version exists for a while with no conversion at all. That is
+  the reverse of the unpackaged order, and it is the kind of thing that is
+  obvious only in hindsight.
+- **Implementation cost is modest.** An `xpkg` is an OCI image whose layer
+  carries `/package.yaml`, a multi-doc YAML stream — extracting XRDs is a small
+  amount of work on top of `go-containerregistry`, and that dependency is
+  needed only for the remote forms. A local `.xpkg` is a tarball, and an
+  installed revision can be read from the cluster, so the two tightest loops
+  cost nothing extra.
 
 ## Phase 14 — Production readiness
 
