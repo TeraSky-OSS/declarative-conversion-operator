@@ -5,7 +5,7 @@ timeline. Phases already shipped stay listed so the arc is visible; later phases
 are invitations to [open an issue or PR](https://github.com/terasky-oss/declarative-conversion-operator/issues)
 if one of them matters to you sooner.
 
-## Shipped (phases 0–11)
+## Shipped (phases 0–11, 14)
 
 | Phase | Epic | Intent |
 |---|---|---|
@@ -21,10 +21,13 @@ if one of them matters to you sooner.
 | **9 — Performance and scale** | [#74](https://github.com/terasky-oss/declarative-conversion-operator/issues/74) | Benchmark suite (compile vs schema size, Convert latency vs array length), registry Set scaling, synthetic large ConversionReview batches — numbers that backfill [Capacity planning](operations/capacity.md). |
 | **10 — Multi-cluster / GitOps** | [#81](https://github.com/terasky-oss/declarative-conversion-operator/issues/81) | Documented CI patterns for `convctl test`/`diff` across many kubecontexts, GitOps examples (Flux/Argo). Cross-cluster failover of conversion state remains an explicit non-goal. |
 | **11 — Crossplane integration depth** | [#113](https://github.com/terasky-oss/declarative-conversion-operator/issues/113) | A `ConversionPropagated` condition and `status.generatedCRDs`, so "Applied" stops being mistaken for "converting". `scope: LegacyCluster` and its claim CRD made first-class: the injected-field set pinned per scope, `spec.claimNames` resolved everywhere a target is resolved, and an e2e leg covering both object classes. Scope-aware `Analyze` rejecting authored names Crossplane overwrites. A mutating admission guard so an XRD shipped in a `Configuration` package stops losing its conversion webhook on every package resync, plus a `PackageManaged` condition and revert counter that make the hazard visible either way. `convctl retarget` and `convctl crossplane status`. Crossplane 2.x stated as the requirement it already was, and checked at startup. |
+| **14 — Production readiness** | [#145](https://github.com/terasky-oss/declarative-conversion-operator/issues/145) | Informer caches that scale with the number of conversion configs rather than with the cluster: no Secret informer at all in the manager, label-scoped owned workloads, and a webhook-server cache transform that strips what the engine never reads. Timeouts and a body limit on both HTTP servers, with an oversized body answered as a well-formed failing `ConversionReview`. The panic path preserving the request UID, so its message actually arrives. Per-object conversion metrics, so a mixed-direction batch stops being attributed to whichever object was last. Rollout safety — `preStop`, grace period, spread, `maxUnavailable: 0` — proved by a nightly soak that rolls the webhook-server under load and asserts zero failed **and zero wrong** conversions. A curated `.golangci.yml` with every finding fixed, `govulncheck`/CodeQL/Trivy/Scorecard/Dependabot, a chart `values.schema.json`, `helm-unittest` in place of the CI `grep` block, and a [deprecation policy](deprecation-policy.md). |
 
 ## Proposed next phases
 
-Phases 0–11 are complete. Each phase below has an epic with per-deliverable
+Phases 0–11 and 14 are complete — 14 was taken out of order because four of
+its items were concrete defects on the apiserver's write path and did not
+warrant waiting for a phase. Each phase below has an epic with per-deliverable
 sub-issues carrying a priority label, a size label, and a full PRD. The detail —
 the review that produced the plan and the `file:line` findings behind each
 entry — is in [Review and proposed next phases](proposals/next-phases.md).
@@ -33,7 +36,6 @@ entry — is in [Review and proposed next phases](proposals/next-phases.md).
 |---|---|---|
 | **12 — XRD/CRD API evolution lifecycle** | [#125](https://github.com/terasky-oss/declarative-conversion-operator/issues/125) | `convctl plan` as the lifecycle state machine, golden-corpus conversion testing (`--record` / `--golden`), output validation against the destination schema plus required-field analysis, property-based round-trip fuzzing, a `convctl compat` gate between two git refs, and version/deprecation inventory. |
 | **13 — CI/CD: official GitHub Actions** | [#133](https://github.com/terasky-oss/declarative-conversion-operator/issues/133) | First-party composite Actions (`setup-convctl` with signature verification, `convctl-test`, `convctl-diff`, `convctl-fleet`) **with their own test workflow** — cross-runner matrix, a negative test proving verification fails on a tampered artifact, and assertions on annotations and job summaries, not just exit codes. Plus a published `convctl` image, CI-native output formats (GitHub annotations, SARIF, markdown), `convctl lint` over a whole repo, distribution via Homebrew / krew / deb / rpm, and a `--package` schema source so a Configuration's XRDs can be tested from a local `.xpkg`, a published image, or an installed `ConfigurationRevision`. |
-| **14 — Production readiness** | [#145](https://github.com/terasky-oss/declarative-conversion-operator/issues/145) | Scoped informer caches (the manager currently caches every Secret in the cluster), HTTP timeouts and body limits on the conversion endpoint, rollout safety for the webhook-server, a curated `.golangci.yml`, supply-chain scanning, and a chart `values.schema.json`. |
 | **15 — Performance and scale** | [#156](https://github.com/terasky-oss/declarative-conversion-operator/issues/156) | Automatic sharding across `ConversionWebhookServer` instances, a measured cold-start budget, per-target memory numbers, a nightly scale run at a raised envelope, and workqueue observability. |
 | **16 — Engine and strategy expansion** | [#162](https://github.com/terasky-oss/declarative-conversion-operator/issues/162) | Required-field satisfaction analysis, `oneOf`/`anyOf` branch mapping, `$ref`/`allOf` flattening, and further strategies driven by real migrations. |
 

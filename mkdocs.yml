@@ -116,6 +116,7 @@ nav:
       - Adding a strategy: contributing/adding-a-strategy.md
   - FAQ: faq.md
   - Limitations: limitations.md
+  - Deprecation policy: deprecation-policy.md
   - Roadmap:
       - roadmap.md
       - Review and proposed next phases: proposals/next-phases.md
