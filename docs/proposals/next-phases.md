@@ -27,21 +27,106 @@ dead ends. In particular:
   errors, unprovable losslessness requires an explicit acknowledgement, and the
   controller gates on XRD health *and* webhook-server readiness before it ever
   patches a live XRD.
-- **Passthrough of platform-injected fields is already correct.**
-  `pkg/engine/passthrough.go` distinguishes "declared but unclaimed" from
-  "never in the schema at all", which is precisely what keeps Crossplane's
-  injected `spec.crossplane` / `status.conditions` from being dropped on every
-  conversion. This is the kind of detail that usually bites a project a year in.
+- **Passthrough of platform-injected fields is already correct, in every
+  scope.** `pkg/engine/passthrough.go` distinguishes "declared but unclaimed"
+  from "never in the schema at all", key by key against the authored schema.
+  That is what keeps Crossplane's injected fields from being dropped on every
+  conversion — and because the check is key-by-key rather than a special case
+  for `spec.crossplane`, it handles the `LegacyCluster` layout (machinery
+  fields directly under `spec`) with no code of its own. Verified below rather
+  than assumed. This is the kind of detail that usually bites a project a year
+  in.
 - **The hot path is honest about its cost.** Copy-on-write registry, atomic-load
   reads, precompiled plans, and published benchmarks.
-- **Release engineering is above average for an alpha.** Multi-arch images,
+- **Release engineering is ahead of the maturity label.** Multi-arch images,
   keyless cosign signing, SBOM and provenance attestations, OCI-published chart.
 
 What the project does *not* yet have is (a) verification that the conversion it
-configured actually took effect in Crossplane's generated CRD, (b) support for
-the XRD shapes that still generate claims, (c) a first-party way to run
+configured actually took effect in Crossplane's generated CRD, (b) tooling that
+knows a claim-offering XRD has a second CRD, (c) a first-party way to run
 `convctl` in CI, and (d) a few pieces of ordinary production hardening. Those
 map onto the phases below.
+
+## Deep dive: the fields Crossplane injects
+
+Everything in this section was read out of
+[`crossplane-runtime/pkg/xcrd`](https://github.com/crossplane/crossplane-runtime/tree/main/pkg/xcrd)
+(`schemas.go`, `crd.go`) at `5b9c969`, not inferred from docs. It is the exact
+set of properties Crossplane merges into every generated CRD, and it is what
+the engine's passthrough has to leave alone.
+
+### Where the machinery lives, per scope
+
+`CompositeResourceSpecProps` branches on scope. Modern scopes nest everything
+under one `spec.crossplane` key; **`LegacyCluster` keeps the v1 layout, with
+the machinery fields directly under `spec`, as siblings of the author's own
+fields** — and adds two fields the modern scopes do not have.
+
+| Injected property | `Namespaced` | `Cluster` | `LegacyCluster` |
+|---|---|---|---|
+| `compositionRef` | `spec.crossplane.` | `spec.crossplane.` | `spec.` |
+| `compositionSelector` | `spec.crossplane.` | `spec.crossplane.` | `spec.` |
+| `compositionRevisionRef` | `spec.crossplane.` | `spec.crossplane.` | `spec.` |
+| `compositionRevisionSelector` | `spec.crossplane.` | `spec.crossplane.` | `spec.` |
+| `compositionUpdatePolicy` | `spec.crossplane.` | `spec.crossplane.` | `spec.` |
+| `resourceRefs[]` | `spec.crossplane.` — items **without** `namespace` | `spec.crossplane.` — items **with** `namespace` | `spec.` — items **with** `namespace` |
+| `claimRef` | — | — | `spec.claimRef` |
+| `writeConnectionSecretToRef` | — | — | `spec.` (`name` + `namespace`) |
+| `status.conditions` | ✓ | ✓ | ✓ |
+| `status.connectionDetails` | — | — | ✓ (`lastPublishedTime`) |
+| `status.claimConditionTypes` | — | — | ✓ |
+
+There is **no `status.crossplane`** in any scope. `BaseProps()` additionally
+declares `apiVersion`, `kind`, `metadata` (narrowed to `name`, with
+`maxLength: 63`), `spec` and `status`, and makes `spec` required at the root.
+
+### The claim CRD
+
+A `LegacyCluster` XRD with `claimNames` produces a **second** CRD,
+`{claimPlural}.{group}`, namespace-scoped. Three things about it matter here:
+
+1. **It carries the same `spec.conversion`.** `ForCompositeResourceClaim`
+   copies `xrd.Spec.Conversion` exactly as `ForCompositeResource` does — so the
+   claim CRD points at the same webhook, at the same `/convert/<xrd-name>` path,
+   and lands on the same compiled plan in this operator's registry.
+2. **It shares the authored schema.** Both CRDs are built from the same
+   `spec.versions[].schema.openAPIV3Schema`, so a rule written against
+   `spec.foo` is correct for claims without any extra work.
+3. **Its machinery fields differ.** `resourceRef` (singular object, not the
+   `resourceRefs` array), `compositeDeletePolicy`, and a
+   `writeConnectionSecretToRef` that takes only `name` — no `namespace`.
+   Its status is the `LegacyCluster` status set, `claimConditionTypes`
+   included, which upstream marks as a known bug in a `TODO`.
+
+The consequence is good news and bad news. Conversion of claim objects already
+works, because the shared authored schema makes the plan correct and
+passthrough covers the machinery. But every part of the tooling that resolves a
+target by `spec.names.plural` is blind to the claim CRD's existence — see F8.
+
+### What was verified, not assumed
+
+Two claims in the earlier draft needed checking. Both were tested against
+`pkg/engine` directly:
+
+- **`status.conditions` is not dropped.** The concern that the engine discards
+  conditions is unfounded. `passthroughUnknownOp` copies the whole
+  `status.conditions` value through untouched in both directions, so
+  Crossplane-owned conditions (`Synced`, `Ready`) and conditions written by
+  anyone else survive identically — the engine never inspects, filters, or
+  reconstructs the array, which is exactly the right behaviour given that
+  condition ownership is not knowable from the schema. A round trip carrying
+  three conditions, one of them author-defined, came back byte-identical.
+- **The legacy layout passes through correctly.** All eight `LegacyCluster`
+  machinery fields sitting directly under `spec`, plus
+  `status.connectionDetails` and `status.claimConditionTypes`, round-tripped
+  unchanged alongside ruled fields. The mechanism is key-by-key against the
+  authored schema, so it is layout-agnostic by construction: it never had a
+  special case for `spec.crossplane` to begin with.
+
+Both deserve permanent regression tests named for the scope they cover — the
+existing test mentions `spec.crossplane` in a comment but only exercises
+`status.conditions`, so the legacy layout is currently correct by accident
+rather than by assertion.
 
 ## Findings
 
@@ -128,24 +213,63 @@ GitLab CI, a GitHub container job) therefore has no image to use.
 `echo "install convctl and place it on PATH" >&2; exit 1`. The documented CI
 pattern stops at the first step. Phase 13 exists to fix this properly.
 
-### F8 — Crossplane v1 is claimed as "handled identically", but the GVK is pinned to v2
+### F8 — On a `LegacyCluster` XRD, the claim CRD is invisible to the tooling
 
-`pkg/xrdadapter/xrdadapter.go:52` hardcodes `apiextensions.crossplane.io/v2`.
-On a Crossplane 2.x cluster this is correct and v1-authored XRDs are read
-through the v2 endpoint by the apiserver's own conversion. On a Crossplane
-**1.x** cluster, where the XRD CRD serves only `v1`/`v1beta1`, the manager
-cannot see XRDs at all. [Limitations](../limitations.md) currently reads as if
-v1 clusters merely lack CI coverage. Either discover the served version at
-startup and support both, or say plainly that Crossplane 2.x is required.
+Every path that resolves a target reads `spec.names.plural` and never
+`spec.claimNames.plural` (`internal/cli/live.go:78`,
+`internal/cli/migratestorage.go:373-386`). On a claim-offering XRD that is
+three separate blind spots:
 
-### F9 — No `.golangci.yml`
+- `convctl test --live` samples composite resources only. Claims are their own
+  stored object class with their own instances, so the pre-upgrade check
+  silently covers half the objects that will actually go through the webhook.
+- `migrate-storage --prune-stored-versions` rewrites and prunes the composite
+  CRD only. The claim CRD's objects stay encoded at the old version and its
+  `status.storedVersions` never shrinks — so the version still cannot be
+  dropped from the XRD, which is the entire point of running the command.
+- Propagation (11.1) has two CRDs to verify, not one.
+
+Conversion of claim objects itself already works: the claim CRD carries the
+same `spec.conversion` and is built from the same authored schema, so it lands
+on the same compiled plan and the machinery fields are handled by passthrough.
+This is a tooling gap, not an engine gap.
+
+### F9 — An authored field that Crossplane will overwrite draws no diagnostic
+
+`genCrdVersion` copies the author's properties into the generated CRD first,
+then `ForCompositeResource` copies the injected properties over the top. So an
+XRD that declares, say, `spec.crossplane` on a `Namespaced` XR, or its own
+`status.conditions`, has that declaration **silently replaced** in the CRD the
+apiserver actually enforces.
+
+The engine analyses the authored schema, so it happily compiles rules against a
+subtree that will never exist at runtime. Confirmed by test: an authored
+`spec.crossplane` compiles with zero errors and zero warnings. `Analyze` should
+reject a collision with the injected set for the XRD's scope.
+
+### F10 — Scope read at `v2` may not be the scope Crossplane uses
+
+The XRD CRD serves `v1` (storage) and `v2` with **no conversion webhook**
+(`strategy: None`), and the two versions default `spec.scope` differently:
+`v1` defaults to `LegacyCluster`, `v2` to `Namespaced`. An XRD persisted
+without an explicit `scope` — the shape a Crossplane 1.x cluster leaves behind
+after an upgrade — therefore defaults differently depending on which version
+you read it at, and this operator reads at `v2`
+(`pkg/xrdadapter/xrdadapter.go:52`).
+
+Worth confirming against a genuinely upgraded cluster before treating it as a
+bug, but the adapter should not trust a defaulted `spec.scope` either way:
+cross-check `spec.claimNames`, whose presence Crossplane's own CEL rule ties to
+`LegacyCluster`.
+
+### F11 — No `.golangci.yml`
 
 The `golangci-lint` CI job runs with defaults only (errcheck, govet,
 ineffassign, staticcheck, unused). `gosec` would have caught F3; `errorlint`,
 `bodyclose`, `copyloopvar`, and `perfsprint` all have something to say about a
 codebase this size.
 
-### F10 — Supply-chain and repo hygiene gaps
+### F12 — Supply-chain and repo hygiene gaps
 
 No `dependabot.yml` or Renovate config, no CodeQL, no `govulncheck` gate, no
 image vulnerability scan, no OpenSSF Scorecard, no issue or PR templates, and
@@ -153,7 +277,7 @@ no `values.schema.json` for the chart (so a typo in a values key is silent).
 For a project that already does cosign + SBOM + provenance, these are the
 cheapest remaining wins.
 
-### F11 — Per-batch metrics attribute latency to the last object's direction
+### F13 — Per-batch metrics attribute latency to the last object's direction
 
 `internal/webhookserver/server.go:232`: `direction` is reassigned per object
 inside the loop and then used once for the whole batch. In a mixed-direction
@@ -190,26 +314,43 @@ Deliverables:
 This is the single most important correctness gain available, because it turns
 a silent failure mode into a condition.
 
-### 11.2 Claim (XRC) awareness for claim-generating XRDs
+### 11.2 `LegacyCluster` scope and claims
 
-An XRD with `claimNames` (Crossplane v1, and `scope: LegacyCluster` in v2)
-generates a **second** CRD for the claim type, with its own schema — same
-`spec` shape, different machinery fields (`spec.resourceRef` rather than
-`spec.resourceRefs`, `spec.compositeDeletePolicy`, no `spec.claimRef`). Nothing
-in this repository mentions claims; `test/e2e/testdata/xrd.yaml` is
-`scope: Namespaced`, so there is no coverage at all.
+`scope: LegacyCluster` is the v1 compatibility layer inside Crossplane 2.x, and
+it is the shape every cluster upgraded from 1.x still runs. It is not exotic
+and it is not going away — but nothing in this repository mentions it, and the
+e2e fixture is `scope: Namespaced`, so coverage is zero.
+
+The good news from the [deep dive](#deep-dive-the-fields-crossplane-injects) is
+that the **engine already handles it**: the machinery fields sit directly under
+`spec` rather than under `spec.crossplane`, and passthrough is key-by-key
+against the authored schema, so the legacy layout round-trips unchanged. What
+is missing is everything around the engine.
 
 Deliverables:
 
-- `xrdadapter` exposes the claim schema alongside the composite schema.
-- `Analyze` runs the same rule set against both and reports any field that is
-  covered on the composite but uncovered on the claim.
-- Propagation verification (11.1) covers both generated CRDs.
-- An e2e leg with a claim-generating XRD, asserting a claim created at `v1`
-  reads back correctly at `v2`.
-
-Until this lands, `scope: LegacyCluster` should be documented as unsupported
-rather than untested.
+- **Lock the behaviour down with tests.** A regression test per scope covering
+  the exact injected set: `spec.crossplane.*` with and without
+  `resourceRefs[].namespace` for `Namespaced` / `Cluster`, and the eight
+  `spec.*` machinery fields plus `claimRef`, `writeConnectionSecretToRef`,
+  `status.connectionDetails` and `status.claimConditionTypes` for
+  `LegacyCluster`. Today the legacy layout is correct by accident, not by
+  assertion.
+- **Teach the tooling the claim CRD exists.** Resolve `spec.claimNames.plural`
+  alongside `spec.names.plural` so `test --live` samples claims,
+  `migrate-storage` rewrites and prunes both CRDs, and propagation
+  verification (11.1) checks both. This is F8, and the `migrate-storage` half
+  of it is the difference between "prune ran" and "the version can actually be
+  dropped".
+- **Scope-aware validation.** `Analyze` knows the XRD's scope, so it can reject
+  an authored field name that Crossplane will overwrite (F9) and warn on a rule
+  targeting a path that is injected rather than authored.
+- **An e2e leg on a `LegacyCluster` XRD**, asserting that both a composite
+  created at `v1` and a **claim** created at `v1` read back correctly converted
+  at `v2`, and that the machinery fields and every condition survive.
+- **Say what `convctl` needs.** `convctl analyze` and `test` should print the
+  detected scope, so an author can see which injected set is in play without
+  reading this page.
 
 ### 11.3 Composition retarget without Kyverno
 
@@ -239,13 +380,19 @@ Deliverables: detect a package owner reference on the target XRD, surface
 `ManagedByPackage` on status, document the interaction and the recommended
 ordering, and add a metric for observed reverts.
 
-### 11.5 Crossplane version support, stated honestly
+### 11.5 Crossplane 2.x only, stated plainly
 
-Resolve F8 — either discover `v1` vs `v2` at startup (a small change: the GVK
-becomes a startup-resolved value rather than a package constant) and add a
-Crossplane-1.x e2e leg, or state the 2.x requirement in
-[Limitations](../limitations.md) and the chart's `NOTES.txt`. The current
-wording sits between the two.
+Crossplane 1.x clusters are **out of scope** — not "untested", not "handled
+identically by the code path". The `v2` XRD API is what this operator reads,
+and a 1.x cluster does not serve it. Say so in
+[Limitations](../limitations.md), the chart's `NOTES.txt`, and the README, and
+delete the wording that currently implies otherwise.
+
+What that does *not* drop is the v1 compatibility layer **inside** Crossplane
+2.x: `scope: LegacyCluster` is expressed through the still-served
+`apiextensions.crossplane.io/v1` XRD API, and it is a first-class target
+(11.2). Separately, resolve F10 by deriving scope from something more
+trustworthy than a defaulted `spec.scope` read at `v2`.
 
 ## Phase 12 — XRD/CRD API evolution lifecycle
 
@@ -333,8 +480,28 @@ The verification step matters: this project already signs its CLI artifacts
 keylessly, and an action that verifies by default turns that investment into
 something every consumer benefits from without reading the release notes.
 
-Rewrite `docs/gitops/convctl-fleet.gha.yml` on top of these so the reference
-workflow actually runs.
+**The Actions get their own tests**, in a dedicated workflow that runs on every
+PR touching `.github/actions/**` — an Action nobody tests is a broken Action
+nobody notices until a consumer's pipeline goes red:
+
+- **Behavioural tests per Action**, run as ordinary jobs that call the Action
+  with `uses: ./.github/actions/<name>`: `setup-convctl` resolves latest,
+  resolves an explicit version, puts a working binary on `PATH`, and its
+  version output matches the requested tag.
+- **A negative test for `verify`.** Point the action at a tampered archive or a
+  mismatched checksum and assert it **fails**. A verification step that cannot
+  be shown to fail is not a verification step.
+- **Output assertions, not just exit codes.** `convctl-test` against a
+  deliberately lossy fixture must produce the annotation on the right file and
+  line and mark the job failed; against a clean fixture it must pass and still
+  upload a report. Assert on the rendered job summary and the annotation
+  payload, not merely on the process exit code.
+- **A cross-runner matrix** (`ubuntu-latest`, `macos-latest`,
+  `windows-latest`) — the CLI ships darwin and windows archives, so the
+  installer has to work there.
+- **Pinned-input and cache-hit paths** exercised separately, since the cached
+  branch is the one that runs in practice and the one that silently rots.
+- **`actionlint`** over every workflow and Action definition in the repo.
 
 ### 13.2 Publish the `convctl` image
 
@@ -383,7 +550,7 @@ the report that the run was sampled.
 The theme: the things that stand between "works" and "run it in front of the
 apiserver's write path".
 
-- **Fix F1–F4 and F11.** Scoped caches, HTTP timeouts and body limits, the
+- **Fix F1–F4 and F13.** Scoped caches, HTTP timeouts and body limits, the
   panic UID, per-object metric attribution.
 - **Rollout safety.** A conversion webhook that 502s during its own rolling
   update fails every write to the target type. Add a `preStop` sleep so
@@ -392,9 +559,9 @@ apiserver's write path".
   `topologySpreadConstraints` / anti-affinity for the webhook-server
   Deployment. Prove it with a soak e2e: roll the webhook-server under sustained
   XR writes and assert **zero** conversion failures.
-- **`.golangci.yml`** (F9) with `gosec`, `errorlint`, `bodyclose`,
+- **`.golangci.yml`** (F11) with `gosec`, `errorlint`, `bodyclose`,
   `copyloopvar`, `revive`, `perfsprint`.
-- **Supply chain** (F10): Dependabot or Renovate, CodeQL, `govulncheck` as a CI
+- **Supply chain** (F12): Dependabot or Renovate, CodeQL, `govulncheck` as a CI
   gate, Trivy image scan, OpenSSF Scorecard badge, issue/PR templates.
 - **`values.schema.json`** for the chart, plus `helm-unittest` for the template
   logic the CI job currently greps for.
@@ -444,7 +611,7 @@ apiserver's write path".
 
 ```mermaid
 graph LR
-  P14[14 · Hardening<br/>F1–F4, F9–F11] --> P11[11 · Crossplane depth]
+  P14[14 · Hardening<br/>F1–F4, F9–F13] --> P11[11 · Crossplane depth]
   P14 --> P13[13 · CI/CD + Actions]
   P11 --> P12[12 · API evolution]
   P13 --> P12
@@ -467,6 +634,9 @@ Two notes on ordering:
 Unchanged from the current roadmap, and worth restating because each one keeps
 the design small:
 
+- **Crossplane 1.x clusters.** The `v2` XRD API is the target. The v1
+  compatibility layer *inside* Crossplane 2.x — `scope: LegacyCluster`, claims,
+  connection secrets — is fully in scope; 1.x control planes are not.
 - **No cross-cluster coordination.** Fleet consistency is a CI property, not a
   runtime one.
 - **No runtime state shared between webhook-server replicas.** The absence of a
