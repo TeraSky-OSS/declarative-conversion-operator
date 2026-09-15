@@ -17,6 +17,7 @@ limitations under the License.
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,10 +46,10 @@ type FleetReport struct {
 
 func resolveLiveTargets(opts TestOptions) ([]liveTarget, error) {
 	if opts.KubeconfigDir != "" && opts.Kubeconfig != "" {
-		return nil, fmt.Errorf("--kubeconfig and --kubeconfig-dir are mutually exclusive")
+		return nil, errors.New("--kubeconfig and --kubeconfig-dir are mutually exclusive")
 	}
 	if len(opts.Contexts) > 0 && opts.KubeContext != "" {
-		return nil, fmt.Errorf("--context and --contexts are mutually exclusive")
+		return nil, errors.New("--context and --contexts are mutually exclusive")
 	}
 
 	if opts.KubeconfigDir == "" && len(opts.Contexts) == 0 {
@@ -91,7 +92,7 @@ func resolveLiveTargets(opts TestOptions) ([]liveTarget, error) {
 	for _, f := range files {
 		for _, ctx := range opts.Contexts {
 			if ctx == "" {
-				return nil, fmt.Errorf("--contexts contains an empty name")
+				return nil, errors.New("--contexts contains an empty name")
 			}
 			label := ctx
 			if f != "" {

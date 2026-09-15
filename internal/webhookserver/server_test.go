@@ -37,7 +37,7 @@ func TestHandleConvert_NotRegistered_FailsClosed(t *testing.T) {
 	s := &Server{Registry: NewRegistry()}
 	review := extv1.ConversionReview{Request: &extv1.ConversionRequest{UID: "abc", DesiredAPIVersion: "example.org/v2"}}
 	body, _ := json.Marshal(review)
-	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	s.handleConvert(rec, req)
@@ -75,7 +75,7 @@ func TestHandleConvert_Success(t *testing.T) {
 		Objects: []runtime.RawExtension{{Raw: raw}},
 	}}
 	body, _ := json.Marshal(review)
-	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	s.handleConvert(rec, req)
@@ -121,7 +121,7 @@ func TestHandleConvert_PartialObjectStillHasMetadata(t *testing.T) {
 		Objects: []runtime.RawExtension{{Raw: raw}},
 	}}
 	body, _ := json.Marshal(review)
-	req := httptest.NewRequest("POST", "/convert/xwidgets.example.org", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xwidgets.example.org", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleConvert(rec, req)
 
@@ -168,7 +168,7 @@ func TestRegistry_RecordErrorPreservesRouter(t *testing.T) {
 
 func TestHandleConvert_WrongMethod_Rejected(t *testing.T) {
 	s := &Server{Registry: NewRegistry()}
-	req := httptest.NewRequest("GET", "/convert/xfoos.example.org", nil)
+	req := httptest.NewRequest(http.MethodGet, "/convert/xfoos.example.org", nil)
 	rec := httptest.NewRecorder()
 	s.handleConvert(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -178,7 +178,7 @@ func TestHandleConvert_WrongMethod_Rejected(t *testing.T) {
 
 func TestHandleConvert_MalformedBody_BadRequest(t *testing.T) {
 	s := &Server{Registry: NewRegistry()}
-	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader([]byte("{not json")))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader([]byte("{not json")))
 	rec := httptest.NewRecorder()
 	s.handleConvert(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -189,7 +189,7 @@ func TestHandleConvert_MalformedBody_BadRequest(t *testing.T) {
 func TestHandleConvert_MissingRequest_BadRequest(t *testing.T) {
 	s := &Server{Registry: NewRegistry()}
 	body, _ := json.Marshal(extv1.ConversionReview{}) // no .Request
-	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleConvert(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -211,7 +211,7 @@ func TestHandleConvert_NoCompiledPlanForRequestedVersion_FailsClosed(t *testing.
 		Objects: []runtime.RawExtension{{Raw: raw}},
 	}}
 	body, _ := json.Marshal(review)
-	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleConvert(rec, req)
 
@@ -242,7 +242,7 @@ func TestHandleConvert_LossyConversion_IncrementsMetric(t *testing.T) {
 		Objects: []runtime.RawExtension{{Raw: raw}},
 	}}
 	body, _ := json.Marshal(review)
-	req := httptest.NewRequest("POST", "/convert/xfoos.example.org", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleConvert(rec, req)
 
@@ -256,7 +256,7 @@ func TestHandleConvert_LossyConversion_IncrementsMetric(t *testing.T) {
 
 func TestHandleReadyz(t *testing.T) {
 	s := &Server{Registry: NewRegistry(), Metrics: newTestMetrics()}
-	req := httptest.NewRequest("GET", "/readyz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	s.handleReadyz(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -288,7 +288,7 @@ func TestHandleDebugRegistry(t *testing.T) {
 	registry.RecordError("broken.example.org", "schema drift")
 	s := &Server{Registry: registry}
 
-	req := httptest.NewRequest("GET", "/debug/registry", nil)
+	req := httptest.NewRequest(http.MethodGet, "/debug/registry", nil)
 	rec := httptest.NewRecorder()
 	s.handleDebugRegistry(rec, req)
 
@@ -323,7 +323,7 @@ func TestPlainMux_ExposesDedicatedRegistryMetrics(t *testing.T) {
 	metrics.RegistrySize.Set(3)
 	s := &Server{Registry: NewRegistry(), Metrics: metrics}
 
-	req := httptest.NewRequest("GET", "/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	s.PlainMux().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -344,7 +344,7 @@ func TestMetrics_HandlerWithoutGatherer(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	wrapped := prometheus.WrapRegistererWith(prometheus.Labels{"pod": "a"}, reg)
 	metrics := NewMetrics(wrapped, nil)
-	req := httptest.NewRequest("GET", "/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	(&Server{Registry: NewRegistry(), Metrics: metrics}).PlainMux().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -357,7 +357,7 @@ func TestMetrics_HandlerWithWrappedRegisterer(t *testing.T) {
 	wrapped := prometheus.WrapRegistererWith(prometheus.Labels{"pod": "a"}, reg)
 	metrics := NewMetrics(wrapped, reg)
 	metrics.Ready.Set(1)
-	req := httptest.NewRequest("GET", "/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	(&Server{Registry: NewRegistry(), Metrics: metrics}).PlainMux().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

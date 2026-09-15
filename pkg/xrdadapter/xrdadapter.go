@@ -62,6 +62,38 @@ var GroupVersionResource = schema.GroupVersionResource{
 	Resource: "compositeresourcedefinitions",
 }
 
+// LegacyGroupVersion is the still-served v1 XRD API. Reads happen at v2
+// (see GroupVersionKind), but a WRITE has to go to whichever version can
+// express the object: the v2 schema has no claimNames field and rejects any
+// write to an XRD that has one with
+//
+//	spec: Invalid value: Claims aren't supported in apiextensions.crossplane.io/v2
+//
+// so a claim-offering XRD can only be patched at v1. See WriteGroupVersion.
+var LegacyGroupVersion = schema.GroupVersion{Group: "apiextensions.crossplane.io", Version: "v1"}
+
+// WriteGroupVersion returns the XRD API version a write to this object must
+// use.
+//
+// Reads are version-agnostic — the XRD CRD serves both with strategy: None,
+// so a v2 read of a claim-offering XRD still carries spec.claimNames — but
+// writes are validated against the target version's schema, and v2 refuses
+// an XRD with claims outright. Patching spec.conversion onto a
+// LegacyCluster XRD therefore has to be addressed at v1, or it fails on
+// every reconcile with an error that names claims rather than conversion.
+//
+// A nil object, or one with no claimNames, gets v2: that is the current API
+// and the one every non-legacy XRD should be written at.
+func WriteGroupVersion(xrd *unstructured.Unstructured) schema.GroupVersion {
+	if xrd == nil {
+		return GroupVersionKind.GroupVersion()
+	}
+	if _, found, _ := unstructured.NestedMap(xrd.Object, "spec", "claimNames"); found {
+		return LegacyGroupVersion
+	}
+	return GroupVersionKind.GroupVersion()
+}
+
 // Source implements engine.SchemaSource by reading a live
 // CompositeResourceDefinition. The schema handed to the engine for each
 // version is the whole per-version openAPIV3Schema root (not narrowed to

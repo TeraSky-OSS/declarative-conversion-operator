@@ -1,0 +1,17 @@
+# A composite created at spoke v1, carrying LegacyCluster machinery fields
+# directly under spec — the layout that has to survive conversion untouched.
+apiVersion: e2e.example.org/v1
+kind: XLegacyWidget
+metadata:
+  name: e2e-legacy-widget-v1
+spec:
+  storageSize: "100Gi"
+  memoryGB: 4
+  size: M
+  zone:
+    name: eu-central-1a
+  compositionRef:
+    name: not-a-real-composition
+  writeConnectionSecretToRef:
+    name: legacy-widget-conn
+    namespace: default

@@ -6,7 +6,7 @@ Declarative conversion webhooks for Crossplane XRDs and, since `CRDConversionCon
 
 - Kubernetes 1.27+
 - [cert-manager](https://cert-manager.io/docs/installation/) installed (both this operator's own admission webhook and every `ConversionWebhookServer` instance's conversion webhook need it for TLS)
-- [Crossplane](https://docs.crossplane.io/) installed, with at least one `CompositeResourceDefinition` you want to manage multi-version conversion for — **unless** you set `features.crossplane.enabled: false` (see below), in which case Crossplane isn't required at all and only `CRDConversionConfig` (native CRDs) is available
+- **[Crossplane 2.x](https://docs.crossplane.io/)** installed, with at least one `CompositeResourceDefinition` you want to manage multi-version conversion for — **unless** you set `features.crossplane.enabled: false` (see below), in which case Crossplane isn't required at all and only `CRDConversionConfig` (native CRDs) is available. The operator reads XRDs at `apiextensions.crossplane.io/v2`; Crossplane 1.x control planes do not serve it and are out of scope. `scope: LegacyCluster` XRDs and their claims are fully supported on 2.x.
 
 ## Install
 
@@ -28,7 +28,7 @@ features:
     enabled: false  # set false to disable native-CRD conversion support
 ```
 
-Both CRDs are always installed regardless of these toggles (an unused CRD sitting inert is harmless); the toggles instead control which controllers/watches the manager and every `ConversionWebhookServer` replica actually set up. **Important:** if Crossplane isn't installed, `features.crossplane.enabled` must be set to `false` — the manager watches Crossplane's `CompositeResourceDefinition` type, and establishing that watch fails fatally at startup if the type doesn't exist on the cluster.
+Both CRDs are always installed regardless of these toggles (an unused CRD sitting inert is harmless); the toggles instead control which controllers/watches the manager and every `ConversionWebhookServer` replica actually set up. **Important:** if Crossplane 2.x isn't installed, `features.crossplane.enabled` must be set to `false` — the manager watches Crossplane's `CompositeResourceDefinition` type at `apiextensions.crossplane.io/v2`, and exits at startup with an actionable error if the cluster does not serve that API version.
 
 ## Upgrading CRDs
 
@@ -55,7 +55,7 @@ helm upgrade declarative-conversion-operator charts/declarative-conversion-opera
 | `metrics.serviceMonitor.enabled` | Create Prometheus Operator `ServiceMonitor`s (opt-in; not auto-detected) | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in conversion/manager alerts | `false` |
 | `dashboards.enabled` | Create Grafana sidecar dashboard ConfigMaps (`grafana_dashboard: "1"`): Conversion Overview, Conversion Target Detail, and Conversion Platform Stability | `false` |
-| `features.crossplane.enabled` | Enable `XRDConversionConfig` support for Crossplane XRDs. Requires Crossplane to be installed. | `true` |
+| `features.crossplane.enabled` | Enable `XRDConversionConfig` support for Crossplane XRDs. Requires **Crossplane 2.x** (`apiextensions.crossplane.io/v2`) installed. | `true` |
 | `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support for plain native CustomResourceDefinitions. | `true` |
 
 See `values.yaml` for the full set.

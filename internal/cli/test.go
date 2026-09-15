@@ -18,6 +18,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -26,6 +27,7 @@ import (
 
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // TestOptions configures RunTest.
@@ -61,6 +63,15 @@ type TestOptions struct {
 	Concurrency int
 	// Quiet suppresses the progress line written to stderr.
 	Quiet bool
+
+	// VerifyPropagation additionally checks, against the same cluster,
+	// that every CRD Crossplane generates from the target XRD actually
+	// carries the conversion webhook the XRD points at. Samples passing
+	// through the engine says the rules are right; this says the cluster
+	// will use them. Requires Live, and is XRD-only — a
+	// CRDConversionConfig's target *is* the CRD, so there is nothing to
+	// propagate.
+	VerifyPropagation bool
 }
 
 // effectiveConcurrency clamps Concurrency to at least one worker, and to
@@ -99,6 +110,19 @@ func RunTest(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Enforce VerifyPropagation's documented constraints here rather than
+	// only in the cobra command: TestOptions is exported, and silently
+	// skipping a check the caller asked for is the failure mode the check
+	// exists to prevent.
+	if opts.VerifyPropagation {
+		if !opts.Live {
+			return nil, errors.New("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
+		}
+		if kind == "CRDConversionConfig" {
+			return nil, errors.New("--verify-propagation applies only to an XRDConversionConfig: a CRDConversionConfig's target IS the CRD, so there is no generated CRD for the conversion webhook to propagate into")
+		}
+	}
+
 	switch kind {
 	case "CRDConversionConfig":
 		if opts.CRDPath == "" {
@@ -128,10 +152,25 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		return nil, fmt.Errorf("configuration is structurally invalid: %w", err)
 	}
 	var samples []Sample
+	// Which fields Crossplane injects, and where they sit, is decided by
+	// the XRD's scope — so report it alongside the results rather than
+	// making an author infer it, and say so when the manifest does not
+	// settle the question.
+	scope := xrdadapter.ResolveScope(xrd)
+	var (
+		propagation *PropagationReport
+		perr        error
+	)
 	if opts.Live {
 		dyn, err := buildDynamicClient(KubeOptions{Kubeconfig: opts.Kubeconfig, Context: opts.KubeContext})
 		if err != nil {
 			return nil, err
+		}
+		if opts.VerifyPropagation {
+			propagation, perr = VerifyPropagation(context.Background(), dyn, xrdName(xrd))
+			if perr != nil {
+				return nil, fmt.Errorf("verifying conversion propagation: %w", perr)
+			}
 		}
 		samples, err = FetchLiveSamples(context.Background(), dyn, xrd, cfg.Spec.HubVersion)
 		if err != nil {
@@ -169,7 +208,13 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	rep, err := runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	if err != nil {
+		return nil, err
+	}
+	rep.Meta.Scope = scopeView(scope)
+	rep.Propagation = propagation
+	return rep, nil
 }
 
 func runTestCRD(opts TestOptions) (*Report, error) {
@@ -299,6 +344,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 
 	rep.Samples = results
 	rep.Summary.Samples = len(samples)
+	rep.Summary.SamplesByCRD = samplesByCRD(samples)
 
 	for _, sr := range report.SpokeReports {
 		for _, rr := range sr.RuleResults {
@@ -327,7 +373,7 @@ type sampleCounts struct {
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
 func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string) (SampleResult, sampleCounts, map[string]int) {
-	sr := SampleResult{File: s.File, AssertedVersion: s.Version}
+	sr := SampleResult{File: s.File, AssertedVersion: s.Version, CRD: s.CRD, CRDRole: s.CRDRole}
 	var counts sampleCounts
 	usage := map[string]int{}
 	if !containsString(configured, s.Version) {
@@ -532,4 +578,33 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		}
 	}
 	return pr
+}
+
+// samplesByCRD breaks a --live run's sample count down per generated CRD,
+// preserving the order FetchLiveSamples listed them in (composite first,
+// then claim). It returns nil unless more than one CRD contributed —
+// "1 CRD, N samples" is what every other run already reports.
+func samplesByCRD(samples []Sample) []CRDSampleCount {
+	var order []string
+	byCRD := map[string]*CRDSampleCount{}
+	for _, s := range samples {
+		if s.CRD == "" {
+			continue
+		}
+		c, ok := byCRD[s.CRD]
+		if !ok {
+			c = &CRDSampleCount{CRD: s.CRD, Role: s.CRDRole}
+			byCRD[s.CRD] = c
+			order = append(order, s.CRD)
+		}
+		c.Samples++
+	}
+	if len(order) < 2 {
+		return nil
+	}
+	out := make([]CRDSampleCount, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byCRD[name])
+	}
+	return out
 }

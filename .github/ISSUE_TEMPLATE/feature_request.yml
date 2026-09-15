@@ -1,0 +1,42 @@
+name: Feature request
+description: Something the operator should be able to do and cannot.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If you are proposing a new **conversion strategy** specifically, use
+        the "Conversion strategy proposal" template instead — it asks the
+        questions that decide whether a strategy can exist at all.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do, and what stops you? Describe the situation,
+        not the feature — the feature is what this issue is for working out.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you are doing instead today
+      description: >
+        Including "nothing, we gave up". A workaround that already exists is
+        the strongest argument that the feature is worth the surface area, or
+        that it is not.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you think it should look like
+      description: Optional. A rough shape is fine; so is leaving this blank.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I have read [Limitations](https://terasky-oss.github.io/declarative-conversion-operator/limitations/) and this is not something deliberately out of scope.

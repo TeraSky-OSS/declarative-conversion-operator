@@ -18,9 +18,15 @@ them leads to over-provisioning the wrong one.
       enabled by default with `minAvailable: 1`. On a cluster where node drains
       are routine, prefer `minAvailable: 2` with 3 replicas: `minAvailable: 1`
       permits draining down to a single replica, which then has no headroom.
-- [ ] **Spread across nodes.** Use
-      `conversionWebhookServer.affinity` for anti-affinity across nodes (or zones)
-      so a single node loss can't take every replica.
+- [ ] **Spread across nodes.** A soft (`ScheduleAnyway`) spread across
+      `kubernetes.io/hostname` is applied by default, so replicas do not all land
+      on one node and a single node drain is not a full conversion outage. It is
+      soft on purpose: a hard constraint makes a single-node cluster's Deployment
+      unschedulable, and an outage caused by the anti-outage setting is the worse
+      failure. For zone spreading, or to require rather than prefer it, set
+      `conversionWebhookServer.topologySpreadConstraints` (which replaces the
+      default entirely) or `conversionWebhookServer.affinity`. Turn the default
+      off with `conversionWebhookServer.rollout.defaultTopologySpread: false`.
 - [ ] **Autoscale with a floor of 2.** `conversionWebhookServer.autoscaling`
       (CPU-based) is off by default; when you enable it, keep `minReplicas: 2` or
       higher. `replicas` and `autoscaling` are mutually exclusive — once
@@ -43,6 +49,55 @@ them leads to over-provisioning the wrong one.
       ```
 
       An empty result means every ready replica can serve that target.
+
+## Rolling updates
+
+A conversion webhook is on the apiserver's admission path. A replica that
+stops listening before the apiserver stops being routed to it fails **every
+write** to **every target it serves**, for reasons that have nothing to do
+with the deployment being rolled. The defaults below make that not happen;
+they are a set, not four independent knobs.
+
+- [ ] **Leave the `preStop` sleep on.** `rollout.preStopSleepSeconds` defaults
+      to `5`. It makes the container outlive its own Endpoints removal, so the
+      apiserver stops being routed here before the listener goes away. This is
+      the single highest-value setting on this page. Setting it to `0` disables
+      the hook and is only correct if something else already guarantees the
+      ordering.
+- [ ] **Keep the three timeouts consistent.** The sequence a terminating pod
+      goes through is:
+
+      ```text
+      preStop sleep (5s)  →  SIGTERM  →  graceful drain (--shutdown-timeout, 30s)
+                                              →  (grace period ends) SIGKILL
+      ```
+
+      so `rollout.terminationGracePeriodSeconds` (default `45`) must exceed
+      preStop + drain. Raising one in isolation is how a rollout that looked
+      safe starts dropping requests; the ConversionWebhookServer validating
+      webhook rejects a combination that does not add up, including a
+      `--shutdown-timeout` set through `extraArgs`.
+- [ ] **Do not lower `maxSurge` or raise `maxUnavailable` casually.**
+      `rollout.maxUnavailable` defaults to `0` and `rollout.maxSurge` to `1`, so
+      a replacement is Ready before its predecessor goes away. This is stricter
+      than Kubernetes' own 25% default on purpose: at two replicas, taking one
+      out first halves the capacity of an admission-path dependency. With
+      `maxUnavailable: 0`, a `maxSurge` of at least 1 is required or the rollout
+      cannot progress at all.
+- [ ] **Check the PodDisruptionBudget agrees.** `minAvailable: 1` with two
+      replicas and `maxUnavailable: 0` is consistent. `minAvailable` equal to
+      the replica count is not: voluntary eviction is then impossible and node
+      drains hang.
+
+The nightly [soak workflow](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/.github/workflows/soak.yml)
+(`hack/e2e-soak.sh`) rolls the webhook-server four times under sustained reads
+and writes at a non-storage version and asserts **zero** failed requests and
+**zero** requests that returned successfully with the wrong converted value.
+Run it locally against a change to any of the above:
+
+```bash
+hack/e2e-soak.sh --duration 300 --restarts 3
+```
 
 ## Manager
 
@@ -87,10 +142,10 @@ alerts most relevant to availability are `ConversionWebhookNotReady`,
 - **No cross-cluster coordination.** Every instance and every replica assumes a
   single cluster; there is no failover between clusters, by design. See
   [Limitations](../limitations.md).
-- **Scheduling knobs are partial.** `nodeSelector`, `tolerations`, `affinity`,
-  and `priorityClassName` are available; `topologySpreadConstraints` is not yet
-  wired through the chart — tracked in
-  [issue #53](https://github.com/terasky-oss/declarative-conversion-operator/issues/53).
+- **Zone spreading is not defaulted.** The default spread constraint is across
+  `kubernetes.io/hostname` only. Spreading across `topology.kubernetes.io/zone`
+  needs an explicit `conversionWebhookServer.topologySpreadConstraints`, because
+  a default zone constraint is wrong on any single-zone cluster.
 - **Per-pod registry state isn't in `status`.** The PromQL check above exists
   because that's deliberately not a status field — see
   [Limitations](../limitations.md).

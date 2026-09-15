@@ -18,6 +18,7 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -58,7 +59,7 @@ func (v *CRDConversionConfigValidator) ValidateDelete(context.Context, *teraskyv
 
 func (v *CRDConversionConfigValidator) validate(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig) (admission.Warnings, error) {
 	if !v.Enabled {
-		return nil, fmt.Errorf("native CRD conversion support is disabled on this installation (--enable-crd-support=false); enable it before creating CRDConversionConfig objects")
+		return nil, errors.New("native CRD conversion support is disabled on this installation (--enable-crd-support=false); enable it before creating CRDConversionConfig objects")
 	}
 
 	var warnings admission.Warnings
@@ -82,7 +83,11 @@ func (v *CRDConversionConfigValidator) validate(ctx context.Context, cfg *terask
 	err := v.Client.Get(ctx, types.NamespacedName{Name: cfg.Spec.TargetCRD.Name}, &crd)
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("target CustomResourceDefinition %q does not currently exist; skipping live schema validation until it does", cfg.Spec.TargetCRD.Name))
-		return warnings, nil
+		// Deliberately a warning, not a rejection: a config may legitimately
+		// be applied before its target exists (GitOps orders alphabetically,
+		// not by dependency), and rejecting it would make that ordering a
+		// hard requirement.
+		return warnings, nil //nolint:nilerr // an absent target is a warning, not an admission failure
 	}
 
 	ruleSets, err := cfg.ToRuleSets()

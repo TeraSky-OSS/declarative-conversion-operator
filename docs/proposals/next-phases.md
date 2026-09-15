@@ -253,6 +253,13 @@ into the phases as deliverables rather than left as loose ends.
 
 ### F1 — The manager caches every Secret in the cluster
 
+> **Delivered in phase 14.** Secrets are excluded from the manager's client
+> cache entirely (`client.CacheOptions.DisableFor`) rather than scoped, so
+> there is no Secret informer at all; the owned workload informers are
+> label-scoped to this operator's own children. Measured before/after in
+> [Capacity planning](../operations/capacity.md#memory-what-each-process-holds).
+
+
 `cmd/manager/main.go:79` constructs the manager with no `Cache` options, and
 `internal/controller/xrdconversionconfig_controller.go:422` reads the
 cert-manager Secret through the cached client. controller-runtime therefore
@@ -271,6 +278,17 @@ uncached `APIReader`.
 
 ### F2 — Webhook-server replicas cache every XRD and every CRD
 
+> **Delivered in phase 14,** with one deviation: the cache transform strips
+> `managedFields` and the kubectl last-applied annotation but does **not**
+> prune non-target version schemas. The cache is built before any config is
+> read and configs are retargeted at runtime, so a version pruned at startup
+> would be silently missing when a config later names it — and a conversion
+> against a truncated schema returns wrong data rather than failing. Recorded
+> in [Limitations](../limitations.md). Also note that `--cache-label-selector`
+> now covers the schema informers, which requires labelling targets; see the
+> [upgrade runbook](../operations/upgrade-runbook.md#upgrading-the-chart).
+
+
 `--cache-label-selector` (`internal/webhookserver/cache.go:36`) scopes only the
 `XRDConversionConfig` / `CRDConversionConfig` informers. The XRD and CRD
 informers registered at `internal/webhookserver/reconciler.go:358` and `:379`
@@ -285,6 +303,14 @@ resulting per-replica memory curve in [Capacity planning](../operations/capacity
 
 ### F3 — No timeouts or body limits on either HTTP server
 
+> **Delivered in phase 14.** All five timeout/limit fields on both servers,
+> plus `--max-request-bytes` with an `http.MaxBytesReader` and a per-request
+> deadline the conversion loop honours. An oversized body is answered with a
+> well-formed failing `ConversionReview` carrying the request's own UID —
+> recovered from the retained prefix of the body, because the apiserver
+> discards a response whose UID does not match.
+
+
 `cmd/webhook-server/main.go:167` (TLS conversion endpoint) and `:172` (plain
 health/metrics/debug endpoint) both use `&http.Server{}` with no
 `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, or
@@ -296,6 +322,11 @@ oversized body is a denial of the write path for the target type. This is
 cheap to fix and belongs before any 1.0.
 
 ### F4 — A panic loses the request UID
+
+> **Delivered in phase 14.** The recover path writes the decoded UID, logs the
+> stack at error level, and increments `dco_webhook_conversion_panics_total`,
+> which has its own critical alert with no `for:` delay.
+
 
 `internal/webhookserver/server.go:144`: the deferred recover calls
 `writeReview(w, "", …)`. The apiserver validates that the response UID matches
@@ -333,6 +364,11 @@ pattern stops at the first step. Phase 13 exists to fix this properly.
 
 ### F8 — On a `LegacyCluster` XRD, the claim CRD is invisible to the tooling
 
+> **Delivered in phase 11.** `xrdadapter.GeneratedCRDNames` is now the one place
+> "which CRDs does this XRD generate" is answered; `test --live`,
+> `migrate-storage` and propagation verification all use it. A failure on either
+> CRD blocks the prune on both.
+
 Every path that resolves a target reads `spec.names.plural` and never
 `spec.claimNames.plural` (`internal/cli/live.go:78`,
 `internal/cli/migratestorage.go:373-386`). On a claim-offering XRD that is
@@ -354,6 +390,12 @@ This is a tooling gap, not an engine gap.
 
 ### F9 — An authored field that Crossplane will overwrite draws no diagnostic
 
+> **Delivered in phase 11.** Two new error diagnostics,
+> `AuthoredFieldShadowedByPlatform` and `RuleTargetsInjectedPath`, driven by a
+> scope-specific injected-path set the adapter supplies through an optional
+> `engine.PlatformAwareSource` interface — so `pkg/engine` still does not know
+> Crossplane exists, and every existing caller picked the check up unchanged.
+
 `genCrdVersion` copies the author's properties into the generated CRD first,
 then `ForCompositeResource` copies the injected properties over the top. So an
 XRD that declares, say, `spec.crossplane` on a `Namespaced` XR, or its own
@@ -367,20 +409,47 @@ reject a collision with the injected set for the XRD's scope.
 
 ### F10 — Scope read at `v2` may not be the scope Crossplane uses
 
+> **Not reproducible; corrected in phase 11.** The premise was checked on kind
+> v1.35.0 with Crossplane v2.4.0 before anything was built, exactly as the
+> finding asked. The differing defaults are real — `v1` defaults `spec.scope` to
+> `LegacyCluster`, `v2` to `Namespaced`, and the XRD CRD does serve both with
+> `strategy: None`. **But structural-schema defaulting runs on the WRITE path
+> and the defaulted value is persisted**, so an XRD applied at `v1` with
+> `spec.scope` omitted reads back as `LegacyCluster` at *both* versions. (The
+> `v2` read returns `LegacyCluster` even though it is outside `v2`'s own enum,
+> which confirms the stored value passes straight through rather than being
+> re-derived.) A live XRD's `spec.scope` is therefore authoritative and there is
+> no cross-read to do.
+>
+> What genuinely remains is the **offline** case, and it is the common one: a
+> hand-written XRD YAML that omits `spec.scope` has never been through
+> admission, so `convctl analyze --xrd ./xrd.yaml` cannot know which scope the
+> cluster will pick — it depends on the API version the manifest is applied at.
+> `xrdadapter.ResolveScope` reports that as `Indeterminate` rather than guessing,
+> and cross-checks `spec.claimNames` / `spec.connectionSecretKeys`, whose
+> presence Crossplane's own CEL rule ties to `LegacyCluster`. The measurement is
+> recorded in `pkg/xrdadapter/scope_test.go`.
+
+The original finding, for the record:
+
 The XRD CRD serves `v1` (storage) and `v2` with **no conversion webhook**
 (`strategy: None`), and the two versions default `spec.scope` differently:
 `v1` defaults to `LegacyCluster`, `v2` to `Namespaced`. An XRD persisted
 without an explicit `scope` — the shape a Crossplane 1.x cluster leaves behind
-after an upgrade — therefore defaults differently depending on which version
-you read it at, and this operator reads at `v2`
+after an upgrade — was expected to default differently depending on which
+version you read it at, and this operator reads at `v2`
 (`pkg/xrdadapter/xrdadapter.go:52`).
 
-Worth confirming against a genuinely upgraded cluster before treating it as a
-bug, but the adapter should not trust a defaulted `spec.scope` either way:
-cross-check `spec.claimNames`, whose presence Crossplane's own CEL rule ties to
-`LegacyCluster`.
-
 ### F11 — No `.golangci.yml`
+
+> **Delivered in phase 14.** `.golangci.yml` enables `gosec`, `errorlint`,
+> `bodyclose`, `copyloopvar`, `nilerr`, `nilnil`, `perfsprint`,
+> `usestdlibvars`, `misspell`, `godot`, `whitespace`, and a curated `revive`
+> subset. All 71 findings were fixed rather than baselined; the three checked
+> type assertions it surfaced in index functions and on the conversion hot
+> path were real panic vectors. `make lint` runs the same config and version
+> as CI.
+
 
 The `golangci-lint` CI job runs with defaults only (errcheck, govet,
 ineffassign, staticcheck, unused). `gosec` would have caught F3; `errorlint`,
@@ -388,6 +457,14 @@ ineffassign, staticcheck, unused). `gosec` would have caught F3; `errorlint`,
 codebase this size.
 
 ### F12 — Supply-chain and repo hygiene gaps
+
+> **Delivered in phase 14.** Dependabot (gomod/actions/docker, grouped),
+> `govulncheck` and CodeQL as CI jobs, OpenSSF Scorecard with a README badge,
+> a Trivy scan of the pushed image digest in the release workflow, issue and
+> PR templates, least-privilege `permissions:` on every workflow, and a chart
+> `values.schema.json` with `helm-unittest` suites replacing the `grep`
+> assertions. `govulncheck` required bumping the Go toolchain to 1.26.6.
+
 
 No `dependabot.yml` or Renovate config, no CodeQL, no `govulncheck` gate, no
 image vulnerability scan, no OpenSSF Scorecard, no issue or PR templates, and
@@ -397,12 +474,25 @@ cheapest remaining wins.
 
 ### F13 — Per-batch metrics attribute latency to the last object's direction
 
+> **Delivered in phase 14,** additively: the review-level histogram now labels
+> a multi-direction batch `mixed`, and a new
+> `dco_webhook_conversion_object_duration_seconds` carries the exact
+> direction per object. A `dco_webhook_conversion_batch_size` histogram was
+> added as the missing input for sizing `--max-request-bytes`.
+
+
 `internal/webhookserver/server.go:232`: `direction` is reassigned per object
 inside the loop and then used once for the whole batch. In a mixed-direction
 batch the histogram lands on whichever object happened to be last. Observe per
 object, or label the batch `mixed`.
 
 ### F14 — A package-managed XRD loses its conversion webhook roughly hourly
+
+> **Delivered in phase 11.** The mutating admission guard ships behind
+> `--enable-xrd-conversion-guard` (default on), alongside a `PackageManaged`
+> condition and a `dco_manager_conversion_reverts_total` counter that make the
+> hazard visible whether or not the guard is enabled. See
+> [Architecture](../architecture.md#the-xrd-conversion-guard).
 
 Crossplane's package establisher writes established objects with a full
 `client.Update` from the package contents, not a Server-Side Apply
@@ -419,6 +509,14 @@ fix is a mutating admission guard on XRD writes; both the mechanism and the
 design are in the [deep dive](#deep-dive-package-managed-xrds-are-reverted-repeatedly).
 
 ## Phase 11 — Crossplane integration depth
+
+> **Shipped.** Every deliverable below landed, with two deviations worth
+> recording: `status.generatedCRD` became `status.generatedCRDs`, a list,
+> because a claim-offering XRD has two CRDs and a singular block cannot express
+> a half-propagated pair; and F10 turned out not to be reproducible (see above),
+> so scope resolution is smaller than the design assumed. The package-managed
+> e2e leg replays the establisher's exact non-SSA write rather than installing a
+> real `Configuration` — see the note in `hack/e2e-test-package-managed.sh`.
 
 The theme: stop trusting that patching the XRD was enough, and cover the XRD
 shapes that are currently invisible.
@@ -762,6 +860,24 @@ Supporting pieces:
 
 ## Phase 14 — Production readiness
 
+> **Shipped.** Every deliverable below landed, with four things worth
+> recording. (1) The cache transform does not prune non-target version
+> schemas — see F2 above for why that would trade a memory saving for silently
+> wrong conversions. (2) `--cache-label-selector` now also scopes the schema
+> informers, which is a behaviour change for anyone already using it: targets
+> have to carry the label. (3) The chart's ClusterRole now follows the feature
+> toggles, which it did not before — the epic assumed it already did.
+> (4) The rollout work found that the webhook-server's dedicated Prometheus
+> registry carried no Go or process collectors at all, so a replica's memory
+> was not observable from outside the pod; those are now registered, which is
+> what made the before/after measurement possible.
+>
+> The measurement itself found a regression in the first attempt at the cache
+> transform: deep-copying each object before stripping it made the replica's
+> working set *larger* than doing nothing, because the copy doubles the live
+> heap during the initial LIST. client-go documents that a `TransformFunc` may
+> mutate in place, and it does now.
+
 The theme: the things that stand between "works" and "run it in front of the
 apiserver's write path".
 
@@ -784,6 +900,8 @@ apiserver's write path".
   change to the chart's values or the CLI's flags is announced, and how long a
   deprecated flag keeps working. The CRD API version stays `v1alpha1` (group
   `terasky.com`); changing the API version is out of scope for this roadmap.
+  Shipped as [Deprecation policy](../deprecation-policy.md); it was the one
+  item in this phase with no sub-issue of its own.
 
 ## Phase 15 — Scale
 

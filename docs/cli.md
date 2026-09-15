@@ -14,9 +14,11 @@ convctl rehub         --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --t
 convctl generate kyverno --xrd xrd.yaml --to v2 [--from v1] [-o yaml|json]
 convctl patch-preview --config config.yaml --service-name NAME --service-namespace NS --ca-bundle B64 [flags]
 convctl migrate-storage (--xrd NAME | --crd NAME) [flags]
+convctl retarget      --xrd NAME --to v2 [--dry-run] [--canary N|N%] [flags]
+convctl crossplane status <xrd-name> [-o table|json]
 ```
 
-Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch.
+Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations.
 
 ## `convctl validate`
 
@@ -71,6 +73,7 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 | `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig` YAML file. **Required.** |
 | `-s, --samples` | Path to a directory of sample objects — one file per sample (or multi-doc YAML). Mutually exclusive with `--live`; exactly one of the two is required. |
 | `--live` | Fetch samples from a live cluster instead — see [Pre-upgrade checks](#pre-upgrade-checks-testing-against-everything-that-already-exists) below. |
+| `--verify-propagation` | With `--live` on an XRD, also read every CRD Crossplane generates from it and check it carries the conversion webhook the XRD points at. Samples passing through the engine says the rules are right; this says the cluster will actually use them. Until Crossplane re-renders the generated CRD, reads at a non-storage version return stored objects relabelled but **unconverted**, with HTTP 200 and no error. |
 | `--kubeconfig` | Path to a kubeconfig file. Only used with `--live`. Falls back to `$KUBECONFIG`, then `~/.kube/config`, exactly like `kubectl`. Mutually exclusive with `--kubeconfig-dir`. |
 | `--context` | Kubeconfig context to use. Only used with `--live`. Falls back to the kubeconfig's `current-context`. Mutually exclusive with `--contexts`. |
 | `--contexts` | Repeatable / comma-separated kubeconfig context names. Runs `--live` once per context and aggregates the report. A single name keeps the one-cluster report shape. |
@@ -392,6 +395,10 @@ Rewrites every live instance of a target XRD or CRD so etcd stores it at the cur
 
 `--xrd` and `--crd` here are **cluster resource names**, not local YAML files. No conversion config is required. The live schema is the source of truth for GVK, scope, storage version, and `status.storedVersions`.
 
+**A claim-offering XRD has two CRDs, and both are migrated.** A `scope: LegacyCluster` XRD with `spec.claimNames` generates the cluster-scoped composite CRD *and* a namespace-scoped claim CRD (`{claimPlural}.{group}`). Claims are their own stored object class with their own `status.storedVersions`, so migrating the composite alone left the old version un-droppable — which is the entire reason to run `--prune-stored-versions`. Both are now listed, rewritten, and pruned, and the report breaks the counts down per CRD.
+
+A failure on **either** CRD blocks the prune on **both**, naming which one failed. A half-pruned pair still cannot drop the version, but has already thrown away the record of which objects were stored at it.
+
 After you promote a new storage version (`storage: true` on a CRD, `referenceable: true` on an XRD), objects already in etcd stay physically encoded at whichever version was storage when they were last written — **unless something writes them again**. The apiserver serves them correctly either way, but Kubernetes rejects dropping an old version from the CRD/XRD until `status.storedVersions` no longer lists it.
 
 **XRD vs CRD — this command is not equally urgent.**
@@ -416,7 +423,7 @@ convctl migrate-storage --crd widgets.example.org --prune-stored-versions
 | `--crd` | Cluster name of the `CustomResourceDefinition`. **Not a file path.** |
 | `--kubeconfig` | Path to a kubeconfig file. Resolves exactly like `kubectl`. |
 | `--context` | Kubeconfig context to use. |
-| `-n, --namespace` | Limit to this namespace. Default: all namespaces. Ignored (with a warning) for cluster-scoped types. |
+| `-n, --namespace` | Limit to this namespace. Default: all namespaces. Ignored (with a warning) for cluster-scoped types — on a `LegacyCluster` XRD that is the **composite** side, so `--namespace` narrows only its claims. Refused with `--prune-stored-versions`. |
 | `--dry-run` | Same Apply call with server-side dry-run (`DryRun: All`) — exercises conversion, does not persist. Also skips `--prune-stored-versions`. |
 | `--concurrency` | How many objects to patch in parallel. Defaults to **1** (this is a write). |
 | `--field-manager` | SSA field manager. Defaults to `convctl`. Always applied with force-conflicts. |
@@ -444,13 +451,15 @@ The invoking identity — not the operator's ServiceAccount — needs:
 
 ## Pre-upgrade checks: testing against everything that already exists
 
-`--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of the target XRD's generated composite resource type (or, for a `CRDConversionConfig`, the native CRD's own resource type), fetched at its hub/storage version (so it works even *before* any conversion webhook is wired up, since the storage version is always readable):
+`--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of **every** resource type the target generates, fetched at its hub/storage version (so it works even *before* any conversion webhook is wired up, since the storage version is always readable). For a `CRDConversionConfig` that is the native CRD's own type. For an `XRDConversionConfig` it is the composite type and, on a `scope: LegacyCluster` XRD with `spec.claimNames`, its **claims** as well — claims carry the same `spec.conversion` and are built from the same authored schema, so they go through the very same webhook, and sampling composites alone silently covered roughly half the objects a pre-upgrade check is supposed to cover:
 
 ```console
 convctl test --xrd xrd.yaml --config new-config.yaml --live
 convctl test --crd crd.yaml --config new-crd-config.yaml --live \
   --kubeconfig ~/.kube/other-config --context prod
 ```
+
+When more than one CRD contributes, the report breaks the sample count down per CRD, each sample records which CRD it came from (`crd` / `crdRole` in JSON), and every JUnit `<testcase>` carries `crd` and `crdRole` properties — so a claim-side failure is distinguishable from a composite-side one without parsing case names.
 
 This is the tool to run before applying a new or changed `XRDConversionConfig`/`CRDConversionConfig`: does it hold up against every object that already exists in the cluster, not just your fixtures? `--kubeconfig`/`--context` resolve exactly like `kubectl` does. The invoking identity only needs `get`/`list` on the target resource type — no write access, and nothing related to this operator's own CRDs or webhook server.
 
@@ -478,3 +487,63 @@ Once installed, flags complete as follows:
 - `--output` and `test --fail-on` complete their allowed values.
 
 Cluster lookups during completion time out after two seconds and fall back to no suggestions if the apiserver is unreachable, so a hung cluster cannot freeze tab-complete.
+
+## `convctl retarget`
+
+Points every live object of an XRD at the Compositions labelled for a version — the Kyverno-free path through the retarget step in the [XR lifecycle](examples/xr-lifecycle.md). Like `migrate-storage`, this is **live and mutating**, and `--xrd` is a cluster resource name rather than a file.
+
+Promoting an XRD's hub version means a **new** Composition: Crossplane will not let a Composition's `compositeTypeRef` change. Existing XRs stay pinned to the old one until something rewrites them. For each object, `retarget` clears the pin (`compositionRef`, `compositionRevisionRef`) and sets `compositionSelector.matchLabels` to the target version. Crossplane re-selects — and that write also persists the object at the new `referenceable` version, which is usually what makes `migrate-storage`'s empty-SSA pass a no-op afterwards.
+
+```console
+convctl retarget --xrd xwidgets.example.org --to v2 --dry-run
+convctl retarget --xrd xwidgets.example.org --to v2 --canary 10%
+convctl retarget --xrd xwidgets.example.org --to v2
+```
+
+!!! warning "Once the pin is cleared, Crossplane picks at random"
+    This is the same caveat [`generate kyverno`](#convctl-generate-kyverno) documents. With `compositionRef` gone, Crossplane selects among **every** Composition the selector matches, arbitrarily. A version-only selector is therefore safe only if there is exactly one Composition per hub version. Label your Compositions accordingly, or keep pinning with a richer selector instead of using this command.
+
+**It is scope-aware, and it has to be.** Under `scope: Namespaced` / `Cluster` the machinery sits under `spec.crossplane`; under `LegacyCluster` — and on every **claim**, whatever the scope — it sits directly under `spec`. Patching the wrong subtree would silently create a field Crossplane never reads and report success, so a scope the resolver cannot determine is a hard refusal rather than a guess. A `LegacyCluster` XRD's claims are retargeted alongside its composites.
+
+**Why a merge patch, not Server-Side Apply.** `migrate-storage` uses SSA and this command otherwise mirrors it, but SSA can only *remove* a field the applying manager already owns — and `compositionRef` is owned by whoever pinned it. An apply that simply omits the field leaves it in place, which would leave every object still pinned to its old Composition: exactly what this command exists to undo. A merge patch with an explicit `null` removes it regardless of ownership, in the same request that sets the new selector.
+
+| Flag | Description |
+|---|---|
+| `-x, --xrd` | Cluster name of the `CompositeResourceDefinition`. **Not a file path.** Required. |
+| `--to` | The version to retarget onto. Must be a version the XRD declares. Required. |
+| `--dry-run` | Sends the same patch with `DryRun: All` — exercises conversion and admission, persists nothing. |
+| `--canary` | Retarget only the first `N` objects, or `N%` of them (e.g. `25`, `10%`). Selection is a prefix of the listing order, which the apiserver returns sorted by name, so a re-run with the same value picks the same objects. A non-zero percentage of a non-empty population always selects at least one. The selection is reported, so a partially-migrated fleet never looks like a completed one. |
+| `--concurrency` | Objects to patch in parallel. Default **1** — this is a write. |
+| `--label-key` | The Composition label key the selector matches on. Defaults to `xrd-api-version`, the same key `generate kyverno` uses. |
+| `--field-manager` | Field manager recorded on the patch. Default `convctl-retarget`. |
+| `--kubeconfig`, `--context` | Resolve exactly like `kubectl`. |
+| `-o, --output` | `table` (default) or `json`. |
+| `--quiet` | Suppress the progress line on stderr. |
+
+An object that already selects the target version and carries no pin is reported as **already on target** and no patch is sent at all, so a re-run is visibly a no-op.
+
+**Exit codes** follow the `migrate-storage` matrix: `0` success, `1` at least one object failed, `2` usage error.
+
+**RBAC:** the invoking identity needs `get` on the XRD, `get`/`list` on the generated CRDs and Compositions, and `list`/`patch` on the XR (and claim) types.
+
+## `convctl crossplane status`
+
+Read-only. One screen answering *"where is my migration right now?"*.
+
+```console
+convctl crossplane status xwidgets.example.org
+convctl crossplane status xwidgets.example.org -o json
+```
+
+The information all exists today — it is just spread across the XRD, the Compositions, every XR's `compositionRef`, both generated CRDs' `status.storedVersions`, and the `XRDConversionConfig`'s conditions, so assembling it by hand means half a dozen `kubectl` invocations and some arithmetic.
+
+What it shows:
+
+- **Per version:** `served`, `referenceable`, `deprecated` (and the XRD's own `deprecationWarning`), whether a spoke rule set covers it, and how many live objects read back at it. A version that is **served with no rule set** is called out explicitly — that is the shape that breaks reads.
+- **Per generated CRD** (two of them on a `LegacyCluster` XRD with `claimNames`): scope, `spec.conversion.strategy`, storage version, `status.storedVersions`, and object count. `strategy: None` here while the XRD says `Webhook` is the propagation gap — see [`ConversionPropagated`](configuration/xrdconversionconfig.md#applied-is-not-the-same-as-conversion-works).
+- **Per Composition** targeting this XRD: which `compositeTypeRef` version it declares, and how many XRs are pinned to it by name. Plus a count of objects with no pin at all, which Crossplane selects for by label.
+- **The conversion config's** phase and every condition, including `ConversionPropagated` and `PackageManaged`.
+
+It constructs no write client and issues no write of any kind.
+
+**RBAC:** `get`/`list` on the XRD, the generated CRDs, the XR and claim types, Compositions, and `XRDConversionConfig`s.

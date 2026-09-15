@@ -9,18 +9,47 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  {{- /*
+    get only. The manager reads one key out of one Secret per
+    ConversionWebhookServer through an uncached client and never lists or
+    watches them, so list/watch would be dormant privilege over every Secret
+    in the cluster -- and granting them back would also re-enable the
+    cluster-wide Secret informer that was deliberately removed.
+  */}}
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  {{- /*
+    The highest-privilege grants this operator holds — patching somebody
+    else's CompositeResourceDefinitions and CustomResourceDefinitions — are
+    conditioned on the feature that needs them, so a disabled feature leaves
+    no dormant privilege behind.
+
+    Read and write are gated separately for CustomResourceDefinition, and the
+    asymmetry is load-bearing. Reading them is required whenever EITHER
+    feature is on: an XRDConversionConfig's ConversionPropagated condition is
+    computed by reading the CRD Crossplane *generated* from the XRD, which has
+    nothing to do with native-CRD support. Only the patch verb is
+    native-CRD-only. Gating the read on nativeCRD as well takes the manager's
+    CRD informer down with a permission error on a Crossplane-only install.
+  */}}
+  {{- if .Values.features.crossplane.enabled }}
   - apiGroups: ["apiextensions.crossplane.io"]
     resources: ["compositeresourcedefinitions"]
     verbs: ["get", "list", "patch", "watch"]
+  {{- end }}
+  {{- if or .Values.features.crossplane.enabled .Values.features.nativeCRD.enabled }}
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
+    {{- if .Values.features.nativeCRD.enabled }}
     verbs: ["get", "list", "patch", "watch"]
+    {{- else }}
+    verbs: ["get", "list", "watch"]
+    {{- end }}
+  {{- end }}
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
@@ -37,7 +66,7 @@ rules:
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
+    resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["terasky.com"]
     resources: ["conversionwebhookservers", "crdconversionconfigs", "xrdconversionconfigs"]
@@ -64,10 +93,14 @@ rules:
   - apiGroups: ["terasky.com"]
     resources: ["xrdconversionconfigs", "crdconversionconfigs", "conversionwebhookservers"]
     verbs: ["get", "list", "watch"]
+  {{- if .Values.features.crossplane.enabled }}
   - apiGroups: ["apiextensions.crossplane.io"]
     resources: ["compositeresourcedefinitions"]
     verbs: ["get", "list", "watch"]
+  {{- end }}
+  {{- if .Values.features.nativeCRD.enabled }}
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
+  {{- end }}
 {{- end }}

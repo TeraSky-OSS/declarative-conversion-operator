@@ -9,7 +9,7 @@ end-to-end, see [Adding a strategy](docs/contributing/adding-a-strategy.md).
 - Go matching `go.mod`
 - Docker (for image builds / e2e)
 - `kubectl`, `kind`, and `helm` for e2e targets
-- `python3` and `curl` for `make test-e2e-load`
+- `python3` and `curl` for `make test-e2e-load`; `python3` for `make test-e2e-package-managed`
 
 ## Development loop
 
@@ -19,8 +19,21 @@ make manifests  # CRD + RBAC into config/
 make fmt
 make vet
 make test       # generate + manifests + fmt + vet + go test -race
+make lint       # golangci-lint, same config and pinned version as CI
 make bench      # pkg/engine + webhook-server microbenchmarks (see docs/operations/capacity.md)
 ```
+
+`make lint` runs the linter set in `.golangci.yml`, pinned to the same
+version the CI job uses. The set is deliberately narrow in both directions:
+it enables what this codebase actually gets wrong (`gosec` on the HTTP
+surfaces, `errorlint` on the wrapping, `bodyclose` on the CLI's live paths)
+and leaves out everything that would fight the house style — long
+explanatory comments and a few necessarily long strategy switches. `make
+lint-fix` applies what can be applied automatically.
+
+There is no baseline or exclusion file: the tree is clean, and the intent is
+that it stays that way. A finding that is genuinely wrong gets a `//nolint`
+**with a comment saying why** — a bare one will be asked about in review.
 
 Useful extras:
 
@@ -28,8 +41,12 @@ Useful extras:
 make helm-sync          # copy generated CRDs into the Helm chart
 make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
+make helm-test          # helm-unittest suites for the chart's template logic
+make test-e2e-legacy-claims   # kind + a scope: LegacyCluster XRD with claims (both generated CRDs)
+make test-e2e-package-managed # kind + the XRD conversion guard, including a guard-off run that must fail
 make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)
 make test-e2e-scale     # kind + generated CRD fleet + parallel Get/List (TARGETS/INSTANCES)
+make test-e2e-soak      # kind + rolling restarts under load; asserts zero failed and zero wrong conversions
 make dev-up             # kind + cert-manager + Crossplane + operator (+ monitoring + Kyverno)
 make dev-up DEV_MONITORING=false DEV_KYVERNO=false   # skip those extras
 make dev-down           # delete the kind cluster from dev-up

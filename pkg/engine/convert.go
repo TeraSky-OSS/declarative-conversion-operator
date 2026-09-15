@@ -16,7 +16,10 @@ limitations under the License.
 
 package engine
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ConvertInput is one conversion request: a compiled Plan, the direction to
 // run it, and the object to convert.
@@ -36,7 +39,7 @@ type ConvertInput struct {
 // precomputed by Compile.
 func Convert(in ConvertInput) (map[string]any, error) {
 	if in.Plan == nil {
-		return nil, fmt.Errorf("convert: nil plan")
+		return nil, errors.New("convert: nil plan")
 	}
 	output := map[string]any{}
 	// Baseline passthrough: kind is invariant across versions of the same

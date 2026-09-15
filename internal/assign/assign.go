@@ -28,6 +28,7 @@ limitations under the License.
 package assign
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -69,7 +70,7 @@ func ResolveAssignment[T ConfigLike](cfg T, allServers []teraskyv1alpha1.Convers
 	}
 	switch len(defaults) {
 	case 0:
-		return "", fmt.Errorf("no ConversionWebhookServer instance is marked default and no explicit webhookServerRef is set")
+		return "", errors.New("no ConversionWebhookServer instance is marked default and no explicit webhookServerRef is set")
 	case 1:
 		return defaults[0], nil
 	default:

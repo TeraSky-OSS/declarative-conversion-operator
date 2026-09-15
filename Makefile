@@ -50,6 +50,14 @@ vet: ## Run go vet against code.
 test: generate manifests fmt vet ## Run unit tests.
 	go test ./... -race -count=1
 
+.PHONY: lint
+lint: golangci-lint ## Run golangci-lint with the repository's .golangci.yml (the same config and version CI uses).
+	$(GOLANGCI_LINT) run ./...
+
+.PHONY: lint-fix
+lint-fix: golangci-lint ## Run golangci-lint with --fix. Not every linter can autofix; the rest still have to be read.
+	$(GOLANGCI_LINT) run ./... --fix
+
 .PHONY: bench
 bench: ## Run microbenchmarks (times are not asserted; see docs/operations/capacity.md).
 	go test -run=^$$ -bench=. -benchmem -count=1 -benchtime=200ms ./pkg/engine/ ./internal/webhookserver/
@@ -65,6 +73,18 @@ test-e2e-crd-only: ## Run the e2e test for the native-CRD-only deployment shape:
 .PHONY: test-e2e-crossplane-only
 test-e2e-crossplane-only: ## Run the e2e test for the Crossplane-only deployment shape: features.nativeCRD.enabled=false. Same prerequisites as test-e2e.
 	./hack/e2e-test-crossplane-only.sh
+
+.PHONY: test-e2e-legacy-claims
+test-e2e-legacy-claims: ## Run the e2e test for scope: LegacyCluster with claims: proves a claim created at one version reads back converted at another, that the bare spec.* machinery survives, and that both generated CRDs are wired and pruned. Same prerequisites as test-e2e, plus go.
+	./hack/e2e-test-legacy-claims.sh
+
+.PHONY: test-e2e-package-managed
+test-e2e-package-managed: ## Run the e2e test for the XRD conversion guard: replays the package establisher's full non-SSA replace and asserts no read ever comes back unconverted — then repeats with the guard off and asserts the test CAN see the failure. Same prerequisites as test-e2e, plus python3.
+	./hack/e2e-test-package-managed.sh
+
+.PHONY: test-e2e-soak
+test-e2e-soak: ## Roll the webhook-server repeatedly under sustained reads/writes and assert zero failed and zero WRONG conversions. Slow (~15 min); also runs nightly in CI.
+	./hack/e2e-soak.sh
 
 .PHONY: test-e2e-load
 test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
@@ -124,6 +144,26 @@ undeploy: kustomize ## Undeploy the operator from the current cluster.
 
 ##@ Helm
 
+HELM_UNITTEST_VERSION ?= 1.0.2
+
+.PHONY: helm-unittest-plugin
+helm-unittest-plugin: ## Install the helm-unittest plugin at the pinned version if it is not already present.
+	@if helm plugin list 2>/dev/null | awk '$$1=="unittest"{print $$2}' | grep -qx '$(HELM_UNITTEST_VERSION)'; then \
+		echo "Using helm-unittest $(HELM_UNITTEST_VERSION)"; \
+	else \
+		echo "Installing helm-unittest $(HELM_UNITTEST_VERSION)"; \
+		helm plugin uninstall unittest >/dev/null 2>&1 || true; \
+		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION); \
+	fi
+
+.PHONY: helm-test
+helm-test: helm-unittest-plugin ## Run the chart's helm-unittest suites (charts/*/tests/) plus a default-values render.
+	helm unittest charts/declarative-conversion-operator
+	@echo "Rendering with default values to exercise values.schema.json"
+	@helm template declarative-conversion-operator charts/declarative-conversion-operator \
+		--namespace declarative-conversion-system >/dev/null
+	@echo "OK"
+
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart.
 	helm lint charts/declarative-conversion-operator
@@ -136,6 +176,12 @@ helm-template: ## Render the Helm chart with default values.
 
 PROMTOOL ?= $(LOCALBIN)/promtool
 PROMTOOL_VERSION ?= 2.54.1
+
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
+# Must match the version in .github/workflows/ci.yml. .golangci.yml is
+# written against this schema version; a different one fails the run
+# outright rather than degrading, so the three move together.
+GOLANGCI_LINT_VERSION ?= v2.12.2
 
 .PHONY: promtool
 promtool: $(LOCALBIN) ## Download promtool into bin/ if not already on PATH or in LOCALBIN.
@@ -154,6 +200,15 @@ promtool: $(LOCALBIN) ## Download promtool into bin/ if not already on PATH or i
 		cp "$$TMP"/prometheus-$(PROMTOOL_VERSION).$${OS}-$${ARCH}/promtool "$(PROMTOOL)"; \
 		chmod +x "$(PROMTOOL)"; \
 		rm -rf "$$TMP"; \
+	fi
+
+.PHONY: golangci-lint
+golangci-lint: ## Install golangci-lint at the pinned version into bin/ if it is not already there.
+	@if [ -x "$(GOLANGCI_LINT)" ] && $(GOLANGCI_LINT) version 2>/dev/null | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))"; then \
+		echo "Using $(GOLANGCI_LINT)"; \
+	else \
+		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION) into $(LOCALBIN)"; \
+		GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
 	fi
 
 .PHONY: test-prometheus

@@ -18,7 +18,7 @@ package controller
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -47,7 +47,7 @@ func TestCRDReconcile_CrashBeforePatch_RestartsAndApplies(t *testing.T) {
 		WithInterceptorFuncs(interceptor.Funcs{
 			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				if applyCalls.Add(1) == 1 {
-					return fmt.Errorf("injected crash before CRD patch")
+					return errors.New("injected crash before CRD patch")
 				}
 				return c.Apply(ctx, obj, opts...)
 			},
@@ -91,7 +91,7 @@ func TestCRDReconcile_CrashAfterPatchBeforeStatus_RestartsIdempotently(t *testin
 			SubResourcePatch: func(ctx context.Context, c client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 				if subResourceName == "status" {
 					if statusPatches.Add(1) == 1 {
-						return fmt.Errorf("injected crash before status Applied")
+						return errors.New("injected crash before status Applied")
 					}
 				}
 				return c.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
@@ -269,7 +269,7 @@ func TestCRDReconcile_FailClosed_PartwayRevertThenRecover(t *testing.T) {
 		WithInterceptorFuncs(interceptor.Funcs{
 			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				if applyCalls.Add(1) == 1 {
-					return fmt.Errorf("injected partway revert failure")
+					return errors.New("injected partway revert failure")
 				}
 				return c.Apply(ctx, obj, opts...)
 			},

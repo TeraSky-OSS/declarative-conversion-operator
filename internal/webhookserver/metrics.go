@@ -30,7 +30,10 @@ type Metrics struct {
 	ReviewDuration      *prometheus.HistogramVec
 	ReviewRequestsTotal *prometheus.CounterVec
 	ObjectsTotal        *prometheus.CounterVec
+	ObjectDuration      *prometheus.HistogramVec
+	BatchSize           *prometheus.HistogramVec
 	LossyTotal          *prometheus.CounterVec
+	PanicsTotal         *prometheus.CounterVec
 	RegistrySize        prometheus.Gauge
 	RegistryEntryLoaded *prometheus.GaugeVec
 	RegistryLastReload  *prometheus.GaugeVec
@@ -63,10 +66,27 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 			Name: "dco_webhook_conversion_objects_total",
 			Help: "Total individual objects converted.",
 		}, []string{"target", "from_version", "to_version", "result"}),
+		ObjectDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "dco_webhook_conversion_object_duration_seconds",
+			Help: "Latency of converting one object, excluding request decode. Unlike the review-level histogram this metric's direction label is always exact, so it is the one to use for per-direction capacity planning.",
+			// Shifted one decade lower than the review histogram: a single
+			// object is routinely tens of microseconds, and the review
+			// buckets would put almost every observation in the first one.
+			Buckets: []float64{0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+		}, []string{"target", "direction", "result"}),
+		BatchSize: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "dco_webhook_conversion_batch_size",
+			Help:    "Number of objects carried by one ConversionReview. The input for sizing --max-request-bytes from observed traffic rather than by guess.",
+			Buckets: []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 5000},
+		}, []string{"target"}),
 		LossyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "dco_webhook_lossy_conversion_total",
 			Help: "Total conversions performed in a direction statically known to be lossy.",
 		}, []string{"target", "direction"}),
+		PanicsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "dco_webhook_conversion_panics_total",
+			Help: "Total panics recovered while serving a ConversionReview. A non-zero value is always a bug in this operator; alert on any increase.",
+		}, []string{"target"}),
 		RegistrySize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "dco_webhook_registry_size",
 			Help: "Number of target resources (XRD/CRD names) currently present in this replica's registry, including error-only placeholders.",
@@ -93,7 +113,7 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 		}),
 		gatherer: gatherer,
 	}
-	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
+	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.ObjectDuration, m.BatchSize, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
 }
 
@@ -126,5 +146,15 @@ func (m *Metrics) SyncRegistryMetrics(reg *Registry) {
 			loaded = 1
 		}
 		m.RegistryEntryLoaded.WithLabelValues(name).Set(loaded)
+
+		// Materialize the panic counter at zero for every known target.
+		// A CounterVec series does not exist until something increments it,
+		// so without this the first panic creates the series *at 1* — and
+		// increase() over a series whose first observed sample is already 1
+		// has no earlier sample to subtract, yielding 0. The alert that
+		// exists to catch a single panic would miss exactly that case.
+		// Deliberately not Reset() like the gauge above: resetting would
+		// discard the panic history this is meant to preserve.
+		m.PanicsTotal.WithLabelValues(name)
 	}
 }

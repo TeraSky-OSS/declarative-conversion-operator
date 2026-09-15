@@ -71,7 +71,11 @@ type CRDConversionConfigReconciler struct {
 // +kubebuilder:rbac:groups=terasky.com,resources=crdconversionconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// Secrets are read one key at a time through an uncached client (see
+// internal/controller/cacheopts.go), never listed or watched, so get is the
+// only verb the manager needs. Restoring list/watch here would also restore
+// the cluster-wide Secret informer this operator deliberately does not run.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *CRDConversionConfigReconciler) Reconcile(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {
@@ -86,11 +90,8 @@ func (r *CRDConversionConfigReconciler) Reconcile(ctx context.Context, req recon
 		return r.reconcileDelete(ctx, &cfg)
 	}
 
-	if !controllerutil.ContainsFinalizer(&cfg, teraskyv1alpha1.CRDConversionConfigFinalizer) {
-		controllerutil.AddFinalizer(&cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
-		if err := r.Update(ctx, &cfg); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
-		}
+	if err := addFinalizer(ctx, r.Client, &cfg, teraskyv1alpha1.CRDConversionConfigFinalizer); err != nil {
+		return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 	}
 
 	result, err := r.reconcileNormal(ctx, &cfg)
@@ -425,8 +426,7 @@ func (r *CRDConversionConfigReconciler) reconcileDelete(ctx context.Context, cfg
 }
 
 func (r *CRDConversionConfigReconciler) removeFinalizer(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig) error {
-	controllerutil.RemoveFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
-	return r.Update(ctx, cfg)
+	return removeFinalizer(ctx, r.Client, cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
 }
 
 func (r *CRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, cfg *teraskyv1alpha1.CRDConversionConfig) error {
@@ -443,8 +443,11 @@ func (r *CRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, c
 // XRD controller this watch is never at risk of failing manager startup).
 func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &teraskyv1alpha1.CRDConversionConfig{}, TargetCRDNameIndex, func(obj client.Object) []string {
-		cfg := obj.(*teraskyv1alpha1.CRDConversionConfig)
-		if cfg.Spec.TargetCRD.Name == "" {
+		// Checked rather than asserted: an index function panicking takes
+		// the whole manager down, and this one runs on every object the
+		// informer sees.
+		cfg, ok := obj.(*teraskyv1alpha1.CRDConversionConfig)
+		if !ok || cfg.Spec.TargetCRD.Name == "" {
 			return nil
 		}
 		return []string{cfg.Spec.TargetCRD.Name}

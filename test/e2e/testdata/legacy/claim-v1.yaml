@@ -1,0 +1,18 @@
+# A CLAIM created at spoke v1. Claims are namespace-scoped and are their own
+# stored object class, with their own machinery (resourceRef singular,
+# compositeDeletePolicy, a name-only writeConnectionSecretToRef) — but they
+# share the composite's authored schema, so the same rules convert them.
+apiVersion: e2e.example.org/v1
+kind: LegacyWidget
+metadata:
+  name: e2e-legacy-claim-v1
+  namespace: default
+spec:
+  storageSize: "50Gi"
+  memoryGB: 2
+  size: S
+  zone:
+    name: eu-central-1b
+  compositeDeletePolicy: Foreground
+  writeConnectionSecretToRef:
+    name: legacy-claim-conn

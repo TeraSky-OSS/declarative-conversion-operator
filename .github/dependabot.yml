@@ -1,0 +1,67 @@
+# Dependabot rather than Renovate: this repository already relies on
+# GitHub-native machinery for the parts that matter most (OIDC-keyless
+# signing, build provenance attestations, artifact attestations), and
+# Dependabot needs no additional app installation or hosted config to match
+# that. Renovate would give finer grouping control; it is not worth a second
+# system here.
+#
+# Grouping is aggressive on purpose. A signed artifact built from a
+# vulnerable dependency is still vulnerable, so the updates have to actually
+# land — and a dozen individual PRs a week is how dependency automation gets
+# turned off.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # The Kubernetes libraries move as a set. Bumping client-go without
+      # apimachinery, or controller-runtime without either, produces a build
+      # failure rather than a useful PR.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
+      # Everything else, minor and patch together. A major bump gets its own
+      # PR, because it is the one that needs reading.
+      go-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+      - go
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+      - github-actions
+
+  # The builder and runtime base images in Dockerfile. distroless is the
+  # runtime base; a CVE there is a CVE in every shipped image.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker

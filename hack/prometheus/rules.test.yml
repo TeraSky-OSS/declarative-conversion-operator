@@ -334,3 +334,139 @@ tests:
       - eval_time: 3m
         alertname: ManagerPhaseStaleOrFailClosed
         exp_alerts: []
+
+  # --- ConversionRevertedOutOfBand ---
+  - name: revert counter moving fires the alert
+    interval: 1m
+    input_series:
+      # One revert, then flat — which is exactly the shape a package
+      # establisher produces: a single strip, then the operator re-applies.
+      - series: 'dco_manager_conversion_reverts_total{config_kind="xrd",target="xfoos.example.org"}'
+        values: "0 1 1x40"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConversionRevertedOutOfBand
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              config_kind: xrd
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "Conversion stanza on xfoos.example.org was removed out of band"
+              description: "config_kind=xrd. A previously-applied spec.conversion was found missing from the target. On an XRD owned by a Crossplane ConfigurationRevision this is the package establisher's non-SSA client.Update stripping it on every revision reconcile (default --sync is one hour); the operator re-applies within seconds, but reads during that window return stored objects relabelled and unconverted, with no error. Check the config's PackageManaged condition and enable the XRD conversion guard to close the window."
+
+  - name: a flat revert counter stays silent
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_conversion_reverts_total{config_kind="xrd",target="xfoos.example.org"}'
+        values: "3+0x80"
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ConversionRevertedOutOfBand
+        exp_alerts: []
+
+  # --- ConversionAppliedButNotPropagated ---
+  - name: a target whose conversion never propagated fires
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_conversion_propagated{target="xfoos.example.org"}'
+        values: "0+0x40"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "Conversion applied to XRD xfoos.example.org but never observed in the generated CRD"
+              description: "The operator patched spec.conversion onto the XRD, but Crossplane has not re-rendered xfoos.example.org's generated CRD with that webhook block. Until it does, the generated CRD falls back to strategy: None and the apiserver serves stored objects relabelled but UNCONVERTED, with HTTP 200 and no error. Check the config's ConversionPropagated condition and status.generatedCRDs, then check whether Crossplane is running, healthy, and not paused on this XRD."
+
+  - name: a propagated target stays silent
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_conversion_propagated{target="xfoos.example.org"}'
+        values: "1+0x40"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts: []
+
+  # The case the previous counter-based expression got wrong: a target that
+  # propagated earlier and then stopped must still fire, rather than being
+  # suppressed by its own history.
+  - name: a target that propagated and then regressed still fires
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_conversion_propagated{target="xfoos.example.org"}'
+        values: "1x10 0+0x40"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "Conversion applied to XRD xfoos.example.org but never observed in the generated CRD"
+              description: "The operator patched spec.conversion onto the XRD, but Crossplane has not re-rendered xfoos.example.org's generated CRD with that webhook block. Until it does, the generated CRD falls back to strategy: None and the apiserver serves stored objects relabelled but UNCONVERTED, with HTTP 200 and no error. Check the config's ConversionPropagated condition and status.generatedCRDs, then check whether Crossplane is running, healthy, and not paused on this XRD."
+
+  # --- ConversionWebhookPanics ---
+  - name: a single panic fires immediately
+    interval: 1m
+    input_series:
+      # One panic, then flat. The alert has to fire on the step, not wait
+      # for a sustained rate: panics are not a rate, they are a bug.
+      - series: 'dco_webhook_conversion_panics_total{target="xfoos.example.org"}'
+        values: "0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ConversionWebhookPanics
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ConversionWebhookPanics
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "The conversion webhook panicked while converting xfoos.example.org"
+              description: "A recovered panic is always a bug in declarative-conversion-operator, and every request that hits it fails a write on the apiserver's admission path. The pod log carries the stack trace. No `for:` delay: one panic is already worth waking up for."
+
+  - name: no panics stays silent
+    interval: 1m
+    input_series:
+      - series: 'dco_webhook_conversion_panics_total{target="xfoos.example.org"}'
+        values: "0+0x40"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ConversionWebhookPanics
+        exp_alerts: []
+
+  - name: a series whose first observed sample is already 1 still fires
+    interval: 1m
+    input_series:
+      # The counter is materialized at 0 for every known target so this should
+      # not happen -- but a pod that panics before its first scrape would
+      # produce exactly this shape, and increase() over a series with no
+      # earlier sample has nothing to subtract and yields 0. The alert exists
+      # to catch a single panic, so it must not depend on having seen the
+      # zero.
+      - series: 'dco_webhook_conversion_panics_total{target="xfoos.example.org"}'
+        values: "1+0x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ConversionWebhookPanics
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "The conversion webhook panicked while converting xfoos.example.org"
+              description: "A recovered panic is always a bug in declarative-conversion-operator, and every request that hits it fails a write on the apiserver's admission path. The pod log carries the stack trace. No `for:` delay: one panic is already worth waking up for."

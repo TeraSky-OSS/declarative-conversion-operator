@@ -22,6 +22,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -89,6 +95,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -105,6 +117,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -112,6 +130,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Reads .golangci.yml from the repository root. The version here,
+      # GOLANGCI_LINT_VERSION in the Makefile, and the `version:` key in
+      # .golangci.yml are one set — a config written against a different
+      # schema version fails the run outright, so `make lint` locally and
+      # this job have to be the same tool.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -124,6 +147,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -151,6 +180,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -167,6 +202,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # This job installs and runs the helm-unittest plugin, which is
+          # downloaded code. checkout persists the job token in .git/config by
+          # default, where that code could read it.
+          persist-credentials: false
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
@@ -188,27 +228,62 @@ jobs:
             --set dashboards.enabled=true \
             --set manager.podDisruptionBudget.enabled=true
 
-      - name: helm template (scheduling, labels, extraEnv, cacheSelector)
+      # The assertions that used to live here as `helm template | grep -q`
+      # are now helm-unittest suites in charts/*/tests/. grep proves that a
+      # string is present somewhere in the rendered stream; it cannot say
+      # which object the key is on, and it cannot say that something is
+      # ABSENT — so a template that rendered when it should not have used to
+      # pass unnoticed. The `helm install`-time value validation they
+      # partially stood in for is now values.schema.json.
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version 1.0.2
+
+      - name: helm unittest
+        run: helm unittest charts/declarative-conversion-operator
+
+      - name: helm template (the install-UX fixture, against values.schema.json)
         run: |
-          out="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+          helm template declarative-conversion-operator charts/declarative-conversion-operator \
             --namespace declarative-conversion-system \
-            -f hack/testdata/helm-install-ux-values.yaml)"
-          echo "$out" | grep -q 'priorityClassName: system-cluster-critical'
-          echo "$out" | grep -q 'team: "platform"'
-          echo "$out" | grep -q 'env: "ci"'
-          echo "$out" | grep -q 'name: FOO'
-          echo "$out" | grep -q 'name: TENANT'
-          echo "$out" | grep -q -- '--cert-reload-interval=1m'
-          echo "$out" | grep -q 'tenant: a'
-          echo "$out" | grep -q 'app.kubernetes.io/name: declarative-conversion-operator'
-          if echo "$out" | grep -q 'app.kubernetes.io/name: hijack'; then
-            echo "FAIL: commonLabels overrode the manager selector name" >&2
-            exit 1
-          fi
-          if echo "$out" | grep -q 'control-plane: hijack'; then
-            echo "FAIL: podLabels overrode the manager selector" >&2
-            exit 1
-          fi
+            -f hack/testdata/helm-install-ux-values.yaml >/dev/null
+
+      - name: values.schema.json rejects what the binaries would refuse
+        run: |
+          # Each of these would otherwise reach a container flag and be
+          # rejected at startup, i.e. arrive as a crash loop rather than as an
+          # error naming the value.
+          for bad in \
+            conversionWebhookServer.replicaCount2=3 \
+            conversionWebhookServer.maxRequestBytes=banana \
+            conversionWebhookServer.maxRequestBytes=0 \
+            conversionWebhookServer.requestTimeout=0s \
+            conversionWebhookServer.rollout.maxSurge=-1 \
+            metrics.serviceMonitor.interval=0s
+          do
+            if helm template declarative-conversion-operator charts/declarative-conversion-operator \
+              --namespace declarative-conversion-system --set "$bad" >/dev/null 2>&1; then
+              echo "FAIL: '$bad' was accepted; values.schema.json is not being enforced" >&2
+              exit 1
+            fi
+            echo "rejected: $bad"
+          done
+          # The other direction: values that are legal for the binaries must
+          # still render. A pattern tightened to reject bad input is easy to
+          # tighten past good input -- time.ParseDuration takes compound
+          # durations, so the schema has to.
+          for good in \
+            conversionWebhookServer.requestTimeout=2h45m \
+            conversionWebhookServer.requestTimeout=1m30s \
+            conversionWebhookServer.maxRequestBytes=67108864 \
+            metrics.prometheusRule.propagationLagFor=1m30s
+          do
+            if ! helm template declarative-conversion-operator charts/declarative-conversion-operator \
+              --namespace declarative-conversion-system --set "$good" >/dev/null; then
+              echo "FAIL: '$good' was rejected; values.schema.json is too strict" >&2
+              exit 1
+            fi
+            echo "accepted: $good"
+          done
 
       - name: CRD upgrade helper prints chart CRDs
         run: |
@@ -247,6 +322,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

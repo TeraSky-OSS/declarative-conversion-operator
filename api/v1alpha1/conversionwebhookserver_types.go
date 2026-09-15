@@ -177,11 +177,88 @@ type ConversionWebhookServerSpec struct {
 	// +optional
 	CacheSelector *metav1.LabelSelector `json:"cacheSelector,omitempty"`
 
+	// Rollout controls how a replica leaves service during a rolling
+	// update or a node drain. The defaults are chosen so that a rollout
+	// causes zero failed conversions; see RolloutSpec.
+	// +optional
+	Rollout *RolloutSpec `json:"rollout,omitempty"`
+
 	Certificate CertificateSpec `json:"certificate"`
 	// +optional
 	Service ServiceSpec `json:"service,omitempty"`
 	// +optional
 	PodDisruptionBudget *PodDisruptionBudgetSpec `json:"podDisruptionBudget,omitempty"`
+}
+
+// RolloutSpec is the set of knobs that decide whether a rolling update of
+// the webhook-server is invisible or breaks every write to every target it
+// serves.
+//
+// A conversion webhook is on the apiserver's admission path, so a replica
+// that stops listening before the apiserver stops being told about it
+// produces connection-refused errors on writes that have nothing to do with
+// the deployment. The race is between Endpoints propagation (kube-proxy,
+// EndpointSlice controller, and the apiserver's own resolution) and the
+// container's exit — and the container always wins unless something makes
+// it wait.
+//
+// The four values here are one set, not four independent knobs:
+//
+//	preStopSleepSeconds (5)                          — wait for Endpoints removal
+//	  + the webhook-server's graceful shutdown (30s)  — finish in-flight reviews
+//	  < terminationGracePeriodSeconds (45)            — or the kubelet SIGKILLs mid-review
+//
+// Changing one without the others is how a rollout that looked safe starts
+// dropping requests. The validating webhook rejects a combination that does
+// not satisfy the inequality above.
+type RolloutSpec struct {
+	// PreStopSleepSeconds is how long the container sleeps after receiving
+	// the termination signal before the process is asked to stop, giving
+	// Endpoints removal time to reach every apiserver. Set to 0 to disable
+	// the hook entirely — only correct if something else in the cluster
+	// already guarantees the ordering.
+	// +optional
+	// +kubebuilder:default=5
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=300
+	PreStopSleepSeconds *int32 `json:"preStopSleepSeconds,omitempty"`
+
+	// TerminationGracePeriodSeconds must exceed PreStopSleepSeconds plus
+	// the webhook-server's own shutdown timeout, or the kubelet sends
+	// SIGKILL while a ConversionReview is still being answered — which the
+	// apiserver reports as a failed write.
+	// +optional
+	// +kubebuilder:default=45
+	// +kubebuilder:validation:Minimum=1
+	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
+
+	// MaxUnavailable is the Deployment's rolling-update maxUnavailable.
+	// The default of 0 is deliberate and stricter than Kubernetes' own
+	// 25%: with a 2-replica default, 25% rounds down to 0 anyway, but an
+	// operator who scales to 4 would silently start taking a replica out
+	// of service ahead of its replacement being ready.
+	// +optional
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
+
+	// MaxSurge is the Deployment's rolling-update maxSurge. Defaults to 1:
+	// with MaxUnavailable at 0, a surge of at least 1 is required or the
+	// rollout cannot make progress at all.
+	// +optional
+	MaxSurge *intstr.IntOrString `json:"maxSurge,omitempty"`
+
+	// DefaultTopologySpread, when true (the default), adds a soft
+	// (ScheduleAnyway) spread constraint across kubernetes.io/hostname so
+	// replicas do not all land on one node — which would make a single
+	// node drain a full conversion outage.
+	//
+	// Soft rather than DoNotSchedule on purpose: a hard constraint turns a
+	// single-node cluster (kind, a small edge cluster, a cordoned
+	// majority) into an unschedulable Deployment, and an outage caused by
+	// the anti-outage setting is the worse failure. Set to false to manage
+	// spreading entirely through TopologySpreadConstraints or Affinity.
+	// +optional
+	// +kubebuilder:default=true
+	DefaultTopologySpread *bool `json:"defaultTopologySpread,omitempty"`
 }
 
 // AssignedConfigRef is one XRDConversionConfig the resolver currently

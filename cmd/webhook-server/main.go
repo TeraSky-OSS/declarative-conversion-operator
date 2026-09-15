@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -66,6 +68,9 @@ func main() {
 		otelSampleRatio  float64
 		otelInsecure     bool
 		cacheSelector    string
+		maxRequestBytes  int64
+		requestTimeout   time.Duration
+		shutdownTimeout  time.Duration
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -77,7 +82,10 @@ func main() {
 	flag.StringVar(&otelEndpoint, "otel-exporter-otlp-endpoint", "", "Optional OTLP/gRPC endpoint for conversion-path tracing (empty = tracing disabled).")
 	flag.Float64Var(&otelSampleRatio, "otel-trace-sample-ratio", 0.1, "Trace sampling ratio when --otel-exporter-otlp-endpoint is set (0.0–1.0).")
 	flag.BoolVar(&otelInsecure, "otel-exporter-otlp-insecure", false, "Disable TLS when exporting traces (trusted in-cluster collectors only).")
-	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping XRDConversionConfig and CRDConversionConfig informers. Empty watches every config.")
+	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping this replica's informers. It covers the XRDConversionConfig and CRDConversionConfig objects AND the CustomResourceDefinition/CompositeResourceDefinition objects holding their schemas, so targets must carry the label too. Empty watches everything.")
+	flag.Int64Var(&maxRequestBytes, "max-request-bytes", webhookserver.DefaultMaxRequestBytes, "Maximum ConversionReview request body size. A larger body is answered with a ConversionReview failure rather than being read. Raise it if legitimate batches are being rejected.")
+	flag.DurationVar(&requestTimeout, "request-timeout", webhookserver.DefaultRequestTimeout, "Maximum time one ConversionReview may occupy a worker. Must stay below the apiserver's own fixed 30s conversion timeout plus this server's write timeout.")
+	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", webhookserver.DefaultShutdownTimeout, "How long to let in-flight ConversionReviews finish after a termination signal. This value plus the pod's preStop sleep must stay below terminationGracePeriodSeconds, or the kubelet SIGKILLs mid-review and the apiserver reports a failed write.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -88,6 +96,22 @@ func main() {
 
 	if serverName == "" {
 		fmt.Fprintln(os.Stderr, "--webhook-server-name is required")
+		os.Exit(1)
+	}
+	// The Server treats a negative limit as "no cap", which is only ever
+	// right in a test. Reached through the flag it would silently remove the
+	// body limit from a process on the apiserver's write path, so the flag
+	// refuses it rather than quietly obeying.
+	if maxRequestBytes <= 0 {
+		fmt.Fprintf(os.Stderr, "--max-request-bytes must be positive, got %d\n", maxRequestBytes)
+		os.Exit(1)
+	}
+	if requestTimeout <= 0 {
+		fmt.Fprintf(os.Stderr, "--request-timeout must be positive, got %s\n", requestTimeout)
+		os.Exit(1)
+	}
+	if shutdownTimeout <= 0 {
+		fmt.Fprintf(os.Stderr, "--shutdown-timeout must be positive, got %s\n", shutdownTimeout)
 		os.Exit(1)
 	}
 
@@ -115,7 +139,7 @@ func main() {
 	opts.Metrics = metricsserver.Options{BindAddress: "0"}
 	opts.HealthProbeBindAddress = "0"
 	opts.LeaderElection = false // every replica is symmetric; no coordination needed.
-	cacheOpts, err := webhookserver.CacheOptionsFromSelectorJSON(cacheSelector)
+	cacheOpts, err := webhookserver.CacheOptionsFromSelectorJSON(cacheSelector, enableXRDSupport, enableCRDSupport)
 	if err != nil {
 		logger.Error(err, "invalid --cache-label-selector")
 		os.Exit(1)
@@ -129,6 +153,17 @@ func main() {
 
 	registry := webhookserver.NewRegistry()
 	metricsReg := prometheus.NewRegistry()
+	// A dedicated registry starts empty — unlike the process-wide default
+	// one, it has no Go runtime or process collectors. Without these,
+	// /metrics exposes this operator's own counters and nothing about the
+	// process serving them: no resident memory, no goroutine count, no GC
+	// behaviour. That makes the replica's memory footprint — the thing
+	// --cache-label-selector exists to control — unmeasurable from outside
+	// the pod.
+	metricsReg.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
 	metrics := webhookserver.NewMetrics(metricsReg, metricsReg)
 
 	reconciler := &webhookserver.Reconciler{
@@ -146,7 +181,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := &webhookserver.Server{Registry: registry, Metrics: metrics}
+	server := &webhookserver.Server{
+		Registry: registry, Metrics: metrics,
+		MaxRequestBytes: maxRequestBytes, RequestTimeout: requestTimeout,
+	}
 
 	ctx := rootCtx
 
@@ -155,7 +193,7 @@ func main() {
 	go certReloader.Run(ctx)
 
 	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		logger.Error(fmt.Errorf("cache sync failed"), "unable to sync cache before initial registry population")
+		logger.Error(errors.New("cache sync failed"), "unable to sync cache before initial registry population")
 		os.Exit(1)
 	}
 	if err := reconciler.InitialSync(ctx); err != nil {
@@ -164,12 +202,31 @@ func main() {
 	server.SetReady(true)
 	logger.Info("registry synced, marking replica ready", "serverName", serverName)
 
+	// Both servers carry the same timeouts. The conversion endpoint needs
+	// them because it is in the apiserver's write path; the plain endpoint
+	// needs them because it also serves /debug/registry, and an endpoint
+	// that can be held open is an endpoint that can be used to hold the
+	// process open. See webhookserver's Default*Timeout constants for the
+	// reasoning behind each value.
 	conversionSrv := &http.Server{
-		Addr:      conversionAddr,
-		Handler:   server.ConversionMux(),
-		TLSConfig: &tls.Config{GetCertificate: certReloader.GetCertificate, MinVersion: tls.VersionTLS12},
+		Addr:              conversionAddr,
+		Handler:           server.ConversionMux(),
+		TLSConfig:         &tls.Config{GetCertificate: certReloader.GetCertificate, MinVersion: tls.VersionTLS12},
+		ReadHeaderTimeout: webhookserver.DefaultReadHeaderTimeout,
+		ReadTimeout:       webhookserver.DefaultReadTimeout,
+		WriteTimeout:      webhookserver.DefaultWriteTimeout,
+		IdleTimeout:       webhookserver.DefaultIdleTimeout,
+		MaxHeaderBytes:    webhookserver.DefaultMaxHeaderBytes,
 	}
-	plainSrv := &http.Server{Addr: plainAddr, Handler: server.PlainMux()}
+	plainSrv := &http.Server{
+		Addr:              plainAddr,
+		Handler:           server.PlainMux(),
+		ReadHeaderTimeout: webhookserver.DefaultReadHeaderTimeout,
+		ReadTimeout:       webhookserver.DefaultReadTimeout,
+		WriteTimeout:      webhookserver.DefaultWriteTimeout,
+		IdleTimeout:       webhookserver.DefaultIdleTimeout,
+		MaxHeaderBytes:    webhookserver.DefaultMaxHeaderBytes,
+	}
 
 	go func() {
 		logger.Info("serving conversion requests", "address", conversionAddr)
@@ -194,8 +251,20 @@ func main() {
 		}
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Stop advertising readiness first: a replica that is going away should
+	// fail its readiness probe rather than keep being an Endpoint while it
+	// drains. The preStop sleep is what actually buys the time for that to
+	// propagate; this makes the state honest in the meantime.
+	server.SetReady(false)
+
+	// One deadline shared by both servers, sized by --shutdown-timeout.
+	// It is deliberately long enough for an in-flight ConversionReview to
+	// finish (the apiserver's own conversion timeout is a fixed 30s): a
+	// shutdown that cuts a review short turns a routine rollout into a
+	// failed write.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
+	logger.Info("draining", "shutdownTimeout", shutdownTimeout)
 	_ = conversionSrv.Shutdown(shutdownCtx)
 	_ = plainSrv.Shutdown(shutdownCtx)
 }

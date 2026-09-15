@@ -17,6 +17,7 @@ limitations under the License.
 package scalegen
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 
@@ -220,7 +221,7 @@ func mergeSpec(dst map[string]any, src map[string]any) {
 func Assign(targets, minN, maxN int, seed int64) ([][]Slot, [][]Slot, error) {
 	all := slots()
 	if minN < 1 || maxN < minN {
-		return nil, nil, fmt.Errorf("strategies-min/max invalid")
+		return nil, nil, errors.New("strategies-min/max invalid")
 	}
 	if maxN > len(all) {
 		maxN = len(all)
@@ -231,6 +232,10 @@ func Assign(targets, minN, maxN int, seed int64) ([][]Slot, [][]Slot, error) {
 	if 2*targets*maxN < len(all) {
 		return nil, nil, fmt.Errorf("cannot cover all %d strategies: need 2*targets*strategies-max >= %d (got %d); increase --targets or --strategies-max", len(all), len(all), 2*targets*maxN)
 	}
+	// #nosec G404 -- math/rand is the right choice here and crypto/rand
+	// would be wrong: scalegen builds reproducible synthetic test corpora,
+	// and reproducibility from an explicit --seed is the entire point. No
+	// value produced here is a secret, a token, or a nonce.
 	rng := rand.New(rand.NewSource(seed))
 	v1, v2 := make([][]Slot, targets), make([][]Slot, targets)
 	next := 0

@@ -18,6 +18,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -41,7 +42,7 @@ import (
 // findings — those are reported as Diagnostics.
 func Compile(rules RuleSet, hub, spoke *extv1.JSONSchemaProps) (*Plan, []Diagnostic, error) {
 	if hub == nil || spoke == nil {
-		return nil, nil, fmt.Errorf("compile: hub and spoke schemas must both be non-nil")
+		return nil, nil, errors.New("compile: hub and spoke schemas must both be non-nil")
 	}
 	h2s, s2h, _, diags, _ := resolveAndBuildOps(rules.Rules, hub, spoke, effectivePolicy(rules.UnmappedFieldPolicy), 0)
 	return &Plan{HubVersion: rules.HubVersion, SpokeVersion: rules.SpokeVersion, HubToSpoke: h2s, SpokeToHub: s2h}, diags, nil

@@ -19,6 +19,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,7 +28,7 @@ import (
 )
 
 // Exit codes, chosen so CI can tell "the config is broken" apart from "the
-// invocation was wrong."
+// invocation was wrong.".
 const (
 	ExitOK          = 0
 	ExitTestFailure = 1
@@ -53,6 +54,7 @@ cluster. Every command works against either resource type:
 	}
 	root.AddCommand(
 		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
+		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
 	)
@@ -167,7 +169,7 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		skipIdentity, strict, live, quiet                                    bool
+		skipIdentity, strict, live, quiet, verifyPropagation                 bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext, kubeconfigDir                               string
 		contexts                                                             []string
@@ -199,6 +201,13 @@ cluster and emit one aggregated JUnit report (one <testsuite> per cluster).
 A single context or a single kubeconfig file keeps the existing one-cluster
 report shape.
 
+--verify-propagation additionally reads the target XRD's generated CRDs from the
+same cluster and checks they carry the conversion webhook the XRD points at.
+Samples passing through the engine says the rules are right; this says the
+cluster will actually use them. Until Crossplane re-renders the generated CRD,
+reads at a non-storage version come back relabelled but UNCONVERTED, with HTTP
+200 and no error anywhere.
+
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
@@ -218,7 +227,10 @@ results are collected by sample index, never by completion order.`,
 				return fmt.Errorf("invalid --fail-on value %q (want %s, %s, or %s)", failOn, failOnNone, failOnWarn, failOnLoss)
 			}
 			if !live && (len(contexts) > 0 || kubeconfigDir != "") {
-				return fmt.Errorf("--contexts and --kubeconfig-dir require --live")
+				return errors.New("--contexts and --kubeconfig-dir require --live")
+			}
+			if verifyPropagation && !live {
+				return errors.New("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
 			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
@@ -226,6 +238,7 @@ results are collected by sample index, never by completion order.`,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
+				VerifyPropagation: verifyPropagation,
 			}
 			targets, err := resolveLiveTargets(opts)
 			if err != nil {
@@ -281,6 +294,7 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
+	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
@@ -402,8 +416,18 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 		return err
 	}
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, buf.Bytes(), 0o644); err != nil {
+		// 0o600 rather than 0o644: a report can contain the full schema
+		// and rule set of a cluster's conversion configuration, and the
+		// person who asked for it is the only one who asked for it. Widen
+		// it deliberately with umask or chmod if a CI job needs to read it.
+		// O_TRUNC+Chmod rather than a bare WriteFile: WriteFile only
+		// applies its mode when it creates the file, so re-running against
+		// an existing world-readable report would leave it world-readable.
+		if err := os.WriteFile(outputFile, buf.Bytes(), 0o600); err != nil {
 			return fmt.Errorf("writing report to %s: %w", outputFile, err)
+		}
+		if err := os.Chmod(outputFile, 0o600); err != nil {
+			return fmt.Errorf("restricting permissions on %s: %w", outputFile, err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "output written to file %s\n", outputFile)
 		if fleet != nil {

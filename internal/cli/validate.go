@@ -17,6 +17,7 @@ limitations under the License.
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
@@ -39,7 +40,7 @@ type ValidateResult struct {
 // against the wrong resource type is worse than not validated at all.
 func RunValidate(configPath, xrdPath, crdPath string) (*ValidateResult, error) {
 	if xrdPath != "" && crdPath != "" {
-		return nil, fmt.Errorf("--xrd and --crd are mutually exclusive")
+		return nil, errors.New("--xrd and --crd are mutually exclusive")
 	}
 	kind, err := PeekConfigKind(configPath)
 	if err != nil {
@@ -85,7 +86,7 @@ func runValidateXRD(configPath, xrdPath string) (*ValidateResult, error) {
 		return res, nil
 	}
 	if report.HasErrors() {
-		res.Errors = append(res.Errors, fmt.Sprintf("configuration is invalid against the XRD schema:%s", summarizeSpokeErrors(report)))
+		res.Errors = append(res.Errors, "configuration is invalid against the XRD schema:"+summarizeSpokeErrors(report))
 		return res, nil
 	}
 	res.SchemaValidated = true
@@ -118,7 +119,7 @@ func runValidateCRD(configPath, crdPath string) (*ValidateResult, error) {
 		return res, nil
 	}
 	if report.HasErrors() {
-		res.Errors = append(res.Errors, fmt.Sprintf("configuration is invalid against the CRD schema:%s", summarizeSpokeErrors(report)))
+		res.Errors = append(res.Errors, "configuration is invalid against the CRD schema:"+summarizeSpokeErrors(report))
 		return res, nil
 	}
 	res.SchemaValidated = true

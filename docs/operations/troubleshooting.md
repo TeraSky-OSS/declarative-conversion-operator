@@ -110,6 +110,54 @@ fixtures:
 convctl test --xrd xrd.yaml --config config.yaml --live
 ```
 
+## `Applied` but not `Propagated`
+
+**Symptom.** The config reports `Phase: Applied` and `Applied=True`, but reads at a non-storage version come back **relabelled and unconverted** — right `apiVersion`, old field layout, HTTP 200, no error.
+
+```console
+kubectl get xrdconversionconfig <name> \
+  -o jsonpath='{.status.conditions[?(@.type=="ConversionPropagated")]}{"\n"}'
+kubectl get xrdconversionconfig <name> -o jsonpath='{.status.generatedCRDs}{"\n"}' | jq
+```
+
+`Applied` means the operator patched `spec.conversion` onto the XRD. Nothing converts anything until **Crossplane** re-renders the generated CRD with that webhook block, and until it does the CRD sits on `strategy: None` — where the apiserver relabels stored objects rather than converting them. Normally that gap is seconds. It stops being seconds when Crossplane is not running, is unhealthy, has lost RBAC on `customresourcedefinitions`, or is reconciling a paused XRD.
+
+| Reason | What it means | Where to look |
+|---|---|---|
+| `GeneratedCRDNotFound` | Crossplane has not created the CRD at all. | Is Crossplane running? Is the XRD `Established`? Does a `crossplane.io/paused` annotation sit on it? |
+| `NotPropagated` | The CRD exists but does not carry the webhook, or carries a different one. The per-CRD `message` says which. | Crossplane's logs for the XRD definition controller; whether something else also writes this CRD. |
+| `CABundleStale` | The CRD's `caBundle` no longer matches the `ConversionWebhookServer`'s certificate. Conversion requests fail TLS verification. | A cert-manager rotation that Crossplane has not re-rendered yet. Resolves itself; if it does not, the XRD's own `spec.conversion` is the thing to check. |
+
+From outside the cluster, the same check:
+
+```console
+convctl test --xrd xrd.yaml --config config.yaml --live --verify-propagation
+```
+
+On a `scope: LegacyCluster` XRD with `claimNames` there are **two** CRDs, and `ConversionPropagated` is True only when both match — a half-propagated pair is how claims silently return wrong data while composites convert fine.
+
+## My conversion keeps disappearing
+
+**Symptom.** Reads at a non-storage version intermittently return the stored object **relabelled but unconverted** — right `apiVersion`, old field layout, HTTP 200, no error anywhere. Minutes later it is fine again. The config still reports `Applied`.
+
+**Check the counter and the condition:**
+
+```console
+kubectl get xrdconversionconfig <name> \
+  -o jsonpath='{.status.conditions[?(@.type=="PackageManaged")]}{"\n"}'
+
+# from a manager pod, or via your Prometheus
+sum by (target) (increase(dco_manager_conversion_reverts_total[24h]))
+```
+
+If `PackageManaged` is `True` and the counter is non-zero, this is Crossplane's package establisher. It re-writes every object it established with a full `client.Update` from the package contents — not a Server-Side Apply — on **every** `ConfigurationRevision` reconcile, which the default one-hour `--sync` guarantees. A full `Update` is a replace: `spec.conversion` and this operator's annotations are removed outright. The generated CRD then falls back to `strategy: None` until the operator re-applies, which it does within seconds (it watches XRDs, and self-checks every five minutes besides).
+
+So the exposure is a race of seconds, roughly hourly, per package-managed XRD — and what leaks through it is wrong data with a 200, not an outage. A `Lock` change (any package installed, upgraded or removed anywhere on the cluster) or a Crossplane restart triggers the same thing off-schedule.
+
+**Fix.** Enable the XRD conversion guard (`--enable-xrd-conversion-guard`, chart value `features.crossplane.conversionGuard.enabled`), which re-injects the conversion stanza inside the same admission request, so the window never opens. See [Limitations](../limitations.md#operational) for why patching the generated CRD instead does not help.
+
+Patching `spec.conversion` into the packaged XRD yourself also works, but it means hard-coding a service name, namespace and CA bundle into a portable package.
+
 ## The config went `Stale`
 
 The live target's schema no longer matches what the config last validated

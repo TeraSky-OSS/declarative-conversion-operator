@@ -29,6 +29,7 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -78,7 +79,7 @@ func (v *XRDConversionConfigValidator) ValidateDelete(context.Context, *teraskyv
 
 func (v *XRDConversionConfigValidator) validate(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig) (admission.Warnings, error) {
 	if !v.Enabled {
-		return nil, fmt.Errorf("XRD conversion support is disabled on this installation (--enable-xrd-support=false); enable it before creating XRDConversionConfig objects")
+		return nil, errors.New("XRD conversion support is disabled on this installation (--enable-xrd-support=false); enable it before creating XRDConversionConfig objects")
 	}
 
 	var warnings admission.Warnings
@@ -103,7 +104,11 @@ func (v *XRDConversionConfigValidator) validate(ctx context.Context, cfg *terask
 	err := v.Client.Get(ctx, types.NamespacedName{Name: cfg.Spec.TargetXRD.Name}, xrd)
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("target XRD %q does not currently exist; skipping live schema validation until it does", cfg.Spec.TargetXRD.Name))
-		return warnings, nil
+		// Deliberately a warning, not a rejection: a config may legitimately
+		// be applied before its target exists (GitOps orders alphabetically,
+		// not by dependency), and rejecting it would make that ordering a
+		// hard requirement.
+		return warnings, nil //nolint:nilerr // an absent target is a warning, not an admission failure
 	}
 
 	ruleSets, err := cfg.ToRuleSets()
@@ -121,13 +126,13 @@ func (v *XRDConversionConfigValidator) validate(ctx context.Context, cfg *terask
 }
 
 func summarizeErrors(report engine.AnalyzeReport) string {
-	msg := ""
+	var msg strings.Builder
 	for _, sr := range report.SpokeReports {
 		for _, e := range sr.Errors {
-			msg += fmt.Sprintf("[spoke %s] %s; ", sr.Version, e.Message)
+			fmt.Fprintf(&msg, "[spoke %s] %s; ", sr.Version, e.Message)
 		}
 	}
-	return msg
+	return msg.String()
 }
 
 // ValidateStructure catches shape problems the CRD's OpenAPI schema can't
@@ -158,14 +163,14 @@ func ValidateCRDStructure(cfg *teraskyv1alpha1.CRDConversionConfig) error {
 // can set it (or omit it under Warn) and observe no behavior change.
 func validateUnmappedFieldReason(policy teraskyv1alpha1.UnmappedFieldPolicy, reason string) error {
 	if policy == teraskyv1alpha1.UnmappedFieldPolicyWarn && strings.TrimSpace(reason) == "" {
-		return fmt.Errorf("spec.unmappedFieldReason is required when spec.unmappedFieldPolicy is Warn")
+		return errors.New("spec.unmappedFieldReason is required when spec.unmappedFieldPolicy is Warn")
 	}
 	return nil
 }
 
 func validateSpokesStructure(hubVersion string, spokes []teraskyv1alpha1.SpokeVersionRules) error {
 	if len(spokes) == 0 {
-		return fmt.Errorf("spec.spokes must declare at least one spoke version")
+		return errors.New("spec.spokes must declare at least one spoke version")
 	}
 	seen := map[string]bool{}
 	for _, s := range spokes {
@@ -294,14 +299,14 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	}
 	if r.When != nil {
 		if strings.TrimSpace(r.When.Path) == "" {
-			return fmt.Errorf("when.path is required")
+			return errors.New("when.path is required")
 		}
 	}
 	if r.Strategy == teraskyv1alpha1.StrategyCEL && !r.AcknowledgeLossy {
-		return fmt.Errorf("CEL is always treated as lossy; acknowledgeLossy must be true (losslessOverride is not supported)")
+		return errors.New("CEL is always treated as lossy; acknowledgeLossy must be true (losslessOverride is not supported)")
 	}
 	if r.Strategy == teraskyv1alpha1.StrategyFromLabel && r.FromLabel != nil && r.FromLabel.Serialization == "JSON" {
-		return fmt.Errorf("FromLabel does not support serialization=JSON; use String (labels cannot carry JSON-quoted values)")
+		return errors.New("FromLabel does not support serialization=JSON; use String (labels cannot carry JSON-quoted values)")
 	}
 	if r.ToLabel != nil {
 		if msgs := k8svalidation.IsQualifiedName(r.ToLabel.Key); len(msgs) > 0 {

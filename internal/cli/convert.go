@@ -17,6 +17,7 @@ limitations under the License.
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -46,7 +47,7 @@ type ConvertOptions struct {
 // config's own kind.
 func RunConvert(opts ConvertOptions) (map[string]any, error) {
 	if opts.To == "" {
-		return nil, fmt.Errorf("--to is required: name the version to convert into")
+		return nil, errors.New("--to is required: name the version to convert into")
 	}
 	sample, err := loadSingleSample(opts.SamplePath)
 	if err != nil {
@@ -135,7 +136,7 @@ func convertOne(router *engine.Router, obj map[string]any, from, to, group strin
 		converted[k] = v
 	}
 	if group == "" {
-		return nil, fmt.Errorf("cannot determine the API group to stamp on the converted object")
+		return nil, errors.New("cannot determine the API group to stamp on the converted object")
 	}
 	converted["apiVersion"] = group + "/" + to
 	return converted, nil
@@ -146,7 +147,7 @@ func convertOne(router *engine.Router, obj map[string]any, from, to, group strin
 // document.
 func loadSingleSample(path string) (Sample, error) {
 	if path == "" {
-		return Sample{}, fmt.Errorf("--sample is required: pass the object to convert")
+		return Sample{}, errors.New("--sample is required: pass the object to convert")
 	}
 	docs, err := decodeAllDocuments(path)
 	if err != nil {

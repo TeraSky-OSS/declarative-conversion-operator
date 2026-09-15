@@ -37,6 +37,9 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 | `dco_webhook_conversion_review_duration_seconds` | Histogram | `target`, `direction`, `result` | End-to-end ConversionReview latency |
 | `dco_webhook_conversion_review_requests_total` | Counter | `target`, `result` | ConversionReview requests handled |
 | `dco_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `result` | Individual objects converted inside reviews |
+| `dco_webhook_conversion_object_duration_seconds` | Histogram | `target`, `direction`, `result` | Per-object conversion latency. Prefer this over the review histogram for anything sliced by `direction` — see the note below |
+| `dco_webhook_conversion_batch_size` | Histogram | `target` | Objects carried by one ConversionReview. The input for sizing `--max-request-bytes` |
+| `dco_webhook_conversion_panics_total` | Counter | `target` | Panics recovered while serving a review. Always a bug in this operator; alert on any increase |
 | `dco_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy |
 | `dco_webhook_registry_size` | Gauge | — | Registry entries on this replica (includes error-only placeholders) |
 | `dco_webhook_registry_entry_loaded` | Gauge | `target` | `1` if this replica has a compiled, servable plan for that target; `0` if error-only |
@@ -44,6 +47,26 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 | `dco_webhook_registry_reload_total` | Counter | `target`, `result` | Attempted (re)compiles |
 | `dco_webhook_registry_compile_errors_total` | Counter | `target`, `reason` | Compile failures that left a stale-or-absent plan in place |
 | `dco_webhook_ready` | Gauge | — | `1` after this replica's registry completed initial sync |
+
+### `direction` on the two latency histograms
+
+A ConversionReview is batched by the version the apiserver *wants*, not by
+the version each object currently *is*, so one request can legitimately
+carry objects converting `v1->v3` and `v2->v3` at the same time. There is no
+honest single `direction` for such a request, and
+`dco_webhook_conversion_review_duration_seconds` labels it `mixed` rather
+than picking one.
+
+That makes the review histogram the right measure of **request** latency and
+the wrong measure of per-direction cost. Use
+`dco_webhook_conversion_object_duration_seconds` for the latter: its
+`direction` is always exactly the conversion that was timed. Both are
+exported; neither replaces the other.
+
+Sizing `--max-request-bytes` from
+`dco_webhook_conversion_batch_size` is more reliable than guessing from
+object size alone, because the limit applies to the encoded review and
+therefore scales with batch size as well as with object size.
 
 ### Common label values
 
@@ -90,6 +113,9 @@ and workqueue series.
 | `dco_manager_analyze_failures_total` | Counter | `config_kind`, `target`, `reason` | Analyze/compile validation failures during config reconcile |
 | `dco_manager_apply_duration_seconds` | Histogram | `config_kind`, `target`, `result` | Latency of SSA patches applying conversion webhook config onto the target XRD/CRD |
 | `dco_manager_phase_transitions_total` | Counter | `config_kind`, `from_phase`, `to_phase`, `reason` | Config status phase transitions (e.g. Applied→Stale, Applied→Failed) |
+| `dco_manager_conversion_reverts_total` | Counter | `config_kind`, `target` | A previously-applied `spec.conversion` was found **missing** from the target — an out-of-band overwrite. On an XRD owned by a Crossplane `ConfigurationRevision` this is the package establisher's non-SSA `client.Update`; see the `PackageManaged` condition on the config. |
+| `dco_manager_conversion_propagated` | Gauge | `target` | `1` when every CRD Crossplane generates from this applied XRD carries the conversion webhook, `0` when it does not. This is the series the `ConversionAppliedButNotPropagated` alert reads: a gauge, because the question is about a specific target's **current** state, which no rate over counters can answer — those aggregate away which apply they are describing, so one old propagation observation would suppress the alert for a later apply that never propagated. |
+| `dco_manager_propagation_lag_seconds` | Histogram | `target` | Time from patching `spec.conversion` onto an XRD until Crossplane's generated CRD was observed carrying it. Observed **once per transition into propagated**, not on every reconcile. XRD targets only — a `CRDConversionConfig`'s target *is* the CRD, so there is nothing to propagate. |
 
 - **`config_kind`**: `xrd` or `crd`
 - **`to_phase` / `from_phase`**: `Pending`, `Applied`, `Stale`, `Failed`, …
@@ -106,7 +132,19 @@ histogram_quantile(0.99,
 # Transitions into Stale or Failed
 sum by (config_kind, to_phase, reason)
   (rate(dco_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[5m]))
+
+# Conversion stripped out of band (package establisher, typically hourly)
+sum by (config_kind, target) (increase(dco_manager_conversion_reverts_total[1h]))
 ```
+
+A non-zero `dco_manager_conversion_reverts_total` on a target whose config
+reports `PackageManaged=True` is the signature of Crossplane's package
+establisher: it re-writes every established object with a full
+`client.Update` from the package contents on each revision reconcile, which
+the default one-hour `--sync` guarantees. The operator re-applies within
+seconds, but reads during that window return stored objects **relabelled
+and unconverted, with no error**. The `ConversionRevertedOutOfBand` alert
+covers it; enabling the XRD conversion guard closes the window entirely.
 
 ---
 

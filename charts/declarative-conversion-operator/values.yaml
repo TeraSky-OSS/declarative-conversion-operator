@@ -38,12 +38,42 @@ crds:
 # harmless. These toggles instead control which controllers/watches the
 # manager and every webhook-server replica actually set up.
 features:
-  # Crossplane must already be installed for this to be safe: the manager
-  # watches Crossplane's CompositeResourceDefinition GVK, and establishing
-  # that watch is fatal at startup if the GVK doesn't exist on the
-  # cluster. Disable on clusters without Crossplane.
+  # Crossplane 2.x must already be installed for this to be safe: the
+  # manager watches Crossplane's CompositeResourceDefinition GVK at
+  # apiextensions.crossplane.io/v2, which a Crossplane 1.x control plane
+  # does not serve at all. With this enabled the manager checks for that
+  # API version at startup and exits with an actionable error if it is
+  # absent. Disable on clusters without Crossplane 2.x.
+  #
+  # scope: LegacyCluster XRDs (the v1 compatibility layer inside
+  # Crossplane 2.x — claims and connection secrets included) are fully
+  # supported; "2.x only" is about the control plane, not claims.
   crossplane:
     enabled: true
+    # A mutating admission webhook on compositeresourcedefinitions that
+    # re-injects spec.conversion into any write that would drop it.
+    #
+    # It exists because Crossplane's package establisher writes established
+    # objects with a full client.Update from the package contents rather
+    # than a Server-Side Apply, and re-runs on every ConfigurationRevision
+    # reconcile — which the default one-hour --sync guarantees. So an XRD
+    # shipped in a Configuration loses spec.conversion roughly hourly. The
+    # operator re-applies within seconds, but during that window the
+    # generated CRD is back on strategy: None and the apiserver serves
+    # stored objects relabelled but UNCONVERTED, with HTTP 200 and no
+    # error.
+    #
+    # failurePolicy is Ignore, always: a guard that could block XRD writes
+    # would make package installs depend on this operator's availability.
+    # Fail open, and let the controller re-apply as the backstop — normal
+    # operation has no window, degraded operation is exactly the behaviour
+    # without the guard.
+    #
+    # Both upstream write paths carry a TODO to move to Server-Side Apply.
+    # Once a Crossplane version lands that no longer needs this, turn it
+    # off; nothing else changes.
+    conversionGuard:
+      enabled: true
   # Native CRD conversion support (CRDConversionConfig) watches a core
   # Kubernetes type that's always present, so this carries no equivalent
   # startup risk — disable only if you simply don't want the feature
@@ -126,6 +156,20 @@ conversionWebhookServer:
   default: true
   namespace: ""
   replicaCount: 2
+  # Maximum ConversionReview request body the webhook-server will read.
+  # A larger body is answered with a ConversionReview failure naming this
+  # limit, rather than being buffered. Raise it only if legitimate batches
+  # are being rejected — this is what stops one client from exhausting the
+  # process on the apiserver's write path. A positive integer, or the empty
+  # string to use the binary's own default (32 MiB). Zero, negative and
+  # non-numeric values are rejected at install: the webhook-server refuses
+  # them at startup, and a crash loop is a poor way to learn that.
+  maxRequestBytes: ""
+  # Maximum time one ConversionReview may occupy a worker. Must stay below
+  # the write timeout (35s) so the failure is delivered rather than
+  # truncated. A positive Go duration, or the empty string to use the
+  # binary's own default (30s). Zero durations are rejected at install.
+  requestTimeout: ""
   extraArgs: []
   extraEnv: []
   extraVolumes: []
@@ -143,6 +187,18 @@ conversionWebhookServer:
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
+  # How a replica leaves service. These four values are one set — see the
+  # RolloutSpec docs (`kubectl explain conversionwebhookserver.spec.rollout`)
+  # and docs/operations/ha-checklist.md. Leave a key null to take the CRD's
+  # default, which is what makes a rollout cause zero failed conversions:
+  #   preStopSleepSeconds 5, terminationGracePeriodSeconds 45,
+  #   maxUnavailable 0, maxSurge 1, defaultTopologySpread true.
+  rollout:
+    preStopSleepSeconds: null
+    terminationGracePeriodSeconds: null
+    maxUnavailable: null
+    maxSurge: null
+    defaultTopologySpread: null
   resources:
     requests:
       cpu: 50m
@@ -174,6 +230,13 @@ metrics:
   prometheusRule:
     enabled: false
     labels: {}
+    # How long "applied to the XRD but never observed in the generated
+    # CRD" has to hold before ConversionAppliedButNotPropagated fires.
+    # Crossplane normally re-renders in seconds; this is the budget for
+    # "Crossplane is wedged, paused, or has lost RBAC", so it should be
+    # comfortably longer than a healthy re-render and shorter than anyone's
+    # patience with silently-unconverted reads.
+    propagationLagFor: 5m
 
 # Grafana sidecar ConfigMaps (label grafana_dashboard: "1") for every JSON
 # file under files/dashboards/ (overview, per-target detail, platform

@@ -18,6 +18,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -109,13 +110,13 @@ func servedVersions(versions []engine.VersionSchema) []string {
 }
 
 func summarizeSpokeErrors(report engine.AnalyzeReport) string {
-	msg := ""
+	var msg strings.Builder
 	for _, sr := range report.SpokeReports {
 		for _, e := range sr.Errors {
-			msg += fmt.Sprintf("\n  [spoke %s] %s", sr.Version, e.Message)
+			fmt.Fprintf(&msg, "\n  [spoke %s] %s", sr.Version, e.Message)
 		}
 	}
-	return msg
+	return msg.String()
 }
 
 func xrdName(xrd *unstructured.Unstructured) string {

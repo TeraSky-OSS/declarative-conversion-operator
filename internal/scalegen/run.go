@@ -18,6 +18,7 @@ package scalegen
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -219,10 +220,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	var created atomic.Int64
 	createJobs := make([]func() error, 0, total)
 	for _, t := range targets {
-		t := t
 		gvr := t.GVR(V1)
 		for n := 0; n < opts.Instances; n++ {
-			n := n
 			createJobs = append(createJobs, func() error {
 				obj := t.Instance(opts.Namespace, n)
 				err := retryTransient(ctx, func() error {
@@ -261,7 +260,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	printResult(opts.Out, res)
 	if listV1.Errors+listV2.Errors+getV1.Errors+getV2.Errors > 0 {
-		return res, fmt.Errorf("scale run completed with get/list errors")
+		return res, errors.New("scale run completed with get/list errors")
 	}
 	return res, nil
 }
@@ -310,7 +309,10 @@ func waitCRDEstablished(ctx context.Context, c client.Client, name string) error
 	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
 		var crd extv1.CustomResourceDefinition
 		if err := c.Get(ctx, client.ObjectKey{Name: name}, &crd); err != nil {
-			return false, nil
+			// The object not being readable yet is the condition being
+			// polled for, not a failure of the poll: returning the error
+			// here would abort the wait on the first NotFound.
+			return false, nil //nolint:nilerr // a transient read failure means "not ready yet", which is what this poll is waiting on
 		}
 		for _, cond := range crd.Status.Conditions {
 			if cond.Type == extv1.Established && cond.Status == extv1.ConditionTrue {
@@ -325,7 +327,7 @@ func waitConfigApplied(ctx context.Context, c client.Client, name string) error 
 	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
 		var cfg v1a.CRDConversionConfig
 		if err := c.Get(ctx, client.ObjectKey{Name: name}, &cfg); err != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // a transient read failure means "not ready yet", which is what this poll is waiting on
 		}
 		return meta.IsStatusConditionTrue(cfg.Status.Conditions, v1a.ConditionApplied), nil
 	})
@@ -335,7 +337,7 @@ func waitCRDWebhook(ctx context.Context, c client.Client, name string) error {
 	return wait.PollUntilContextCancel(ctx, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) {
 		var crd extv1.CustomResourceDefinition
 		if err := c.Get(ctx, client.ObjectKey{Name: name}, &crd); err != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // a transient read failure means "not ready yet", which is what this poll is waiting on
 		}
 		return crd.Spec.Conversion != nil && crd.Spec.Conversion.Strategy == extv1.WebhookConverter, nil
 	})
@@ -395,7 +397,7 @@ func resetGenerated(ctx context.Context, c client.Client) error {
 	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
 		var left extv1.CustomResourceDefinitionList
 		if err := c.List(ctx, &left); err != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // a transient list failure means "not finished deleting yet", which is what this poll is waiting on
 		}
 		for _, crd := range left.Items {
 			if crd.Spec.Group == Group {
@@ -449,7 +451,6 @@ func collectTimed(ctx context.Context, parallel int, jobs []func() timed) Stats 
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	for i, job := range jobs {
-		i, job := i, job
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -472,7 +473,6 @@ func runErrPool(ctx context.Context, parallel int, jobs []func() error) error {
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	for _, job := range jobs {
-		job := job
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

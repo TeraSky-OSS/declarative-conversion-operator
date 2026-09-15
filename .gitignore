@@ -1,4 +1,12 @@
 bin/
+# `go build ./cmd/<x>` with no -o drops the binary in the repo root, which
+# is one `git add -A` away from a 50 MB blob in the history. Match them by
+# name at the root only, so a package or directory of the same name
+# elsewhere is unaffected.
+/manager
+/webhook-server
+/convctl
+/scalegen
 __pycache__/
 *.pyc
 *.out

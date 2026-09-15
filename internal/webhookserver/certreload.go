@@ -19,6 +19,7 @@ package webhookserver
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -75,7 +76,7 @@ func (r *CertReloader) reload() error {
 func (r *CertReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	c := r.cert.Load()
 	if c == nil {
-		return nil, fmt.Errorf("no TLS certificate loaded yet")
+		return nil, errors.New("no TLS certificate loaded yet")
 	}
 	return c, nil
 }

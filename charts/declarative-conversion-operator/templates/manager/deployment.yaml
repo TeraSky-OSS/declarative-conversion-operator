@@ -47,6 +47,7 @@ spec:
             - --default-webhook-server-image={{ include "declarative-conversion-operator.webhookServerImage" . }}
             - --enable-xrd-support={{ .Values.features.crossplane.enabled }}
             - --enable-crd-support={{ .Values.features.nativeCRD.enabled }}
+            - --enable-xrd-conversion-guard={{ and .Values.features.crossplane.enabled .Values.features.crossplane.conversionGuard.enabled }}
             {{- with .Values.manager.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

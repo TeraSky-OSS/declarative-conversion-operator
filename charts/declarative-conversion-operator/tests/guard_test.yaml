@@ -1,0 +1,57 @@
+suite: XRD conversion guard
+# These replace the grep assertions that used to live in .github/workflows/ci.yml.
+# They are here rather than there because `grep -q` proves presence and
+# nothing else: it cannot say "this key is on that object", it cannot say
+# "this is absent", and it cannot fail usefully.
+templates:
+  - admission-webhook/mutatingwebhookconfiguration.yaml
+  - manager/deployment.yaml
+
+tests:
+  - it: renders the guard by default, failing open
+    template: admission-webhook/mutatingwebhookconfiguration.yaml
+    asserts:
+      - isKind:
+          of: MutatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].name
+          value: gxrdconversion.terasky.com
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /guard-xrd-conversion
+      # failurePolicy is hard-coded to Ignore and must stay that way: a guard
+      # that can block XRD writes would make every Crossplane package install
+      # depend on this operator being up. The old grep checked this with an
+      # awk range over the rendered YAML.
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Ignore
+
+  - it: tells the manager to run the guard
+    template: manager/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-xrd-conversion-guard=true
+
+  - it: is not rendered when the guard is disabled
+    set:
+      features.crossplane.conversionGuard.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: admission-webhook/mutatingwebhookconfiguration.yaml
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-xrd-conversion-guard=false
+        template: manager/deployment.yaml
+
+  - it: is not rendered when Crossplane support is off entirely
+    # On a cluster with no Crossplane the type the guard intercepts does not
+    # exist, so a MutatingWebhookConfiguration naming it is at best inert.
+    set:
+      features.crossplane.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: admission-webhook/mutatingwebhookconfiguration.yaml

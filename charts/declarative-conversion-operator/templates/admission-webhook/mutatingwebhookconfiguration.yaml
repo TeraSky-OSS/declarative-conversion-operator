@@ -1,0 +1,53 @@
+{{- if and .Values.admissionWebhook.enabled .Values.features.crossplane.enabled .Values.features.crossplane.conversionGuard.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-mutating-webhook-configuration
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "declarative-conversion-operator.fullname" . }}-webhook-cert
+webhooks:
+  # Re-injects spec.conversion into any CompositeResourceDefinition write
+  # that would drop what the operator applied. See
+  # internal/webhook/xrd_conversion_guard.go for the mechanism this exists
+  # to correct, and docs/limitations.md for why patching the generated CRD
+  # instead does not work.
+  - name: gxrdconversion.terasky.com
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    # ALWAYS Ignore, and not configurable. A guard that can block XRD
+    # writes would make every package install depend on this operator being
+    # up — unacceptable for something meant to be purely additive. Failing
+    # open leaves exactly the behaviour you get without the guard, with the
+    # controller's re-apply as the backstop.
+    failurePolicy: Ignore
+    matchPolicy: Equivalent
+    # Short, because this sits in the write path for every XRD on the
+    # cluster and the handler itself is an in-memory index lookup.
+    timeoutSeconds: 5
+    reinvocationPolicy: IfNeeded
+    clientConfig:
+      service:
+        name: {{ include "declarative-conversion-operator.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        # Hard-coded, deliberately: the manager registers exactly one
+        # handler path (internalwebhook.GuardPath). A value that let this
+        # drift would point admission at a path nothing serves — and since
+        # failurePolicy is Ignore, it would fail open silently, leaving the
+        # guard switched off with every appearance of being on.
+        path: /guard-xrd-conversion
+        port: 443
+    # Deliberately no objectSelector. The tempting one — a label the
+    # operator sets — is self-defeating: that label is wiped by the very
+    # Update being guarded against, so the selector would switch the guard
+    # off in exactly the case it exists for. Match every XRD write and
+    # return early on an index miss instead; XRDs are few and rarely
+    # written.
+    rules:
+      - apiGroups: ["apiextensions.crossplane.io"]
+        apiVersions: ["v1", "v2"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["compositeresourcedefinitions"]
+        scope: Cluster
+{{- end }}

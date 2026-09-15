@@ -1,0 +1,109 @@
+suite: feature and monitoring toggles
+# Every toggle, on and off. The "off" half is the one `helm template | grep`
+# could never express: grep proves something is present, not that it is
+# absent, so a template that rendered when it should not have would have
+# passed CI unnoticed.
+tests:
+  - it: renders no monitoring objects by default
+    templates:
+      - monitoring/servicemonitor.yaml
+      - monitoring/prometheusrule.yaml
+      - dashboards/dashboard.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a ServiceMonitor when asked
+    template: monitoring/servicemonitor.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.interval: 15s
+      metrics.serviceMonitor.labels:
+        release: kube-prometheus-stack
+    asserts:
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 15s
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+
+  - it: renders a PrometheusRule when asked, honouring the lag budget
+    template: monitoring/prometheusrule.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.propagationLagFor: 12m
+    asserts:
+      - isKind:
+          of: PrometheusRule
+      # propagationLagFor is the only alert threshold the chart exposes as a
+      # value, so the thing worth asserting is that setting it reaches the
+      # alert it is documented to control.
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            expr: dco_manager_conversion_propagated == 0
+          any: true
+      - equal:
+          path: spec.groups[0].rules[?(@.alert == "ConversionAppliedButNotPropagated")].for
+          value: 12m
+
+  - it: renders dashboards with the Grafana sidecar label
+    template: dashboards/dashboard.yaml
+    set:
+      dashboards.enabled: true
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+
+  - it: does not create a ConversionWebhookServer when create is false
+    template: conversion-webhook-server/conversionwebhookserver.yaml
+    set:
+      conversionWebhookServer.create: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: uses a fixed replica count by default and an HPA when autoscaling is on
+    template: conversion-webhook-server/conversionwebhookserver.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - isNull:
+          path: spec.autoscaling
+
+  - it: replaces the replica count with autoscaling, which then owns it
+    template: conversion-webhook-server/conversionwebhookserver.yaml
+    set:
+      conversionWebhookServer.autoscaling.enabled: true
+      conversionWebhookServer.autoscaling.minReplicas: 3
+      conversionWebhookServer.autoscaling.maxReplicas: 12
+    asserts:
+      - isNull:
+          path: spec.replicas
+      - equal:
+          path: spec.autoscaling.minReplicas
+          value: 3
+      - equal:
+          path: spec.autoscaling.maxReplicas
+          value: 12
+
+  - it: renders no NetworkPolicy by default
+    template: networkpolicy/networkpolicy.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders NetworkPolicies when enabled
+    template: networkpolicy/networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - isKind:
+          of: NetworkPolicy

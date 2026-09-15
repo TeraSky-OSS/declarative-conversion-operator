@@ -1946,6 +1946,52 @@
       "description": "Applied\u2192Stale is KeepServingStale after drift; Applied\u2192Failed is typically FailClosed revert. Pending\u2192Applied is healthy first apply."
     },
     {
+      "id": 99,
+      "title": "Conversion reverted out of band /h",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 161
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (config_kind, target) (increase(dco_manager_conversion_reverts_total[1h])) or vector(0)",
+          "legendFormat": "{{config_kind}} {{target}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Times a previously-applied spec.conversion was found missing from the target. On an XRD owned by a Crossplane ConfigurationRevision this is the package establisher's non-SSA client.Update stripping it on every revision reconcile (default --sync is one hour). The operator re-applies within seconds, but reads during that window return stored objects relabelled and unconverted, with no error \u2014 check the config's PackageManaged condition, and enable the XRD conversion guard to close the window."
+    },
+    {
       "id": 74,
       "title": "Watch-map List errors /s",
       "type": "timeseries",

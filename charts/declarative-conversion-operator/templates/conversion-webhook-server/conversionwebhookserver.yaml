@@ -52,6 +52,18 @@ spec:
       name: {{ include "declarative-conversion-operator.fullname" . }}-selfsigned-issuer
       kind: ClusterIssuer
       {{- end }}
+  {{- /*
+    rollout is emitted only for keys the user actually set: the CRD carries
+    the defaults, so rendering an explicit null here would override them
+    with nothing.
+  */}}
+  {{- $ro := .Values.conversionWebhookServer.rollout | default dict }}
+  {{- $roSet := dict }}
+  {{- range $k, $v := $ro }}{{- if not (kindIs "invalid" $v) }}{{- $_ := set $roSet $k $v }}{{- end }}{{- end }}
+  {{- with $roSet }}
+  rollout:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- if .Values.conversionWebhookServer.podDisruptionBudget.enabled }}
   podDisruptionBudget:
     minAvailable: {{ .Values.conversionWebhookServer.podDisruptionBudget.minAvailable }}
@@ -83,7 +95,28 @@ spec:
   podAnnotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.conversionWebhookServer.extraArgs }}
+  {{- /*
+    extraArgs is assembled rather than passed through: maxRequestBytes and
+    requestTimeout get first-class values keys (so values.schema.json can
+    type them and a typo is rejected) but are ordinary webhook-server flags
+    underneath. User-supplied extraArgs come last so an operator can still
+    override either one the hard way.
+  */}}
+  {{- $args := list }}
+  {{- with .Values.conversionWebhookServer.maxRequestBytes }}
+  {{- /*
+    int64, not %v: Helm parses a YAML integer as a float64, and %v on
+    67108864 renders as "6.7108864e+07" — which the webhook-server's
+    flag.Int64Var rejects, so the pod crash-loops on a value that looked
+    perfectly reasonable in values.yaml.
+  */}}
+  {{- $args = append $args (printf "--max-request-bytes=%d" (int64 .)) }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.requestTimeout }}
+  {{- $args = append $args (printf "--request-timeout=%v" .) }}
+  {{- end }}
+  {{- $args = concat $args (.Values.conversionWebhookServer.extraArgs | default list) }}
+  {{- with $args }}
   extraArgs:
     {{- toYaml . | nindent 4 }}
   {{- end }}

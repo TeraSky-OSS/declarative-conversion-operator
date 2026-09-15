@@ -1,0 +1,13 @@
+# Created at the hub (storage) version, so it is physically stored as v2
+# and every read at v1 must go through the conversion webhook. That is what
+# makes a read at v1 the detector: with conversion gone, the apiserver
+# relabels the stored v2 object as v1 and returns spec.storageGB /
+# spec.memoryMB verbatim, unconverted, with HTTP 200.
+apiVersion: e2e.example.org/v2
+kind: XPackagedWidget
+metadata:
+  name: e2e-packaged-widget
+  namespace: default
+spec:
+  storageGB: "200Gi"
+  memoryMB: 8192

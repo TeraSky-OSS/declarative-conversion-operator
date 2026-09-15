@@ -1,0 +1,82 @@
+# Conversion config for the LegacyCluster XRD. Note that nothing here
+# mentions claims: the claim CRD is built from the same authored schema and
+# carries the same spec.conversion, so one rule set covers both object
+# classes. That is the whole reason claim conversion has always worked —
+# what was missing was the tooling being able to SEE the claim CRD.
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xlegacywidgets-e2e-conversion
+spec:
+  targetXRD:
+    name: xlegacywidgets.e2e.example.org
+  hubVersion: v3
+  spokes:
+    - version: v2
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+        - strategy: NumericScale
+          numericScale:
+            hubPath: spec.memoryMB
+            spokePath: spec.memoryGB
+            factor: 1024
+          # Both fields are integers, so a hub value that is not a whole
+          # multiple of 1024 cannot round-trip. The engine will not pretend
+          # otherwise, and neither will this fixture.
+          acknowledgeLossy: true
+          reason: "memoryMB -> memoryGB is integer division; a non-multiple of 1024 does not round-trip"
+        - strategy: EnumRemap
+          enumRemap:
+            path: spec.size
+            mapping:
+              - hub: Small
+                spoke: S
+              - hub: Medium
+                spoke: M
+              - hub: Large
+                spoke: L
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: status.phase
+            spokePath: status.state
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+        - strategy: NumericScale
+          numericScale:
+            hubPath: spec.memoryMB
+            spokePath: spec.memoryGB
+            factor: 1024
+          # Both fields are integers, so a hub value that is not a whole
+          # multiple of 1024 cannot round-trip. The engine will not pretend
+          # otherwise, and neither will this fixture.
+          acknowledgeLossy: true
+          reason: "memoryMB -> memoryGB is integer division; a non-multiple of 1024 does not round-trip"
+        - strategy: EnumRemap
+          enumRemap:
+            path: spec.size
+            mapping:
+              - hub: Small
+                spoke: S
+              - hub: Medium
+                spoke: M
+              - hub: Large
+                spoke: L
+        - strategy: SingletonArrayToObject
+          singletonArrayToObject:
+            hubPath: spec.zones
+            spokePath: spec.zone
+          # A 2+ element hub array cannot survive the round trip through a
+          # single spoke object, and the engine will not pretend otherwise.
+          acknowledgeLossy: true
+          reason: "v1 modelled a single zone; only the first survives a hub->v1 conversion"
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: status.phase
+            spokePath: status.state

@@ -98,7 +98,11 @@ type ConversionWebhookServerReconciler struct {
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// Secrets are read one key at a time through an uncached client (see
+// internal/controller/cacheopts.go), never listed or watched, so get is the
+// only verb the manager needs. Restoring list/watch here would also restore
+// the cluster-wide Secret informer this operator deliberately does not run.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *ConversionWebhookServerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {
 	var server teraskyv1alpha1.ConversionWebhookServer
@@ -110,11 +114,8 @@ func (r *ConversionWebhookServerReconciler) Reconcile(ctx context.Context, req r
 		return r.reconcileDelete(ctx, &server)
 	}
 
-	if !controllerutil.ContainsFinalizer(&server, teraskyv1alpha1.ConversionWebhookServerFinalizer) {
-		controllerutil.AddFinalizer(&server, teraskyv1alpha1.ConversionWebhookServerFinalizer)
-		if err := r.Update(ctx, &server); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
-		}
+	if err := addFinalizer(ctx, r.Client, &server, teraskyv1alpha1.ConversionWebhookServerFinalizer); err != nil {
+		return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 	}
 
 	return r.reconcileNormal(ctx, &server)
@@ -302,11 +303,15 @@ func (r *ConversionWebhookServerReconciler) reconcileService(ctx context.Context
 	return r.Apply(ctx, svc, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
+// podLabels is stamped on every child object this reconciler creates, at
+// the object level and not only on the pod template: ManagedByLabel is what
+// OwnedWorkloadSelector scopes the manager's informers by, so an object
+// without it would be invisible to this controller's own watches.
 func podLabels(server string) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":       "declarative-conversion-webhook-server",
-		"app.kubernetes.io/instance":   server,
-		"app.kubernetes.io/managed-by": "declarative-conversion-operator",
+		"app.kubernetes.io/name":     "declarative-conversion-webhook-server",
+		"app.kubernetes.io/instance": server,
+		ManagedByLabel:               ManagedByValue,
 	}
 }
 
@@ -376,7 +381,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		return err
 	}
 	args := []string{
-		fmt.Sprintf("--webhook-server-name=%s", server.Name),
+		"--webhook-server-name=" + server.Name,
 		"--tls-cert-dir=/tls",
 		fmt.Sprintf("--conversion-bind-address=:%d", webhookServerConversionPort),
 		fmt.Sprintf("--metrics-bind-address=:%d", webhookServerMetricsPort),
@@ -445,9 +450,25 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		container = container.WithVolumeMounts(mc)
 	}
 
+	// The preStop hook is the single highest-value rollout mitigation: it
+	// makes the container outlive its own Endpoints removal, so the
+	// apiserver stops being routed here before the listener goes away.
+	// Without it every rolling update produces connection-refused errors
+	// on writes to every target this replica serves.
+	//
+	// `sleep` is not available in the distroless image, so the hook cannot
+	// be an Exec. WithSleep is the API's own primitive for exactly this and
+	// needs nothing inside the container.
+	if sleepSeconds := rolloutPreStopSeconds(server); sleepSeconds > 0 {
+		container = container.WithLifecycle(applycorev1.Lifecycle().
+			WithPreStop(applycorev1.LifecycleHandler().
+				WithSleep(applycorev1.SleepAction().WithSeconds(int64(sleepSeconds)))))
+	}
+
 	podSpec := applycorev1.PodSpec().
 		WithServiceAccountName(saName).
 		WithSecurityContext(podSec).
+		WithTerminationGracePeriodSeconds(rolloutGracePeriod(server)).
 		WithContainers(container).
 		WithVolumes(
 			applycorev1.Volume().WithName("tls").
@@ -473,6 +494,12 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 			return fmt.Errorf("converting topologySpreadConstraints: %w", err)
 		}
 		podSpec = podSpec.WithTopologySpreadConstraints(tc)
+	}
+	// Only default the spread when the operator has not expressed an
+	// opinion: appending ours to theirs would silently add a constraint
+	// they did not ask for and cannot remove.
+	if len(server.Spec.TopologySpreadConstraints) == 0 && rolloutDefaultSpread(server) {
+		podSpec = podSpec.WithTopologySpreadConstraints(defaultHostnameSpread(server.Name))
 	}
 	// Tolerations/Affinity are converted from their concrete API types (as
 	// stored verbatim in spec) to ApplyConfigurations via a JSON round trip
@@ -500,6 +527,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	}
 	depSpec := applyappsv1.DeploymentSpec().
 		WithSelector(applymetav1.LabelSelector().WithMatchLabels(podLabels(server.Name))).
+		WithStrategy(rolloutStrategy(server)).
 		WithTemplate(podTemplate)
 	if replicas != nil {
 		depSpec = depSpec.WithReplicas(*replicas)
@@ -522,6 +550,7 @@ func (r *ConversionWebhookServerReconciler) reconcileHPA(ctx context.Context, se
 		target = 75
 	}
 	hpa := applyautoscalingv2.HorizontalPodAutoscaler(cwsHPAName(server.Name), namespace).
+		WithLabels(podLabels(server.Name)).
 		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
 		WithSpec(applyautoscalingv2.HorizontalPodAutoscalerSpec().
 			WithScaleTargetRef(applyautoscalingv2.CrossVersionObjectReference().
@@ -552,6 +581,7 @@ func (r *ConversionWebhookServerReconciler) reconcilePDB(ctx context.Context, se
 		pdbSpec = pdbSpec.WithMaxUnavailable(*server.Spec.PodDisruptionBudget.MaxUnavailable)
 	}
 	pdb := applypolicyv1.PodDisruptionBudget(cwsPDBName(server.Name), namespace).
+		WithLabels(podLabels(server.Name)).
 		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
 		WithSpec(pdbSpec)
 	return r.Apply(ctx, pdb, client.ForceOwnership, client.FieldOwner(FieldOwner))
@@ -711,8 +741,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 		}
 	}
 
-	controllerutil.RemoveFinalizer(server, teraskyv1alpha1.ConversionWebhookServerFinalizer)
-	if err := r.Update(ctx, server); err != nil {
+	if err := removeFinalizer(ctx, r.Client, server, teraskyv1alpha1.ConversionWebhookServerFinalizer); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
@@ -746,4 +775,69 @@ func enqueueAllServers(c client.Client) func(ctx context.Context, obj client.Obj
 		}
 		return reqs
 	}
+}
+
+// The rollout defaults come from api/v1alpha1, where the validating webhook
+// also reads them — the two have to agree or admission would approve a
+// combination the controller then renders differently. They are applied
+// here as well as by the CRD's own kubebuilder defaults because
+// spec.rollout is optional as a whole: an instance created before the field
+// existed, or one that simply omits it, has to get the same safe behaviour
+// as one that spells it out.
+
+func rolloutPreStopSeconds(server *teraskyv1alpha1.ConversionWebhookServer) int32 {
+	if server.Spec.Rollout == nil || server.Spec.Rollout.PreStopSleepSeconds == nil {
+		return teraskyv1alpha1.DefaultPreStopSleepSeconds
+	}
+	return *server.Spec.Rollout.PreStopSleepSeconds
+}
+
+func rolloutGracePeriod(server *teraskyv1alpha1.ConversionWebhookServer) int64 {
+	if server.Spec.Rollout == nil || server.Spec.Rollout.TerminationGracePeriodSeconds == nil {
+		return teraskyv1alpha1.DefaultGracePeriodSeconds
+	}
+	return *server.Spec.Rollout.TerminationGracePeriodSeconds
+}
+
+func rolloutDefaultSpread(server *teraskyv1alpha1.ConversionWebhookServer) bool {
+	if server.Spec.Rollout == nil || server.Spec.Rollout.DefaultTopologySpread == nil {
+		return true
+	}
+	return *server.Spec.Rollout.DefaultTopologySpread
+}
+
+// defaultHostnameSpread keeps replicas off one node without ever making the
+// Deployment unschedulable. ScheduleAnyway is load-bearing: on a
+// single-node cluster — kind, an edge cluster, or one where everything else
+// is cordoned — DoNotSchedule would turn the setting meant to prevent an
+// outage into the cause of one.
+func defaultHostnameSpread(serverName string) *applycorev1.TopologySpreadConstraintApplyConfiguration {
+	return applycorev1.TopologySpreadConstraint().
+		WithMaxSkew(1).
+		WithTopologyKey(corev1.LabelHostname).
+		WithWhenUnsatisfiable(corev1.ScheduleAnyway).
+		WithLabelSelector(applymetav1.LabelSelector().WithMatchLabels(podLabels(serverName)))
+}
+
+// rolloutStrategy defaults to maxUnavailable=0 / maxSurge=1: a conversion
+// webhook that takes a replica out of service before its replacement is
+// ready is briefly serving from fewer replicas than the PodDisruptionBudget
+// promises, and at replicas=2 that is half the capacity of an
+// admission-path dependency.
+func rolloutStrategy(server *teraskyv1alpha1.ConversionWebhookServer) *applyappsv1.DeploymentStrategyApplyConfiguration {
+	maxUnavailable := intstr.FromInt32(0)
+	maxSurge := intstr.FromInt32(1)
+	if r := server.Spec.Rollout; r != nil {
+		if r.MaxUnavailable != nil {
+			maxUnavailable = *r.MaxUnavailable
+		}
+		if r.MaxSurge != nil {
+			maxSurge = *r.MaxSurge
+		}
+	}
+	return applyappsv1.DeploymentStrategy().
+		WithType(appsv1.RollingUpdateDeploymentStrategyType).
+		WithRollingUpdate(applyappsv1.RollingUpdateDeployment().
+			WithMaxUnavailable(maxUnavailable).
+			WithMaxSurge(maxSurge))
 }

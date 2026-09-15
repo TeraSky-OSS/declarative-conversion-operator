@@ -1,0 +1,82 @@
+name: Bug report
+description: Something behaves differently from what the docs say it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A conversion webhook sits in the apiserver's write path, so the most
+        useful bug reports say what was **written or read**, what came back,
+        and what should have. "It didn't work" is usually one of a dozen
+        different bugs.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the exact error, or the object that came back wrong.
+      placeholder: |
+        Reading a Widget at v1 returns spec.size unset. It is set at v2.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The XRD or CRD, the XRDConversionConfig/CRDConversionConfig, and the
+        object involved. Redact anything sensitive — the schema shape matters,
+        the field values usually do not.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Config status
+      description: >
+        `kubectl get xrdconversionconfig <name> -o yaml` (or crdconversionconfig),
+        specifically `status.conditions` and `status.spokeStatuses`. Most
+        conversion problems are already described there.
+      render: yaml
+
+  - type: input
+    id: version
+    attributes:
+      label: Operator version
+      description: Chart version or image tag.
+    validations:
+      required: true
+
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes version
+      description: "`kubectl version --short`"
+    validations:
+      required: true
+
+  - type: input
+    id: crossplane-version
+    attributes:
+      label: Crossplane version
+      description: Leave blank if this is about a native CRD rather than an XRD.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >
+        From the manager pod, the webhook-server pod, or both. The
+        webhook-server's `/debug/registry` endpoint is often more useful than
+        the log for "this target is not being converted".
+      render: text

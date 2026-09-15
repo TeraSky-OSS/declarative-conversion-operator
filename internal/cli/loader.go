@@ -22,6 +22,7 @@ limitations under the License.
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,9 @@ import (
 // unstructured object, the same shape pkg/xrdadapter reads from a live
 // cluster.
 func LoadXRD(path string) (*unstructured.Unstructured, error) {
+	// #nosec G304 -- reading a caller-named file is what this function is
+	// for: convctl is a CLI run by the person supplying the path, with
+	// their own filesystem permissions. There is no privilege to escalate.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
@@ -53,6 +57,7 @@ func LoadXRD(path string) (*unstructured.Unstructured, error) {
 
 // LoadConfig reads a single XRDConversionConfig YAML document from path.
 func LoadConfig(path string) (*teraskyv1alpha1.XRDConversionConfig, error) {
+	// #nosec G304 -- see LoadXRD.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
@@ -71,6 +76,7 @@ func LoadConfig(path string) (*teraskyv1alpha1.XRDConversionConfig, error) {
 // depends on, so there's no reason to avoid the typed decode the way
 // pkg/xrdadapter avoids vendoring Crossplane's own types.
 func LoadCRD(path string) (*extv1.CustomResourceDefinition, error) {
+	// #nosec G304 -- see LoadXRD.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
@@ -84,6 +90,7 @@ func LoadCRD(path string) (*extv1.CustomResourceDefinition, error) {
 
 // LoadCRDConfig reads a single CRDConversionConfig YAML document from path.
 func LoadCRDConfig(path string) (*teraskyv1alpha1.CRDConversionConfig, error) {
+	// #nosec G304 -- see LoadXRD.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
@@ -100,6 +107,7 @@ func LoadCRDConfig(path string) (*teraskyv1alpha1.CRDConversionConfig, error) {
 // handling before committing to parsing the file as either concrete type.
 // Fails closed on a missing or unrecognized kind rather than guessing.
 func PeekConfigKind(path string) (string, error) {
+	// #nosec G304 -- see LoadXRD.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", path, err)
@@ -127,6 +135,14 @@ type Sample struct {
 	Index   int // position within File, for multi-document files
 	Object  map[string]any
 	Version string
+	// CRD names the generated CRD a --live sample came from. A
+	// claim-offering XRD generates two, and a report that lumps them
+	// together cannot tell an operator which half of their objects a
+	// failure is in. Empty for file-loaded samples.
+	CRD string
+	// CRDRole is "composite" or "claim" for --live samples of an XRD.
+	// Empty otherwise.
+	CRDRole string
 }
 
 // LoadSamples walks dir recursively, decoding every .yaml/.yml file as a
@@ -198,6 +214,7 @@ func apiGroup(apiVersion string) string {
 }
 
 func decodeAllDocuments(path string) ([]map[string]any, error) {
+	// #nosec G304 -- see LoadXRD.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -209,7 +226,7 @@ func decodeAllDocuments(path string) ([]map[string]any, error) {
 	for {
 		var doc map[string]any
 		if err := dec.Decode(&doc); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, err
@@ -217,7 +234,15 @@ func decodeAllDocuments(path string) ([]map[string]any, error) {
 		if len(doc) == 0 {
 			continue
 		}
-		out = append(out, convertYAMLMap(doc).(map[string]any))
+		normalized, ok := convertYAMLMap(doc).(map[string]any)
+		if !ok {
+			// doc decoded as a map, and convertYAMLMap preserves that, so
+			// this is unreachable. Reported rather than asserted because
+			// the CLI should say what file confused it instead of printing
+			// a stack trace at a user.
+			return nil, fmt.Errorf("%s: document %d did not normalize to a mapping", path, len(out)+1)
+		}
+		out = append(out, normalized)
 	}
 	return out, nil
 }

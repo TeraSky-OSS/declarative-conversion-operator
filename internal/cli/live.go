@@ -18,6 +18,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -73,11 +74,11 @@ func buildDynamicClient(opts KubeOptions) (dynamic.Interface, error) {
 func xrdResourceInfo(xrd *unstructured.Unstructured) (group, plural string, err error) {
 	group, found, err := unstructured.NestedString(xrd.Object, "spec", "group")
 	if err != nil || !found || group == "" {
-		return "", "", fmt.Errorf("xrd is missing spec.group")
+		return "", "", errors.New("xrd is missing spec.group")
 	}
 	plural, found, err = unstructured.NestedString(xrd.Object, "spec", "names", "plural")
 	if err != nil || !found || plural == "" {
-		return "", "", fmt.Errorf("xrd is missing spec.names.plural")
+		return "", "", errors.New("xrd is missing spec.names.plural")
 	}
 	return group, plural, nil
 }
@@ -85,24 +86,43 @@ func xrdResourceInfo(xrd *unstructured.Unstructured) (group, plural string, err 
 func xrdGroupKind(xrd *unstructured.Unstructured) (group, kind string, err error) {
 	group, found, err := unstructured.NestedString(xrd.Object, "spec", "group")
 	if err != nil || !found || group == "" {
-		return "", "", fmt.Errorf("xrd is missing spec.group")
+		return "", "", errors.New("xrd is missing spec.group")
 	}
 	kind, found, err = unstructured.NestedString(xrd.Object, "spec", "names", "kind")
 	if err != nil || !found || kind == "" {
-		return "", "", fmt.Errorf("xrd is missing spec.names.kind")
+		return "", "", errors.New("xrd is missing spec.names.kind")
 	}
 	return group, kind, nil
 }
 
-// FetchLiveSamples lists every existing instance of the XRD's generated
-// composite resource type at hubVersion. See fetchLiveSamplesByGVR for why
-// hubVersion specifically, and why pagination isn't capped.
+// FetchLiveSamples lists every existing instance of every resource type
+// the XRD generates, at hubVersion. On a LegacyCluster XRD with
+// spec.claimNames that is two types, not one: claims are their own stored
+// object class with their own instances, and they go through the very same
+// webhook, so sampling composites alone silently covers roughly half the
+// objects a pre-upgrade check is supposed to cover.
+//
+// See fetchLiveSamplesByGVR for why hubVersion specifically, and why
+// pagination isn't capped.
 func FetchLiveSamples(ctx context.Context, dyn dynamic.Interface, xrd *unstructured.Unstructured, hubVersion string) ([]Sample, error) {
-	group, plural, err := xrdResourceInfo(xrd)
+	generated, err := xrdadapter.GeneratedCRDNames(xrd)
 	if err != nil {
 		return nil, err
 	}
-	return fetchLiveSamplesByGVR(ctx, dyn, schema.GroupVersionResource{Group: group, Version: hubVersion, Resource: plural}, hubVersion)
+	var samples []Sample
+	for _, g := range generated {
+		gvr := schema.GroupVersionResource{Group: g.Group, Version: hubVersion, Resource: g.Plural}
+		got, err := fetchLiveSamplesByGVR(ctx, dyn, gvr, hubVersion)
+		if err != nil {
+			return nil, err
+		}
+		for i := range got {
+			got[i].CRD = g.Name
+			got[i].CRDRole = string(g.Role)
+		}
+		samples = append(samples, got...)
+	}
+	return samples, nil
 }
 
 // FetchLiveSamplesCRD is FetchLiveSamples's sibling for a native
@@ -111,10 +131,10 @@ func FetchLiveSamples(ctx context.Context, dyn dynamic.Interface, xrd *unstructu
 // spec.names.plural directly.
 func FetchLiveSamplesCRD(ctx context.Context, dyn dynamic.Interface, crd *extv1.CustomResourceDefinition, hubVersion string) ([]Sample, error) {
 	if crd.Spec.Group == "" {
-		return nil, fmt.Errorf("crd is missing spec.group")
+		return nil, errors.New("crd is missing spec.group")
 	}
 	if crd.Spec.Names.Plural == "" {
-		return nil, fmt.Errorf("crd is missing spec.names.plural")
+		return nil, errors.New("crd is missing spec.names.plural")
 	}
 	gvr := schema.GroupVersionResource{Group: crd.Spec.Group, Version: hubVersion, Resource: crd.Spec.Names.Plural}
 	return fetchLiveSamplesByGVR(ctx, dyn, gvr, hubVersion)
@@ -221,7 +241,7 @@ func FetchLiveCRD(ctx context.Context, dyn dynamic.Interface, name string) (*ext
 func FetchLiveXRDConversionConfig(ctx context.Context, dyn dynamic.Interface, name string) (*teraskyv1alpha1.XRDConversionConfig, error) {
 	obj, err := dyn.Resource(xrdConversionConfigGVR).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // documented contract: a missing config is the answer, not a failure
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting XRDConversionConfig %q: %w", name, err)
@@ -238,7 +258,7 @@ func FetchLiveXRDConversionConfig(ctx context.Context, dyn dynamic.Interface, na
 func FetchLiveCRDConversionConfig(ctx context.Context, dyn dynamic.Interface, name string) (*teraskyv1alpha1.CRDConversionConfig, error) {
 	obj, err := dyn.Resource(crdConversionConfigGVR).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // documented contract: a missing config is the answer, not a failure
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting CRDConversionConfig %q: %w", name, err)

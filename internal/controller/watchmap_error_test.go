@@ -18,7 +18,7 @@ package controller
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +44,7 @@ func TestMapServerToAssignedConfigs_ListErrorSurfaced(t *testing.T) {
 	c := newFakeClient(srv).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-				return fmt.Errorf("injected list failure")
+				return errors.New("injected list failure")
 			},
 		}).
 		Build()
@@ -72,7 +72,7 @@ func TestMapXRDToConfigs_ListErrorSurfaced(t *testing.T) {
 	c := newFakeClient().
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-				return fmt.Errorf("injected list failure")
+				return errors.New("injected list failure")
 			},
 		}).
 		Build()
@@ -95,7 +95,7 @@ func TestEnqueueAllServers_ListErrorSurfaced(t *testing.T) {
 	c := newFakeClient().
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-				return fmt.Errorf("injected list failure")
+				return errors.New("injected list failure")
 			},
 		}).
 		Build()

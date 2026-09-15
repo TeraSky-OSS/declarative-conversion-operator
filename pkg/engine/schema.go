@@ -141,7 +141,6 @@ func flattenInto(schema *extv1.JSONSchemaProps, path FieldPath, requiredSet map[
 			req[r] = true
 		}
 		for name, propSchema := range schema.Properties {
-			propSchema := propSchema
 			flattenInto(&propSchema, append(path.Clone(), name), req, out)
 		}
 	case kind == FieldKindArray && schema.Items != nil && schema.Items.Schema != nil:

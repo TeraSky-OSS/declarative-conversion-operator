@@ -1,5 +1,18 @@
 declarative-conversion-operator {{ .Chart.Version }} is installed in {{ .Release.Namespace }}.
 
+{{- if and .Values.features.crossplane.enabled (not (.Capabilities.APIVersions.Has "apiextensions.crossplane.io/v2")) }}
+
+⚠️  features.crossplane.enabled is true but apiextensions.crossplane.io/v2 was
+    not detected in this cluster's API. XRD support requires Crossplane 2.x —
+    a Crossplane 1.x control plane does not serve the v2 XRD API at all, and
+    the manager will exit at startup naming this requirement. Either install
+    Crossplane 2.x (https://docs.crossplane.io/latest/software/install/) or
+    set features.crossplane.enabled=false and use CRDConversionConfig only.
+
+    Note that scope: LegacyCluster XRDs — the v1 compatibility layer inside
+    Crossplane 2.x, including claims and connection secrets — are fully
+    supported. "Crossplane 2.x only" is about the control plane, not claims.
+{{- end }}
 {{- if not (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 
 ⚠️  cert-manager.io/v1 was not detected in this cluster's API. Both this

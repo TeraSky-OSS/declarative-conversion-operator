@@ -31,6 +31,26 @@ type ManagerMetrics struct {
 	AnalyzeFailures  *prometheus.CounterVec
 	ApplyDuration    *prometheus.HistogramVec
 	PhaseTransitions *prometheus.CounterVec
+	// ConversionReverts counts times the operator found a previously
+	// applied conversion stanza missing from the live target. On a
+	// package-managed XRD this is Crossplane's establisher having
+	// overwritten it; the counter is what turns an invisible, silent,
+	// roughly-hourly hazard into a number.
+	ConversionReverts *prometheus.CounterVec
+	// ConversionPropagated is 1 when every CRD Crossplane generates from
+	// an applied target carries the conversion webhook, 0 when it does
+	// not. A gauge, because the question is about the CURRENT state of a
+	// specific target — "was this target's latest apply propagated?" —
+	// which no rate or increase over counters can answer: those aggregate
+	// away which apply they are talking about, so one old propagation
+	// observation suppresses the alert for a later apply that never
+	// propagated.
+	ConversionPropagated *prometheus.GaugeVec
+	// PropagationLag measures apply -> observed in the generated CRD.
+	// Applied says the operator patched the XRD; this says Crossplane
+	// re-rendered the CRD with it, which is when conversion actually
+	// starts working.
+	PropagationLag *prometheus.HistogramVec
 }
 
 var (
@@ -56,11 +76,27 @@ func GetManagerMetrics() *ManagerMetrics {
 				Name: "dco_manager_phase_transitions_total",
 				Help: "Config status phase transitions observed by the manager (e.g. Applied→Stale, Applied→Failed).",
 			}, []string{"config_kind", "target", "from_phase", "to_phase", "reason"}),
+			ConversionReverts: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Name: "dco_manager_conversion_reverts_total",
+				Help: "Times a previously-applied conversion stanza was found missing from the target (an out-of-band overwrite, typically Crossplane's package establisher).",
+			}, []string{"config_kind", "target"}),
+			ConversionPropagated: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+				Name: "dco_manager_conversion_propagated",
+				Help: "1 when every CRD Crossplane generates from this applied target carries the conversion webhook, 0 when it does not.",
+			}, []string{"target"}),
+			PropagationLag: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+				Name:    "dco_manager_propagation_lag_seconds",
+				Help:    "Time from applying spec.conversion to the XRD until Crossplane's generated CRD was observed carrying it.",
+				Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60, 300, 900},
+			}, []string{"target"}),
 		}
 		crmetrics.Registry.MustRegister(
 			managerMetrics.AnalyzeFailures,
 			managerMetrics.ApplyDuration,
 			managerMetrics.PhaseTransitions,
+			managerMetrics.ConversionReverts,
+			managerMetrics.ConversionPropagated,
+			managerMetrics.PropagationLag,
 		)
 	})
 	return managerMetrics

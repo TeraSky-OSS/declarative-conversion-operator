@@ -1,0 +1,134 @@
+suite: ConversionWebhookServer pass-through
+# The chart templates exactly one ConversionWebhookServer custom resource and
+# the operator reconciles it into the real Deployment/Service/HPA/PDB. So
+# everything a user sets here has to arrive on that CR intact — and, just as
+# importantly, a value left at its default must NOT be emitted, or it would
+# override the CRD's own default with an explicit null.
+templates:
+  - conversion-webhook-server/conversionwebhookserver.yaml
+
+tests:
+  - it: emits no rollout block when nothing is set
+    asserts:
+      - isNull:
+          path: spec.rollout
+
+  - it: emits only the rollout keys that were set
+    set:
+      conversionWebhookServer.rollout.preStopSleepSeconds: 10
+      conversionWebhookServer.rollout.maxSurge: 2
+    asserts:
+      - equal:
+          path: spec.rollout.preStopSleepSeconds
+          value: 10
+      - equal:
+          path: spec.rollout.maxSurge
+          value: 2
+      # The unset ones must be absent rather than null: an explicit null in
+      # the CR would defeat the CRD's default, which is the thing that makes
+      # a rollout safe.
+      - isNull:
+          path: spec.rollout.terminationGracePeriodSeconds
+      - isNull:
+          path: spec.rollout.defaultTopologySpread
+
+  - it: emits no extraArgs when nothing is set
+    asserts:
+      - isNull:
+          path: spec.extraArgs
+
+  - it: turns the limit values into flags, with user extraArgs last
+    set:
+      conversionWebhookServer.maxRequestBytes: 67108864
+      conversionWebhookServer.requestTimeout: 45s
+      conversionWebhookServer.extraArgs:
+        - --cert-reload-interval=1m
+    asserts:
+      - equal:
+          path: spec.extraArgs
+          value:
+            - --max-request-bytes=67108864
+            - --request-timeout=45s
+            - --cert-reload-interval=1m
+
+  - it: passes scheduling, labels, env and the cache selector through
+    set:
+      conversionWebhookServer.priorityClassName: system-cluster-critical
+      conversionWebhookServer.podLabels:
+        tenant: a
+      conversionWebhookServer.extraEnv:
+        - name: TENANT
+          value: a
+      conversionWebhookServer.cacheSelector:
+        matchLabels:
+          tenant: a
+    asserts:
+      - equal:
+          path: spec.priorityClassName
+          value: system-cluster-critical
+      - equal:
+          path: spec.podLabels.tenant
+          value: a
+      - equal:
+          path: spec.cacheSelector.matchLabels.tenant
+          value: a
+      - contains:
+          path: spec.extraEnv
+          content:
+            name: TENANT
+            value: a
+
+  - it: emits no cacheSelector for an empty selector
+    # An empty selector means "watch everything". Emitting `cacheSelector: {}`
+    # would be passed to the webhook-server as a selector matching nothing on
+    # some future reading of it; absent is unambiguous.
+    set:
+      conversionWebhookServer.cacheSelector: {}
+    asserts:
+      - isNull:
+          path: spec.cacheSelector
+
+  - it: drops the PodDisruptionBudget when disabled
+    set:
+      conversionWebhookServer.podDisruptionBudget.enabled: false
+    asserts:
+      - isNull:
+          path: spec.podDisruptionBudget
+
+  - it: pins by digest when one is given, in preference to the tag
+    set:
+      image.webhookServer.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      image.webhookServer.tag: v9.9.9
+    asserts:
+      - equal:
+          path: spec.image.digest
+          value: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      - isNull:
+          path: spec.image.tag
+
+  # values.schema.json is what keeps these from reaching the binary: the
+  # webhook-server refuses a zero or negative limit at startup, so a value the
+  # schema let through would arrive as a crash loop rather than as an error
+  # naming the value. The rejections themselves are exercised by
+  # `helm template` in CI, since helm-unittest renders after validation.
+  - it: renders the limits the binary accepts
+    set:
+      conversionWebhookServer.maxRequestBytes: 67108864
+      conversionWebhookServer.requestTimeout: 45s
+    asserts:
+      - equal:
+          path: spec.extraArgs
+          value:
+            - --max-request-bytes=67108864
+            - --request-timeout=45s
+
+  # time.ParseDuration accepts a sequence of elements, so the schema has to
+  # as well -- a pattern allowing only one number-unit pair rejected a legal
+  # value before the chart ever rendered it.
+  - it: renders a compound duration unchanged
+    set:
+      conversionWebhookServer.requestTimeout: 2h45m
+    asserts:
+      - contains:
+          path: spec.extraArgs
+          content: --request-timeout=2h45m

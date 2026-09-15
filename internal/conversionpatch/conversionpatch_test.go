@@ -136,7 +136,7 @@ func TestBuildCRDConversionPatch_RejectsNonBase64CABundle(t *testing.T) {
 }
 
 func TestBuildRevertPatches(t *testing.T) {
-	xrd := BuildXRDRevertPatch("xwidgets.example.org")
+	xrd := BuildXRDRevertPatch("xwidgets.example.org", "")
 	strategy, found, err := unstructured.NestedString(xrd.Object, "spec", "conversion", "strategy")
 	if err != nil || !found || strategy != "None" {
 		t.Fatalf("XRD revert strategy = %q (found=%v, err=%v)", strategy, found, err)
@@ -152,4 +152,40 @@ func TestBuildRevertPatches(t *testing.T) {
 	if crd.Spec.Conversion.Webhook != nil {
 		t.Fatalf("expected a revert patch to carry no webhook block at all")
 	}
+}
+
+// TestBuildXRDConversionPatch_APIVersion pins the claim-offering case: the
+// patch has to be addressed at v1, because Crossplane's v2 XRD schema
+// rejects any write to an XRD with claimNames outright. See
+// xrdadapter.WriteGroupVersion.
+func TestBuildXRDConversionPatch_APIVersion(t *testing.T) {
+	t.Run("defaults to the current v2 API", func(t *testing.T) {
+		patch := BuildXRDConversionPatch(testParams())
+		if got := patch.GetAPIVersion(); got != "apiextensions.crossplane.io/v2" {
+			t.Fatalf("apiVersion = %q", got)
+		}
+	})
+
+	t.Run("honours an explicit v1", func(t *testing.T) {
+		p := testParams()
+		p.XRDAPIVersion = "apiextensions.crossplane.io/v1"
+		patch := BuildXRDConversionPatch(p)
+		if got := patch.GetAPIVersion(); got != "apiextensions.crossplane.io/v1" {
+			t.Fatalf("apiVersion = %q", got)
+		}
+		// Everything else about the patch must be identical — the version
+		// choice is about which schema validates the write, not about what
+		// is being written.
+		strategy, _, _ := unstructured.NestedString(patch.Object, "spec", "conversion", "strategy")
+		if strategy != "Webhook" {
+			t.Errorf("strategy = %q", strategy)
+		}
+	})
+
+	t.Run("revert patch honours it too", func(t *testing.T) {
+		patch := BuildXRDRevertPatch("xwidgets.example.org", "apiextensions.crossplane.io/v1")
+		if got := patch.GetAPIVersion(); got != "apiextensions.crossplane.io/v1" {
+			t.Fatalf("apiVersion = %q", got)
+		}
+	})
 }

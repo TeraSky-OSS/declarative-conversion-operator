@@ -72,6 +72,63 @@ A CRD conversion webhook receives the entire stored object, `status` included, r
     spokePath: status.state
 ```
 
+## `Applied` is not the same as "conversion works"
+
+`Applied` means the operator patched `spec.conversion` onto the XRD. That is the last step *this operator* takes — but nothing converts anything until **Crossplane** re-renders the generated CRD (`{plural}.{group}`) with that webhook block. Between those two moments, or indefinitely if Crossplane is wedged, paused on this XRD, an old version, or has lost RBAC, the generated CRD stays on `strategy: None` — and with `None` the apiserver serves a stored object at another version by **relabelling `apiVersion` and returning the original field layout**. Clients get wrong data with HTTP 200. Nothing errors anywhere.
+
+So `status.conditions` carries a separate `ConversionPropagated`, and `status.generatedCRDs` carries the per-CRD detail behind it:
+
+```yaml
+status:
+  generatedCRDs:
+    - name: xwidgets.example.org
+      role: composite
+      propagated: true
+      observedCABundleHash: "sha256:e3b0c442…"    # a hash, never the bundle itself
+      observedAt: "2026-09-15T10:04:11Z"
+```
+
+`generatedCRDs` is a **list** because a `scope: LegacyCluster` XRD with `claimNames` generates two CRDs — the composite and the claim — both carrying the same `spec.conversion`. `ConversionPropagated` is True only when **every** one of them matches.
+
+The check compares service name, namespace, path and port, `conversionReviewVersions`, and a hash of the `caBundle`. A rotated CA bundle gets its own reason (`CABundleStale`) because the remedy differs: everything else means "Crossplane has not caught up", while a stale bundle means conversion requests fail TLS verification against a CRD that otherwise looks correctly wired. The config recovers on its own once Crossplane re-renders — no operator restart, no manual step.
+
+**`Applied` deliberately does not gate on propagation.** Making this operator's phase depend on a third party's reconcile speed would be a different kind of dishonesty. But while `ConversionPropagated` is False, nothing is converting.
+
+`dco_manager_propagation_lag_seconds` measures apply → observed-propagated, and the `ConversionAppliedButNotPropagated` alert (off by default, threshold `metrics.prometheusRule.propagationLagFor`, default 5m) fires when an apply is never followed by a propagation observation. `convctl test --live --verify-propagation` runs the same check from outside the cluster.
+
+**`CRDConversionConfig` is unaffected.** There is no generated CRD there — the target *is* the CRD — so there is nothing to propagate and no such condition.
+
+## Names you cannot use: the fields Crossplane injects
+
+Crossplane builds the generated CRD by copying your authored properties in **first**, then copying its own machinery properties **over the top** (`xcrd.genCrdVersion`, then `ForCompositeResource`). So if your `openAPIV3Schema` declares a name from that machinery set, your declaration is silently replaced in the CRD the apiserver actually enforces — while `pkg/engine`, which reads the *authored* schema, would go on compiling rules against a subtree that never exists at runtime.
+
+`Analyze` rejects both halves of that: declaring one of these names is an error (`AuthoredFieldShadowedByPlatform`), and so is pointing a rule at one (`RuleTargetsInjectedPath`). You will see them from `convctl validate`, `convctl analyze`, and the admission webhook alike.
+
+Which names are reserved depends on the XRD's **scope**:
+
+| Path | `Namespaced` | `Cluster` | `LegacyCluster` |
+|---|---|---|---|
+| `spec.crossplane` (whole subtree) | reserved | reserved | — |
+| `spec.compositionRef` / `compositionSelector` / `compositionRevisionRef` / `compositionRevisionSelector` / `compositionUpdatePolicy` | — | — | reserved |
+| `spec.resourceRefs` | — | — | reserved |
+| `spec.resourceRef`, `spec.compositeDeletePolicy` | — | — | reserved (claim CRD) |
+| `spec.claimRef`, `spec.writeConnectionSecretToRef` | — | — | reserved |
+| `status.conditions` | reserved | reserved | reserved |
+| `status.connectionDetails`, `status.claimConditionTypes` | — | — | reserved |
+
+There is **no `status.crossplane`** in any scope.
+
+Two consequences worth spelling out:
+
+- **A `LegacyCluster` XRD may legitimately declare its own `spec.crossplane`**, because Crossplane does not inject one there. The check is scope-aware precisely so this is not a false error.
+- **A `LegacyCluster` XRD's claim CRD shares the authored schema**, so the claim's own machinery names (`spec.resourceRef`, `spec.compositeDeletePolicy`) are reserved on that XRD too, even though the composite CRD does not use them.
+
+You never need a rule for any of these: the engine passes every field Crossplane injects through untouched in both directions, because passthrough works key-by-key against your authored schema and these names are not in it. See [Limitations](../limitations.md).
+
+### When the scope cannot be determined
+
+`convctl analyze --xrd ./xrd.yaml` against a manifest that omits `spec.scope` cannot know which set applies — the apiserver defaults the field differently at `apiextensions.crossplane.io/v1` and `/v2`, so it depends on which version you apply it at. In that case both diagnostics are emitted as **warnings** against the union of every scope's set, with a message saying so, rather than as errors that might be wrong. `convctl` prints the detected scope and its confidence at the top of every report. **Declare `spec.scope` explicitly** and the question never arises.
+
 ## Status
 
 ```yaml
@@ -84,6 +141,7 @@ status:
   assignedWebhookServer: default
   webhookPath: /convert/xwidgets.example.org
   webhookURL: https://default-webhook-server.declarative-conversion-system.svc/convert/xwidgets.example.org
+  webhookPort: 443
   conditions:
     - type: Validated
       status: "True"
@@ -97,6 +155,18 @@ status:
     - type: Applied
       status: "True"
       reason: Applied
+    - type: PackageManaged
+      status: "False"
+      reason: NotPackageManaged
+    - type: ConversionPropagated
+      status: "True"
+      reason: Propagated
+  generatedCRDs:
+    - name: xwidgets.example.org
+      role: composite
+      propagated: true
+      observedCABundleHash: "sha256:e3b0c442…"
+      observedAt: "2026-09-15T10:04:11Z"
   spokeStatuses:
     - version: v2
       lossless: {hubToSpoke: true, spokeToHub: true}
@@ -128,6 +198,8 @@ status:
 | `Applied` | `spec.conversion` has been patched onto the XRD. |
 | `Stale` | The live XRD's schema no longer matches what was last validated (see below). |
 | `DeletionBlocked` | Deletion is being held by the finalizer — see [Deletion safety](#deletion-safety). |
+| `ConversionPropagated` | Every CRD Crossplane generates from the target XRD carries the conversion webhook this operator applied. **`Applied` is not the same thing:** `Applied` means the operator patched the XRD; nothing converts anything until Crossplane re-renders `{plural}.{group}` with that webhook block. Reasons: `Propagated`, `NotPropagated`, `GeneratedCRDNotFound`, `CABundleStale`. Per-CRD detail is in `status.generatedCRDs`. |
+| `PackageManaged` | The target XRD is owned by a Crossplane `ConfigurationRevision`, i.e. it ships inside a `Configuration` package. The message names the revision. This is **informational, not a failure** — but it means the package establisher re-writes the XRD with a full `client.Update` on every revision reconcile, stripping `spec.conversion` and this operator's annotations each time. See [Limitations](../limitations.md) and the `dco_manager_conversion_reverts_total` metric. `False` (reason `NotPackageManaged`) means nothing re-establishes the XRD out of band. |
 
 `status.spokeStatuses` always reflects the *result of the last validation attempt*, independent of whether that validation ultimately let the config reach `Applied` — so you can inspect exactly which fields are uncovered, or which rule is lossy, even while the config is `Invalid`.
 

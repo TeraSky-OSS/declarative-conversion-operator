@@ -145,6 +145,37 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 10,
+      "title": "Per-object conversion latency p99 by direction",
+      "description": "Per object, so the direction label is exact. The review panel at the top measures whole requests and labels a multi-direction batch 'mixed'; use this one for anything sliced by direction.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, target, direction) (rate(dco_webhook_conversion_object_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{target}} {{direction}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "ConversionReview batch size p99",
+      "description": "Objects per ConversionReview. The input for sizing --max-request-bytes from observed traffic: the limit applies to the encoded review, so it scales with batch size as well as with object size.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, target) (rate(dco_webhook_conversion_batch_size_bucket[5m])))",
+          "legendFormat": "{{target}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "schemaVersion": 39,

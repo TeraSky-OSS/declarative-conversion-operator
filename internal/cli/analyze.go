@@ -22,6 +22,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // AnalyzeOutput is the schema-only (no samples) lossy/coverage analysis
@@ -34,6 +35,24 @@ type AnalyzeOutput struct {
 	HubVersion   string             `json:"hubVersion"`
 	Lossless     bool               `json:"lossless"`
 	Spokes       []AnalyzeSpokeView `json:"spokes"`
+	// Scope is the detected Crossplane scope (XRD configs only). It
+	// decides which fields Crossplane injects and where, so an author
+	// needs to see which set is in play — and needs to see when it could
+	// not be determined.
+	// +optional
+	Scope *ScopeView `json:"scope,omitempty"`
+}
+
+// ScopeView reports a resolved Crossplane XRD scope and how much the
+// resolver trusts it. See pkg/xrdadapter.ResolveScope.
+type ScopeView struct {
+	Scope      string `json:"scope"`
+	Confidence string `json:"confidence"`
+	Reason     string `json:"reason"`
+}
+
+func scopeView(res xrdadapter.ScopeResolution) *ScopeView {
+	return &ScopeView{Scope: string(res.Scope), Confidence: string(res.Confidence), Reason: res.Reason}
 }
 
 type AnalyzeSpokeView struct {
@@ -80,7 +99,9 @@ func runAnalyzeXRDCmd(xrdPath, configPath string) (*AnalyzeOutput, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildAnalyzeOutput("XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, report), nil
+	out := buildAnalyzeOutput("XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, report)
+	out.Scope = scopeView(xrdadapter.ResolveScope(xrd))
+	return out, nil
 }
 
 func runAnalyzeCRDCmd(crdPath, configPath string) (*AnalyzeOutput, error) {
@@ -119,7 +140,9 @@ func buildAnalyzeOutput(resourceKind, resourceName, configName, hubVersion strin
 // deliberately ignored here rather than threaded back through a chain of
 // callers that could do nothing useful with them either.
 func (o *AnalyzeOutput) WriteTable(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "%s Conversion Analysis\n%s: %s\tConfig: %s (hub: %s)\tOverall lossless: %v\n\n", o.ResourceKind, o.ResourceKind, o.Resource, o.Config, o.HubVersion, o.Lossless)
+	_, _ = fmt.Fprintf(w, "%s Conversion Analysis\n%s: %s\tConfig: %s (hub: %s)\tOverall lossless: %v\n", o.ResourceKind, o.ResourceKind, o.Resource, o.Config, o.HubVersion, o.Lossless)
+	o.Scope.write(w)
+	_, _ = fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SPOKE\tHUB→SPOKE\tSPOKE→HUB\tRULES\tISSUES")
 	for _, s := range o.Spokes {
@@ -135,5 +158,22 @@ func (o *AnalyzeOutput) WriteTable(w io.Writer) {
 		for _, wmsg := range s.Warnings {
 			_, _ = fmt.Fprintf(w, "  [%s] WARNING: %s\n", s.Version, wmsg)
 		}
+	}
+}
+
+// write renders the detected scope, and says so loudly when it could not
+// be determined: every downstream judgement about Crossplane's injected
+// fields depends on it.
+func (v *ScopeView) write(w io.Writer) {
+	if v == nil {
+		return
+	}
+	if v.Scope == string(xrdadapter.ScopeIndeterminate) {
+		_, _ = fmt.Fprintf(w, "Crossplane scope: INDETERMINATE — %s\n", v.Reason)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Crossplane scope: %s (confidence: %s)\n", v.Scope, v.Confidence)
+	if v.Confidence != string(xrdadapter.ConfidenceHigh) {
+		_, _ = fmt.Fprintf(w, "  %s\n", v.Reason)
 	}
 }

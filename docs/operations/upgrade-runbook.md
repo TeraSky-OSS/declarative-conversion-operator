@@ -47,6 +47,42 @@ edit a recoverable non-event rather than an outage.
 
 ## Upgrading the chart
 
+> [!IMPORTANT]
+> **If you set `conversionWebhookServer.cacheSelector`, label your targets
+> before upgrading.** The selector used to scope only the
+> `XRDConversionConfig` / `CRDConversionConfig` informers. It now also scopes
+> the `CustomResourceDefinition` / `CompositeResourceDefinition` informers,
+> because that is where a replica's memory actually goes — so a target XRD or
+> CRD that does not carry the label becomes invisible to the replicas serving
+> it, and conversions for it stop.
+>
+> Check first, then label:
+>
+> ```console
+> # Which targets are configured?
+> kubectl get xrdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetXRD.name}{"\n"}{end}'
+> kubectl get crdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetCRD.name}{"\n"}{end}'
+>
+> # Which of them carry the label? Both lists print bare names, so they can be
+> # compared directly -- anything in the first list and not the second becomes
+> # unservable.
+> kubectl get compositeresourcedefinition -l <your-selector> -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+> kubectl get customresourcedefinition -l <your-selector> -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+> ```
+>
+> Native CRD targets are affected exactly as XRD targets are — the selector
+> scopes both schema informers.
+>
+> Installs that leave `cacheSelector` unset — the default — are unaffected.
+
+> [!NOTE]
+> The webhook-server's rolling-update behaviour changed in this release:
+> replicas now carry a `preStop` sleep and a 45s termination grace period so
+> a rollout causes no failed conversions. Nothing is required of you; the
+> defaults apply to existing `ConversionWebhookServer` objects on the next
+> reconcile. See the [HA checklist](ha-checklist.md#rolling-updates) if you
+> override any of them.
+
 ### 1. Record what you're running
 
 ```console

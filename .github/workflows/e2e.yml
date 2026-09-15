@@ -7,6 +7,9 @@ on:
   pull_request:
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 concurrency:
   group: e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,7 +18,10 @@ jobs:
   e2e:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The package-managed leg installs the chart three times (guard on, guard
+    # off, guard back on) on top of the shared kind + cert-manager +
+    # Crossplane setup, so 20 minutes no longer leaves useful headroom.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -26,9 +32,19 @@ jobs:
             script: hack/e2e-test-crd-only.sh
           - name: kind + Crossplane + cert-manager, Crossplane only (native CRD disabled)
             script: hack/e2e-test-crossplane-only.sh
+          - name: kind + Crossplane + cert-manager, scope LegacyCluster with claims
+            script: hack/e2e-test-legacy-claims.sh
+          - name: kind + Crossplane + cert-manager, package-managed XRD conversion guard
+            script: hack/e2e-test-package-managed.sh
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Install kind
         run: |
@@ -43,6 +59,12 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Run e2e test
         run: ./${{ matrix.script }}

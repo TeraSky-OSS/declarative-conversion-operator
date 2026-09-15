@@ -3343,6 +3343,69 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              rollout:
+                description: |-
+                  Rollout controls how a replica leaves service during a rolling
+                  update or a node drain. The defaults are chosen so that a rollout
+                  causes zero failed conversions; see RolloutSpec.
+                properties:
+                  defaultTopologySpread:
+                    default: true
+                    description: |-
+                      DefaultTopologySpread, when true (the default), adds a soft
+                      (ScheduleAnyway) spread constraint across kubernetes.io/hostname so
+                      replicas do not all land on one node — which would make a single
+                      node drain a full conversion outage.
+
+                      Soft rather than DoNotSchedule on purpose: a hard constraint turns a
+                      single-node cluster (kind, a small edge cluster, a cordoned
+                      majority) into an unschedulable Deployment, and an outage caused by
+                      the anti-outage setting is the worse failure. Set to false to manage
+                      spreading entirely through TopologySpreadConstraints or Affinity.
+                    type: boolean
+                  maxSurge:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      MaxSurge is the Deployment's rolling-update maxSurge. Defaults to 1:
+                      with MaxUnavailable at 0, a surge of at least 1 is required or the
+                      rollout cannot make progress at all.
+                    x-kubernetes-int-or-string: true
+                  maxUnavailable:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      MaxUnavailable is the Deployment's rolling-update maxUnavailable.
+                      The default of 0 is deliberate and stricter than Kubernetes' own
+                      25%: with a 2-replica default, 25% rounds down to 0 anyway, but an
+                      operator who scales to 4 would silently start taking a replica out
+                      of service ahead of its replacement being ready.
+                    x-kubernetes-int-or-string: true
+                  preStopSleepSeconds:
+                    default: 5
+                    description: |-
+                      PreStopSleepSeconds is how long the container sleeps after receiving
+                      the termination signal before the process is asked to stop, giving
+                      Endpoints removal time to reach every apiserver. Set to 0 to disable
+                      the hook entirely — only correct if something else in the cluster
+                      already guarantees the ordering.
+                    format: int32
+                    maximum: 300
+                    minimum: 0
+                    type: integer
+                  terminationGracePeriodSeconds:
+                    default: 45
+                    description: |-
+                      TerminationGracePeriodSeconds must exceed PreStopSleepSeconds plus
+                      the webhook-server's own shutdown timeout, or the kubelet sends
+                      SIGKILL while a ConversionReview is still being answered — which the
+                      apiserver reports as a failed write.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                type: object
               service:
                 description: ServiceSpec configures the Service fronting this instance's
                   pods.

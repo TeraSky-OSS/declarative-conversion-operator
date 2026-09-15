@@ -1,0 +1,60 @@
+suite: label hijack guards
+# commonLabels and podLabels are merged onto objects the chart owns,
+# including the manager Deployment and its pod template. A user-supplied key
+# that collides with a selector key would change the Deployment's selector —
+# which is immutable after creation, so the failure is a permanently stuck
+# upgrade rather than a visible error. The templates ignore reserved keys;
+# these tests are what keep that true.
+templates:
+  - manager/deployment.yaml
+
+tests:
+  - it: keeps the identity labels when commonLabels tries to take them
+    set:
+      commonLabels:
+        env: ci
+        app.kubernetes.io/name: hijack
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: declarative-conversion-operator
+      - equal:
+          path: metadata.labels.env
+          value: ci
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: declarative-conversion-operator
+
+  - it: keeps the pod selector when podLabels tries to take it
+    set:
+      manager.podLabels:
+        team: platform
+        control-plane: hijack
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["control-plane"]
+          value: controller-manager
+      - equal:
+          path: spec.template.metadata.labels.team
+          value: platform
+
+  - it: passes through the scheduling and env knobs
+    set:
+      manager.priorityClassName: system-cluster-critical
+      manager.podAnnotations:
+        foo: bar
+      manager.extraEnv:
+        - name: FOO
+          value: bar
+    asserts:
+      - equal:
+          path: spec.template.spec.priorityClassName
+          value: system-cluster-critical
+      - equal:
+          path: spec.template.metadata.annotations.foo
+          value: bar
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FOO
+            value: bar

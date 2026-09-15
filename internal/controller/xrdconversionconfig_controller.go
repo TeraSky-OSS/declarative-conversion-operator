@@ -21,9 +21,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,7 +69,12 @@ type XRDConversionConfigReconciler struct {
 // +kubebuilder:rbac:groups=terasky.com,resources=xrdconversionconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apiextensions.crossplane.io,resources=compositeresourcedefinitions,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// Secrets are read one key at a time through an uncached client (see
+// internal/controller/cacheopts.go), never listed or watched, so get is the
+// only verb the manager needs. Restoring list/watch here would also restore
+// the cluster-wide Secret informer this operator deliberately does not run.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *XRDConversionConfigReconciler) Reconcile(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {
@@ -82,11 +89,8 @@ func (r *XRDConversionConfigReconciler) Reconcile(ctx context.Context, req recon
 		return r.reconcileDelete(ctx, &cfg)
 	}
 
-	if !controllerutil.ContainsFinalizer(&cfg, teraskyv1alpha1.XRDConversionConfigFinalizer) {
-		controllerutil.AddFinalizer(&cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
-		if err := r.Update(ctx, &cfg); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
-		}
+	if err := addFinalizer(ctx, r.Client, &cfg, teraskyv1alpha1.XRDConversionConfigFinalizer); err != nil {
+		return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 	}
 
 	result, err := r.reconcileNormal(ctx, &cfg)
@@ -115,6 +119,12 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 		return ctrl.Result{}, fmt.Errorf("getting target XRD: %w", err)
 	}
 	cfg.Status.ObservedXRDGeneration = xrd.GetGeneration()
+
+	// Both of these read only the XRD already fetched above — no extra
+	// API calls — and both are useful whether or not the admission guard
+	// is enabled, so they run before any gate.
+	setPackageManagedCondition(cfg, xrd)
+	r.observeConversionRevert(ctx, cfg, xrd)
 
 	// Step 2+3: analyze against the live schema.
 	source := xrdadapter.New(xrd)
@@ -260,7 +270,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	}
 
 	applyStart := time.Now()
-	if err := r.applyConversionPatch(ctx, cfg, serverNamespace, cwsServiceName(serverName), path, port, caBundle, reviewVersions); err != nil {
+	if err := r.applyConversionPatch(ctx, cfg, xrd, serverNamespace, cwsServiceName(serverName), path, port, caBundle, reviewVersions); err != nil {
 		GetManagerMetrics().ApplyDuration.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name, "error").Observe(time.Since(applyStart).Seconds())
 		return ctrl.Result{}, fmt.Errorf("patching XRD conversion webhook config: %w", err)
 	}
@@ -272,6 +282,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
 	cfg.Status.WebhookPath = path
 	cfg.Status.WebhookURL = fmt.Sprintf("https://%s.%s.svc%s", cwsServiceName(serverName), serverNamespace, path)
+	cfg.Status.WebhookPort = port
 	cfg.Status.LastAppliedPlanHash = cfg.Status.SchemaHash
 	cfg.Status.Message = "conversion webhook configuration applied to the target XRD"
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
@@ -279,8 +290,38 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	})
 	meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 
+	// Applied means "we asked". Nothing converts anything until Crossplane
+	// re-renders the generated CRD with that webhook block, so check
+	// whether it has. Deliberately not a gate on Phase: making this
+	// operator's phase depend on a third party's reconcile speed would be
+	// a different kind of dishonesty.
+	//
+	// Re-read the XRD first. The one in hand predates our own patch, and
+	// on a claim-offering XRD this is also what decides how many CRDs
+	// there are to check.
+	verifyXRD := xrd
+	fresh := &unstructured.Unstructured{}
+	fresh.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+	if err := r.Get(ctx, types.NamespacedName{Name: cfg.Spec.TargetXRD.Name}, fresh); err == nil {
+		verifyXRD = fresh
+	}
+	r.verifyPropagation(ctx, cfg, verifyXRD, expectedConversion{
+		ServiceName:      cwsServiceName(serverName),
+		ServiceNamespace: serverNamespace,
+		Path:             path,
+		Port:             port,
+		CABundle:         caBundle,
+		ReviewVersions:   reviewVersions,
+	})
+
 	if err := r.patchStatus(ctx, orig, cfg); err != nil {
 		return ctrl.Result{}, err
+	}
+	if !meta.IsStatusConditionTrue(cfg.Status.Conditions, teraskyv1alpha1.ConditionConversionPropagated) {
+		// Crossplane re-renders on its own schedule and the CRD watch
+		// below catches it, but a short requeue keeps the condition
+		// honest even if that event is missed entirely.
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 	// Periodic self-check safety net: re-validate against the live XRD
 	// even if no watched object changes in the meantime.
@@ -441,10 +482,11 @@ func (r *XRDConversionConfigReconciler) readCABundle(ctx context.Context, server
 // couple of tracking annotations) onto the target XRD, using a field
 // manager scoped to exactly those fields so this operator never fights any
 // other owner of the XRD's spec.
-func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, serviceNamespace, serviceName, path string, port int32, caBundle string, reviewVersions []string) error {
+func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, xrd *unstructured.Unstructured, serviceNamespace, serviceName, path string, port int32, caBundle string, reviewVersions []string) error {
 	patch := conversionpatch.BuildXRDConversionPatch(conversionpatch.Params{
 		TargetName: cfg.Spec.TargetXRD.Name, ConfigName: cfg.Name, PlanHash: cfg.Status.SchemaHash,
-		ServiceName: serviceName, ServiceNamespace: serviceNamespace, Path: path, Port: port,
+		XRDAPIVersion: xrdadapter.WriteGroupVersion(xrd).String(),
+		ServiceName:   serviceName, ServiceNamespace: serviceNamespace, Path: path, Port: port,
 		CABundle: caBundle, ReviewVersions: reviewVersions,
 	})
 	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
@@ -453,7 +495,21 @@ func (r *XRDConversionConfigReconciler) applyConversionPatch(ctx context.Context
 // revertXRD resets spec.conversion to strategy=None, relinquishing this
 // operator's ownership of the field.
 func (r *XRDConversionConfigReconciler) revertXRD(ctx context.Context, xrdName string) error {
-	patch := conversionpatch.BuildXRDRevertPatch(xrdName)
+	// Read the XRD to learn which API version the write has to be
+	// addressed at — a claim-offering XRD cannot be written at v2. A read
+	// failure is not fatal here: WriteGroupVersion defaults to v2, which
+	// is right for every XRD that is not claim-offering, and the alternative
+	// is refusing to revert at all.
+	xrd := &unstructured.Unstructured{}
+	xrd.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+	if err := r.Get(ctx, types.NamespacedName{Name: xrdName}, xrd); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Nothing to revert.
+			return nil
+		}
+		xrd = nil
+	}
+	patch := conversionpatch.BuildXRDRevertPatch(xrdName, xrdadapter.WriteGroupVersion(xrd).String())
 	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(patch), client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
@@ -524,8 +580,7 @@ func countServedVersions(xrd *unstructured.Unstructured) int {
 }
 
 func (r *XRDConversionConfigReconciler) removeFinalizer(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig) error {
-	controllerutil.RemoveFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
-	return r.Update(ctx, cfg)
+	return removeFinalizer(ctx, r.Client, cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 }
 
 func (r *XRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, cfg *teraskyv1alpha1.XRDConversionConfig) error {
@@ -539,8 +594,11 @@ func (r *XRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, c
 // only configs assigned to that server, paced at enqueue.CWSConfigEnqueueQPS).
 func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &teraskyv1alpha1.XRDConversionConfig{}, TargetXRDNameIndex, func(obj client.Object) []string {
-		cfg := obj.(*teraskyv1alpha1.XRDConversionConfig)
-		if cfg.Spec.TargetXRD.Name == "" {
+		// Checked rather than asserted: an index function panicking takes
+		// the whole manager down, and this one runs on every object the
+		// informer sees.
+		cfg, ok := obj.(*teraskyv1alpha1.XRDConversionConfig)
+		if !ok || cfg.Spec.TargetXRD.Name == "" {
 			return nil
 		}
 		return []string{cfg.Spec.TargetXRD.Name}
@@ -554,6 +612,11 @@ func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teraskyv1alpha1.XRDConversionConfig{}).
 		Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
+		// Crossplane re-rendering the generated CRD is what makes
+		// conversion actually start working, so observe it on its own
+		// event rather than only on the 5-minute self-check. This informer
+		// already exists for CRDConversionConfig, so it costs nothing new.
+		Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapGeneratedCRDToConfigs)).
 		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
 		Named("xrdconversionconfig").
 		Complete(r)
@@ -583,6 +646,109 @@ func (r *XRDConversionConfigReconciler) mapServerTransitionToAssignedConfigs(ctx
 	reqs, err := mapServerTransitionToAssignedXRDConfigs(ctx, r.Client, oldObj, newObj)
 	if err != nil {
 		return watchmap.ListError(ctx, "xrdconversionconfig.mapServerTransitionToAssignedConfigs", err)
+	}
+	return reqs
+}
+
+// setPackageManagedCondition records whether the target XRD is established
+// by a Crossplane package. It is derived rather than configured, and it is
+// worth surfacing even when nothing can be done about it: an operator
+// otherwise has no way to tell whether they are exposed to the periodic
+// conversion strip at all.
+func setPackageManagedCondition(cfg *teraskyv1alpha1.XRDConversionConfig, xrd *unstructured.Unstructured) {
+	owner, managed := xrdadapter.PackageManagedBy(xrd)
+	if !managed {
+		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+			Type:    teraskyv1alpha1.ConditionPackageManaged,
+			Status:  metav1.ConditionFalse,
+			Reason:  "NotPackageManaged",
+			Message: "the target XRD has no Crossplane package-revision owner reference, so nothing re-establishes it out of band",
+		})
+		return
+	}
+	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+		Type:   teraskyv1alpha1.ConditionPackageManaged,
+		Status: metav1.ConditionTrue,
+		Reason: "OwnedByPackageRevision",
+		Message: fmt.Sprintf("the target XRD is owned by %s %q; Crossplane's package establisher re-writes established objects with a full Update on every revision reconcile (default --sync is one hour), which strips spec.conversion and this operator's annotations. The operator re-applies within seconds, but reads during that window return stored objects relabelled and unconverted, with no error. Enable the XRD conversion guard to close the window",
+			owner.Kind, owner.Name),
+	})
+}
+
+// observeConversionRevert increments dco_manager_conversion_reverts_total
+// when a config that has previously been applied finds the live XRD no
+// longer carrying our conversion stanza. That is the fingerprint of an
+// out-of-band overwrite — in practice Crossplane's package establisher,
+// whose client.Update is a full replace and drops the field entirely.
+//
+// It deliberately does not fire on the first apply (LastAppliedPlanHash is
+// empty until one has succeeded) and not while the config is being deleted
+// (reconcileDelete handles that path and never reaches here), so a user
+// removing the config themselves never moves the counter.
+func (r *XRDConversionConfigReconciler) observeConversionRevert(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, xrd *unstructured.Unstructured) {
+	if cfg.Status.LastAppliedPlanHash == "" {
+		return
+	}
+	if !meta.IsStatusConditionTrue(cfg.Status.Conditions, teraskyv1alpha1.ConditionApplied) {
+		return
+	}
+	if conversionIsOurs(xrd, cfg.Name) {
+		return
+	}
+	GetManagerMetrics().ConversionReverts.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name).Inc()
+	log.FromContext(ctx).Info("target XRD no longer carries the conversion stanza this config applied; re-applying",
+		"xrd", cfg.Spec.TargetXRD.Name, "config", cfg.Name)
+}
+
+// conversionIsOurs reports whether the live XRD still carries a
+// spec.conversion this config applied. Both halves matter: strategy
+// Webhook alone could be somebody else's hand-written webhook, and the
+// managed-by annotation alone could survive a conversion block that was
+// replaced rather than removed.
+func conversionIsOurs(xrd *unstructured.Unstructured, configName string) bool {
+	strategy, found, err := unstructured.NestedString(xrd.Object, "spec", "conversion", "strategy")
+	if err != nil || !found || strategy != "Webhook" {
+		return false
+	}
+	return xrd.GetAnnotations()[conversionpatch.ManagedByAnnotation] == configName
+}
+
+// mapGeneratedCRDToConfigs enqueues the config whose target XRD generated
+// this CRD.
+//
+// Crossplane sets an owner reference from every generated CRD back to the
+// XRD, which is the signal used here: it identifies the claim CRD, whose
+// own name ({claimPlural}.{group}) has no relationship to the XRD's. The
+// name fallback covers the composite even where that owner reference is
+// absent, since an XRD's metadata.name IS {plural}.{group}.
+func (r *XRDConversionConfigReconciler) mapGeneratedCRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	names := []string{obj.GetName()}
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.Kind != xrdadapter.GroupVersionKind.Kind {
+			continue
+		}
+		if !strings.HasPrefix(ref.APIVersion, xrdadapter.GroupVersionKind.Group+"/") {
+			continue
+		}
+		if ref.Name != obj.GetName() {
+			names = append(names, ref.Name)
+		}
+	}
+
+	seen := map[string]bool{}
+	var reqs []reconcile.Request
+	for _, name := range names {
+		var list teraskyv1alpha1.XRDConversionConfigList
+		if err := r.List(ctx, &list, client.MatchingFields{TargetXRDNameIndex: name}); err != nil {
+			return watchmap.ListError(ctx, "xrdconversionconfig.mapGeneratedCRDToConfigs", err)
+		}
+		for _, c := range list.Items {
+			if seen[c.Name] {
+				continue
+			}
+			seen[c.Name] = true
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+		}
 	}
 	return reqs
 }

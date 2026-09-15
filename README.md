@@ -1,5 +1,7 @@
 # declarative-conversion-operator
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/TeraSky-OSS/declarative-conversion-operator/badge)](https://scorecard.dev/viewer/?uri=github.com/TeraSky-OSS/declarative-conversion-operator)
+
 > [!NOTE]
 > **Beta.** The conversion engine, both controllers, and `convctl` are feature-complete for the documented scope and covered by unit, e2e, and scale tests. The CRDs stay at API version `v1alpha1` (group `terasky.com`). The Helm chart's values and CLI flags may still change in a minor release; breaking changes are called out in the release notes. Issues and feedback are welcome.
 
@@ -8,6 +10,9 @@ A Kubernetes operator that lets admins declare field-level conversions between [
 Both Crossplane XRDs and native CRDs support multiple version schemas, but wiring up a real Kubernetes conversion webhook to convert between them today means writing and deploying custom Go code. This operator replaces that with a declarative custom resource — `XRDConversionConfig` for Crossplane XRDs, `CRDConversionConfig` for plain native CRDs — sharing the exact same rule vocabulary: pick a hub version, describe how each spoke version's fields map to it using named strategies (`fieldRename`, `scalarToObject`, `toAnnotation`, `enumRemap`, …), and the operator validates the mapping, compiles it, and — only once everything is verified healthy — patches the target resource to route conversion requests to a shared, horizontally-scalable webhook server.
 
 Both are independently toggleable (`--enable-xrd-support` / `--enable-crd-support`, or `features.crossplane.enabled` / `features.nativeCRD.enabled` in the Helm chart) — disable XRD support on clusters without Crossplane installed, since Crossplane isn't otherwise a hard dependency.
+
+> [!IMPORTANT]
+> **XRD support requires Crossplane 2.x.** The operator reads XRDs at `apiextensions.crossplane.io/v2`, which a Crossplane 1.x control plane does not serve — 1.x clusters are out of scope, not merely untested, and the manager now says so at startup instead of failing with an opaque watch error. The v1 compatibility layer *inside* Crossplane 2.x — `scope: LegacyCluster` XRDs, claims, connection secrets — **is** fully supported.
 
 ## Why
 
@@ -67,7 +72,7 @@ charts/declarative-conversion-operator/  Helm chart (the supported install path)
 ## Quick start
 
 ```console
-# Install (requires cert-manager and Crossplane already installed)
+# Install (requires cert-manager, plus Crossplane 2.x if you want XRD support)
 helm install declarative-conversion-operator charts/declarative-conversion-operator \
   --namespace declarative-conversion-system --create-namespace
 
@@ -164,12 +169,15 @@ a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
 - `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 29 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
 - `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
 - `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
+- `make test-e2e-legacy-claims` (`hack/e2e-test-legacy-claims.sh`) — `scope: LegacyCluster` with `claimNames`, the shape every cluster upgraded from Crossplane 1.x still runs and the only one that generates a **claim CRD**: proves a claim created at `v1` reads back correctly converted at `v2` and `v3`, that the bare `spec.*` machinery layout (`compositionRef`, `claimRef`, `resourceRef`, `compositeDeletePolicy`, `writeConnectionSecretToRef`) survives conversion on both object classes, that a condition the test itself writes survives alongside Crossplane's, that **both** generated CRDs carry `spec.conversion` and `ConversionPropagated` reaches True, and that `convctl test --live` and `migrate-storage --prune-stored-versions` cover both.
+- `make test-e2e-package-managed` (`hack/e2e-test-package-managed.sh`) — the **XRD conversion guard**: replays the Crossplane package establisher's full non-SSA replace of an XRD in a loop and asserts that not one read at a non-storage version ever comes back unconverted. Then repeats with the guard disabled and asserts the loop **does** catch bad reads — a guard test that cannot fail is not a test. The failure mode is an HTTP 200 with wrong data, so the loop checks converted field values rather than exit codes. Also needs `python3`.
 - `make test-e2e-load` (`hack/e2e-load.sh`) — native-CRD kind cluster, then synthetic `ConversionReview` batches of varying object count/size against the live webhook-server; prints latency/throughput for [Capacity planning](docs/operations/capacity.md).
 - `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 29 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`). Not in the CI matrix.
 
-Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH`. The three
-correctness scripts run identically in CI (`.github/workflows/e2e.yml`, as a
-matrix) and locally. `make test-e2e-load` and `make test-e2e-scale` are
+Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH` (plus `go` for
+`test-e2e-legacy-claims` and `python3` for `test-e2e-package-managed`). The
+five correctness scripts run identically in CI (`.github/workflows/e2e.yml`,
+as a matrix) and locally. `make test-e2e-load` and `make test-e2e-scale` are
 local/capacity targets (`test-e2e-load` also needs `python3` and `curl`) and
 are not in that matrix. Set `KEEP_CLUSTER=1`
 to skip teardown for local debugging.

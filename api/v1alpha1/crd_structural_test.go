@@ -54,7 +54,6 @@ func TestGeneratedCRDsAreStructural(t *testing.T) {
 	}
 
 	for _, path := range matches {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
