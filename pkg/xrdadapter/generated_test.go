@@ -105,11 +105,36 @@ func TestGeneratedCRDNames_Errors(t *testing.T) {
 		{"no kind", &unstructured.Unstructured{Object: map[string]any{
 			"spec": map[string]any{"group": "example.org", "names": map[string]any{"plural": "xwidgets"}},
 		}}},
+		// Every one of these DECLARES claims, so returning the composite
+		// alone would leave the claim CRD unresolved everywhere — the exact
+		// blind spot this helper closes. Failing to resolve must not look
+		// like having nothing to resolve.
 		{"claimNames.plural without claimNames.kind", &unstructured.Unstructured{Object: map[string]any{
 			"spec": map[string]any{
 				"group":      "example.org",
 				"names":      map[string]any{"kind": "XWidget", "plural": "xwidgets"},
 				"claimNames": map[string]any{"plural": "widgets"},
+			},
+		}}},
+		{"claimNames with no plural at all", &unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{
+				"group":      "example.org",
+				"names":      map[string]any{"kind": "XWidget", "plural": "xwidgets"},
+				"claimNames": map[string]any{"kind": "Widget"},
+			},
+		}}},
+		{"claimNames with an empty plural", &unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{
+				"group":      "example.org",
+				"names":      map[string]any{"kind": "XWidget", "plural": "xwidgets"},
+				"claimNames": map[string]any{"kind": "Widget", "plural": ""},
+			},
+		}}},
+		{"claimNames with a non-string plural", &unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{
+				"group":      "example.org",
+				"names":      map[string]any{"kind": "XWidget", "plural": "xwidgets"},
+				"claimNames": map[string]any{"kind": "Widget", "plural": []any{"widgets"}},
 			},
 		}}},
 	}
@@ -174,5 +199,34 @@ func TestGeneratedCRDNames_MalformedClaimNamesIsAnError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "malformed spec.claimNames") {
 		t.Errorf("error should name the problem, got %v", err)
+	}
+}
+
+// TestOffersClaims_KeyedOnPresenceNotCompleteness pins the counterpart:
+// an XRD that declares claimNames badly still declares claims, so the
+// claim's machinery names stay reserved. Keying this on completeness
+// instead would quietly re-open the reservation gap for exactly the
+// objects GeneratedCRDNames is reporting as errors.
+func TestOffersClaims_KeyedOnPresenceNotCompleteness(t *testing.T) {
+	cases := []struct {
+		name string
+		spec map[string]any
+		want bool
+	}{
+		{"absent", map[string]any{}, false},
+		{"complete", map[string]any{"claimNames": map[string]any{"kind": "Widget", "plural": "widgets"}}, true},
+		{"incomplete", map[string]any{"claimNames": map[string]any{"kind": "Widget"}}, true},
+		{"empty object", map[string]any{"claimNames": map[string]any{}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xrd := &unstructured.Unstructured{Object: map[string]any{"spec": tc.spec}}
+			if got := offersClaims(xrd); got != tc.want {
+				t.Errorf("offersClaims = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if offersClaims(nil) {
+		t.Error("a nil XRD offers no claims")
 	}
 }

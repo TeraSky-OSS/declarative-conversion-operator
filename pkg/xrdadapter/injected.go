@@ -148,12 +148,17 @@ func (s *Source) PlatformInjectedPaths() engine.PlatformInjectedPaths {
 // offersClaims reports whether this XRD generates a claim CRD. Only then do
 // the claim's own machinery names (spec.resourceRef,
 // spec.compositeDeletePolicy) exist to be overwritten.
+//
+// Keyed on spec.claimNames being present at all, not on it being complete:
+// an XRD that declares claimNames badly still declares claims, and treating
+// it as claim-free here would quietly re-open the reservation gap while
+// GeneratedCRDNames is busy reporting the same object as an error.
 func offersClaims(xrd *unstructured.Unstructured) bool {
 	if xrd == nil {
 		return false
 	}
-	plural, found, _ := unstructured.NestedString(xrd.Object, "spec", "claimNames", "plural")
-	return found && plural != ""
+	_, found, _ := unstructured.NestedMap(xrd.Object, "spec", "claimNames")
+	return found
 }
 
 func concatPaths(sets ...[]engine.FieldPath) []engine.FieldPath {

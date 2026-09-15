@@ -97,21 +97,28 @@ func GeneratedCRDNames(xrd *unstructured.Unstructured) ([]GeneratedCRD, error) {
 		Namespaced: scope.Scope == ScopeNamespaced,
 	}}
 
-	// A malformed spec.claimNames is an error, not "no claims": silently
-	// returning the composite alone would leave the claim CRD unresolved
-	// everywhere — unsampled by test --live, unpruned by migrate-storage,
-	// unchecked for propagation — which is exactly the blind spot
-	// GeneratedCRDNames exists to close.
-	claimPlural, found, err := unstructured.NestedString(xrd.Object, "spec", "claimNames", "plural")
+	// Only an ABSENT spec.claimNames means "no claims". Anything else —
+	// malformed, or present but missing a name — is an error, because
+	// silently returning the composite alone leaves the claim CRD
+	// unresolved everywhere: unsampled by test --live, unpruned by
+	// migrate-storage, unchecked for propagation. That is precisely the
+	// blind spot GeneratedCRDNames exists to close, so failing to resolve
+	// must never look like having nothing to resolve.
+	claimNames, found, err := unstructured.NestedMap(xrd.Object, "spec", "claimNames")
 	if err != nil {
 		return nil, fmt.Errorf("xrdadapter: XRD %q has a malformed spec.claimNames: %w", xrd.GetName(), err)
 	}
-	if !found || claimPlural == "" {
+	if !found {
 		return out, nil
 	}
-	claimKind, found, err := unstructured.NestedString(xrd.Object, "spec", "claimNames", "kind")
-	if err != nil || !found || claimKind == "" {
-		return nil, fmt.Errorf("xrdadapter: XRD %q declares spec.claimNames.plural but no spec.claimNames.kind", xrd.GetName())
+
+	claimPlural, _, err := unstructured.NestedString(claimNames, "plural")
+	if err != nil || claimPlural == "" {
+		return nil, fmt.Errorf("xrdadapter: XRD %q declares spec.claimNames but no usable spec.claimNames.plural; it generates a claim CRD this operator cannot address", xrd.GetName())
+	}
+	claimKind, _, err := unstructured.NestedString(claimNames, "kind")
+	if err != nil || claimKind == "" {
+		return nil, fmt.Errorf("xrdadapter: XRD %q declares spec.claimNames but no usable spec.claimNames.kind", xrd.GetName())
 	}
 	out = append(out, GeneratedCRD{
 		Role:       RoleClaim,
