@@ -26,13 +26,39 @@ tests:
           path: rules[*].apiGroups[*]
           pattern: apiextensions.crossplane.io
 
-  - it: does not grant CRD access when native CRD support is off
+  # Read and write on CustomResourceDefinition are gated differently, and the
+  # difference is the one an e2e caught: an XRDConversionConfig's
+  # ConversionPropagated condition is computed by reading the CRD Crossplane
+  # *generated* from the XRD, so the manager needs CRD reads whenever either
+  # feature is on. Gating the read on nativeCRD took the CRD informer down
+  # with a permission error on every Crossplane-only install.
+  - it: keeps CRD reads but drops CRD patch when native CRD support is off
     set:
       features.nativeCRD.enabled: false
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.k8s.io"]
+            resources: ["customresourcedefinitions"]
+            verbs: ["get", "list", "watch"]
+          any: true
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.k8s.io"]
+            resources: ["customresourcedefinitions"]
+            verbs: ["get", "list", "patch", "watch"]
+
+  - it: drops CRD access entirely only when both features are off
+    set:
+      features.nativeCRD.enabled: false
+      features.crossplane.enabled: false
     asserts:
       - notMatchRegex:
           path: rules[*].apiGroups[*]
-          pattern: apiextensions.k8s.io
+          pattern: apiextensions
 
   - it: renders nothing when rbac.create is false
     set:

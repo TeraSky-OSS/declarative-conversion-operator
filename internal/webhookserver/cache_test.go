@@ -43,7 +43,7 @@ func byObjectFor(opts cache.Options, example client.Object) (cache.ByObject, boo
 func TestCacheOptionsFromSelectorJSON_EmptyIsUnscoped(t *testing.T) {
 	t.Parallel()
 	for _, selJSON := range []string{"", "{}", `{"matchLabels":{}}`} {
-		opts, err := CacheOptionsFromSelectorJSON(selJSON)
+		opts, err := CacheOptionsFromSelectorJSON(selJSON, true, true)
 		if err != nil {
 			t.Fatalf("%q: %v", selJSON, err)
 		}
@@ -57,14 +57,14 @@ func TestCacheOptionsFromSelectorJSON_EmptyIsUnscoped(t *testing.T) {
 
 func TestCacheOptionsFromSelectorJSON_InvalidJSON(t *testing.T) {
 	t.Parallel()
-	if _, err := CacheOptionsFromSelectorJSON("{"); err == nil {
+	if _, err := CacheOptionsFromSelectorJSON("{", true, true); err == nil {
 		t.Fatal("expected parse error")
 	}
 }
 
 func TestCacheSelector_ReducesCachedObjectCount(t *testing.T) {
 	t.Parallel()
-	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`)
+	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestCacheSelector_ReducesCachedObjectCount(t *testing.T) {
 
 func TestCacheSelector_LargeSyntheticReduction(t *testing.T) {
 	t.Parallel()
-	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`)
+	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func BenchmarkCountMatchingLabels(b *testing.B) {
 func TestCacheSelector_MatchExpressions(t *testing.T) {
 	t.Parallel()
 	raw := `{"matchExpressions":[{"key":"tenant","operator":"In","values":["a","b"]}]}`
-	opts, err := CacheOptionsFromSelectorJSON(raw)
+	opts, err := CacheOptionsFromSelectorJSON(raw, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}

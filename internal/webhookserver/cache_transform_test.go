@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
@@ -154,7 +155,7 @@ func TestCacheOptions_SchemaInformersAreScopedAndTransformed(t *testing.T) {
 	xrdObj := &unstructured.Unstructured{}
 	xrdObj.SetGroupVersionKind(xrdadapter.GroupVersionKind)
 
-	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`)
+	opts, err := CacheOptionsFromSelectorJSON(`{"matchLabels":{"tenant":"a"}}`, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestCacheOptions_SchemaInformersAreScopedAndTransformed(t *testing.T) {
 // The transform is the half that helps the majority of deployments, which
 // never set a selector at all.
 func TestCacheOptions_TransformAppliesWithoutASelector(t *testing.T) {
-	opts, err := CacheOptionsFromSelectorJSON("")
+	opts, err := CacheOptionsFromSelectorJSON("", true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,4 +185,53 @@ func TestCacheOptions_TransformAppliesWithoutASelector(t *testing.T) {
 	if !ok || by.Transform == nil {
 		t.Fatal("CRD informer has no transform when no selector is set")
 	}
+}
+
+// The regression that took down the webhook-server on every cluster without
+// Crossplane: controller-runtime resolves each ByObject key through the
+// RESTMapper when the manager is built, so naming a GVK that does not exist is
+// a fatal startup error rather than an unused map entry. The reconciler has
+// always guarded its watches this way; the cache options have to as well.
+func TestCacheOptions_OmitDisabledKindsEntirely(t *testing.T) {
+	xrdObj := &unstructured.Unstructured{}
+	xrdObj.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+
+	t.Run("XRD support off", func(t *testing.T) {
+		opts, err := CacheOptionsFromSelectorJSON("", false, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, present := byObjectFor(opts, xrdObj); present {
+			t.Error("CompositeResourceDefinition is in the cache options with XRD support disabled; the manager will refuse to start on a cluster without Crossplane")
+		}
+		if _, present := byObjectFor(opts, &teraskyv1alpha1.XRDConversionConfig{}); present {
+			t.Error("XRDConversionConfig is cached with XRD support disabled")
+		}
+		if _, present := byObjectFor(opts, &extv1.CustomResourceDefinition{}); !present {
+			t.Error("CustomResourceDefinition should still be cached with CRD support enabled")
+		}
+	})
+
+	t.Run("CRD support off", func(t *testing.T) {
+		opts, err := CacheOptionsFromSelectorJSON("", true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, present := byObjectFor(opts, &extv1.CustomResourceDefinition{}); present {
+			t.Error("CustomResourceDefinition is cached with native-CRD support disabled")
+		}
+		if _, present := byObjectFor(opts, xrdObj); !present {
+			t.Error("CompositeResourceDefinition should still be cached with XRD support enabled")
+		}
+	})
+
+	t.Run("both off", func(t *testing.T) {
+		opts, err := CacheOptionsFromSelectorJSON("", false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(opts.ByObject) != 0 {
+			t.Errorf("expected no cache entries at all, got %d", len(opts.ByObject))
+		}
+	})
 }

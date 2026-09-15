@@ -123,7 +123,7 @@ func main() {
 	opts.Metrics = metricsserver.Options{BindAddress: "0"}
 	opts.HealthProbeBindAddress = "0"
 	opts.LeaderElection = false // every replica is symmetric; no coordination needed.
-	cacheOpts, err := webhookserver.CacheOptionsFromSelectorJSON(cacheSelector)
+	cacheOpts, err := webhookserver.CacheOptionsFromSelectorJSON(cacheSelector, enableXRDSupport, enableCRDSupport)
 	if err != nil {
 		logger.Error(err, "invalid --cache-label-selector")
 		os.Exit(1)

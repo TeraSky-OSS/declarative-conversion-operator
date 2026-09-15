@@ -16,22 +16,32 @@ rules:
     resources: ["services"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
   {{- /*
-    The two highest-privilege grants this operator holds — patching somebody
+    The highest-privilege grants this operator holds — patching somebody
     else's CompositeResourceDefinitions and CustomResourceDefinitions — are
-    conditioned on the feature that needs them. With a feature off the
-    manager does not watch or write that type at all, so the grant would be
-    dormant privilege, which is the kind that gets found later by somebody
-    who was not looking for it.
+    conditioned on the feature that needs them, so a disabled feature leaves
+    no dormant privilege behind.
+
+    Read and write are gated separately for CustomResourceDefinition, and the
+    asymmetry is load-bearing. Reading them is required whenever EITHER
+    feature is on: an XRDConversionConfig's ConversionPropagated condition is
+    computed by reading the CRD Crossplane *generated* from the XRD, which has
+    nothing to do with native-CRD support. Only the patch verb is
+    native-CRD-only. Gating the read on nativeCRD as well takes the manager's
+    CRD informer down with a permission error on a Crossplane-only install.
   */}}
   {{- if .Values.features.crossplane.enabled }}
   - apiGroups: ["apiextensions.crossplane.io"]
     resources: ["compositeresourcedefinitions"]
     verbs: ["get", "list", "patch", "watch"]
   {{- end }}
-  {{- if .Values.features.nativeCRD.enabled }}
+  {{- if or .Values.features.crossplane.enabled .Values.features.nativeCRD.enabled }}
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
+    {{- if .Values.features.nativeCRD.enabled }}
     verbs: ["get", "list", "patch", "watch"]
+    {{- else }}
+    verbs: ["get", "list", "watch"]
+    {{- end }}
   {{- end }}
   - apiGroups: ["apps"]
     resources: ["deployments"]

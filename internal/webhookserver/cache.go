@@ -59,14 +59,29 @@ const LastAppliedAnnotation = "kubectl.kubernetes.io/last-applied-configuration"
 //
 // An empty selector string leaves the cache unscoped (watch everything),
 // matching the historical default. The transform still applies.
-func CacheOptionsFromSelectorJSON(selJSON string) (cache.Options, error) {
+//
+// enableXRDSupport and enableCRDSupport mirror the flags of the same name and
+// are not optional. controller-runtime resolves every ByObject key through the
+// RESTMapper when the manager is constructed, so naming
+// CompositeResourceDefinition here on a cluster without Crossplane is not a
+// harmless unused entry — it is `no matches for kind
+// "CompositeResourceDefinition"` and the process exits. That is the same
+// startup hazard the reconciler's watches already guard against, arriving by a
+// different route.
+func CacheOptionsFromSelectorJSON(selJSON string, enableXRDSupport, enableCRDSupport bool) (cache.Options, error) {
 	opts := cache.Options{}
 
-	xrdObj := &unstructured.Unstructured{}
-	xrdObj.SetGroupVersionKind(xrdadapter.GroupVersionKind)
-
-	schemaObjects := []client.Object{&extv1.CustomResourceDefinition{}, xrdObj}
-	configObjects := []client.Object{&teraskyv1alpha1.XRDConversionConfig{}, &teraskyv1alpha1.CRDConversionConfig{}}
+	var schemaObjects, configObjects []client.Object
+	if enableXRDSupport {
+		xrdObj := &unstructured.Unstructured{}
+		xrdObj.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+		schemaObjects = append(schemaObjects, xrdObj)
+		configObjects = append(configObjects, &teraskyv1alpha1.XRDConversionConfig{})
+	}
+	if enableCRDSupport {
+		schemaObjects = append(schemaObjects, &extv1.CustomResourceDefinition{})
+		configObjects = append(configObjects, &teraskyv1alpha1.CRDConversionConfig{})
+	}
 
 	selector, err := selectorFromJSON(selJSON)
 	if err != nil {
