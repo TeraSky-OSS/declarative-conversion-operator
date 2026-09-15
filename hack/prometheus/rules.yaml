@@ -56,6 +56,14 @@ groups:
         annotations:
           summary: "Manager analyze/compile failures for {{ $labels.target }}"
           description: "config_kind={{ $labels.config_kind }} reason={{ $labels.reason }}. Check the config status conditions and recent manager logs."
+      - alert: ConversionRevertedOutOfBand
+        expr: increase(dco_manager_conversion_reverts_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Conversion stanza on {{ $labels.target }} was removed out of band"
+          description: "config_kind={{ $labels.config_kind }}. A previously-applied spec.conversion was found missing from the target. On an XRD owned by a Crossplane ConfigurationRevision this is the package establisher's non-SSA client.Update stripping it on every revision reconcile (default --sync is one hour); the operator re-applies within seconds, but reads during that window return stored objects relabelled and unconverted, with no error. Check the config's PackageManaged condition and enable the XRD conversion guard to close the window."
       - alert: ManagerPhaseStaleOrFailClosed
         expr: increase(dco_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[15m]) > 0
         for: 1m

@@ -110,6 +110,28 @@ fixtures:
 convctl test --xrd xrd.yaml --config config.yaml --live
 ```
 
+## My conversion keeps disappearing
+
+**Symptom.** Reads at a non-storage version intermittently return the stored object **relabelled but unconverted** — right `apiVersion`, old field layout, HTTP 200, no error anywhere. Minutes later it is fine again. The config still reports `Applied`.
+
+**Check the counter and the condition:**
+
+```console
+kubectl get xrdconversionconfig <name> \
+  -o jsonpath='{.status.conditions[?(@.type=="PackageManaged")]}{"\n"}'
+
+# from a manager pod, or via your Prometheus
+sum by (target) (increase(dco_manager_conversion_reverts_total[24h]))
+```
+
+If `PackageManaged` is `True` and the counter is non-zero, this is Crossplane's package establisher. It re-writes every object it established with a full `client.Update` from the package contents — not a Server-Side Apply — on **every** `ConfigurationRevision` reconcile, which the default one-hour `--sync` guarantees. A full `Update` is a replace: `spec.conversion` and this operator's annotations are removed outright. The generated CRD then falls back to `strategy: None` until the operator re-applies, which it does within seconds (it watches XRDs, and self-checks every five minutes besides).
+
+So the exposure is a race of seconds, roughly hourly, per package-managed XRD — and what leaks through it is wrong data with a 200, not an outage. A `Lock` change (any package installed, upgraded or removed anywhere on the cluster) or a Crossplane restart triggers the same thing off-schedule.
+
+**Fix.** Enable the XRD conversion guard (`--enable-xrd-conversion-guard`, chart value `features.crossplane.conversionGuard.enabled`), which re-injects the conversion stanza inside the same admission request, so the window never opens. See [Limitations](../limitations.md#operational) for why patching the generated CRD instead does not help.
+
+Patching `spec.conversion` into the packaged XRD yourself also works, but it means hard-coding a service name, namespace and CA bundle into a portable package.
+
 ## The config went `Stale`
 
 The live target's schema no longer matches what the config last validated

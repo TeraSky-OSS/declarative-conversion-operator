@@ -654,6 +654,13 @@ const (
 	ConditionApplied            = "Applied"
 	ConditionStale              = "Stale"
 	ConditionDeletionBlocked    = "DeletionBlocked"
+	// ConditionPackageManaged is True when the target XRD is owned by a
+	// Crossplane ConfigurationRevision. Crossplane's package establisher
+	// re-writes every established object on each revision reconcile with a
+	// full client.Update from the package contents — not a Server-Side
+	// Apply — so spec.conversion and this operator's annotations are
+	// stripped outright, roughly hourly, with no error anywhere.
+	ConditionPackageManaged = "PackageManaged"
 
 	// ConditionApplied reasons used by FailClosed drift handling.
 	ReasonReverted     = "Reverted"

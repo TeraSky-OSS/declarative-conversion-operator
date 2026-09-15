@@ -90,6 +90,7 @@ and workqueue series.
 | `dco_manager_analyze_failures_total` | Counter | `config_kind`, `target`, `reason` | Analyze/compile validation failures during config reconcile |
 | `dco_manager_apply_duration_seconds` | Histogram | `config_kind`, `target`, `result` | Latency of SSA patches applying conversion webhook config onto the target XRD/CRD |
 | `dco_manager_phase_transitions_total` | Counter | `config_kind`, `from_phase`, `to_phase`, `reason` | Config status phase transitions (e.g. Applied→Stale, Applied→Failed) |
+| `dco_manager_conversion_reverts_total` | Counter | `config_kind`, `target` | A previously-applied `spec.conversion` was found **missing** from the target — an out-of-band overwrite. On an XRD owned by a Crossplane `ConfigurationRevision` this is the package establisher's non-SSA `client.Update`; see the `PackageManaged` condition on the config. |
 
 - **`config_kind`**: `xrd` or `crd`
 - **`to_phase` / `from_phase`**: `Pending`, `Applied`, `Stale`, `Failed`, …
@@ -106,7 +107,19 @@ histogram_quantile(0.99,
 # Transitions into Stale or Failed
 sum by (config_kind, to_phase, reason)
   (rate(dco_manager_phase_transitions_total{to_phase=~"Stale|Failed"}[5m]))
+
+# Conversion stripped out of band (package establisher, typically hourly)
+sum by (config_kind, target) (increase(dco_manager_conversion_reverts_total[1h]))
 ```
+
+A non-zero `dco_manager_conversion_reverts_total` on a target whose config
+reports `PackageManaged=True` is the signature of Crossplane's package
+establisher: it re-writes every established object with a full
+`client.Update` from the package contents on each revision reconcile, which
+the default one-hour `--sync` guarantees. The operator re-applies within
+seconds, but reads during that window return stored objects **relabelled
+and unconverted, with no error**. The `ConversionRevertedOutOfBand` alert
+covers it; enabling the XRD conversion guard closes the window entirely.
 
 ---
 

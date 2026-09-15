@@ -128,6 +128,9 @@ status:
     - type: Applied
       status: "True"
       reason: Applied
+    - type: PackageManaged
+      status: "False"
+      reason: NotPackageManaged
   spokeStatuses:
     - version: v2
       lossless: {hubToSpoke: true, spokeToHub: true}
@@ -159,6 +162,7 @@ status:
 | `Applied` | `spec.conversion` has been patched onto the XRD. |
 | `Stale` | The live XRD's schema no longer matches what was last validated (see below). |
 | `DeletionBlocked` | Deletion is being held by the finalizer — see [Deletion safety](#deletion-safety). |
+| `PackageManaged` | The target XRD is owned by a Crossplane `ConfigurationRevision`, i.e. it ships inside a `Configuration` package. The message names the revision. This is **informational, not a failure** — but it means the package establisher re-writes the XRD with a full `client.Update` on every revision reconcile, stripping `spec.conversion` and this operator's annotations each time. See [Limitations](../limitations.md) and the `dco_manager_conversion_reverts_total` metric. `False` (reason `NotPackageManaged`) means nothing re-establishes the XRD out of band. |
 
 `status.spokeStatuses` always reflects the *result of the last validation attempt*, independent of whether that validation ultimately let the config reach `Applied` — so you can inspect exactly which fields are uncovered, or which rule is lossy, even while the config is `Invalid`.
 

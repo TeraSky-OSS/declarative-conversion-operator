@@ -334,3 +334,33 @@ tests:
       - eval_time: 3m
         alertname: ManagerPhaseStaleOrFailClosed
         exp_alerts: []
+
+  # --- ConversionRevertedOutOfBand ---
+  - name: revert counter moving fires the alert
+    interval: 1m
+    input_series:
+      # One revert, then flat — which is exactly the shape a package
+      # establisher produces: a single strip, then the operator re-applies.
+      - series: 'dco_manager_conversion_reverts_total{config_kind="xrd",target="xfoos.example.org"}'
+        values: "0 1 1x40"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConversionRevertedOutOfBand
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              config_kind: xrd
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "Conversion stanza on xfoos.example.org was removed out of band"
+              description: "config_kind=xrd. A previously-applied spec.conversion was found missing from the target. On an XRD owned by a Crossplane ConfigurationRevision this is the package establisher's non-SSA client.Update stripping it on every revision reconcile (default --sync is one hour); the operator re-applies within seconds, but reads during that window return stored objects relabelled and unconverted, with no error. Check the config's PackageManaged condition and enable the XRD conversion guard to close the window."
+
+  - name: a flat revert counter stays silent
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_conversion_reverts_total{config_kind="xrd",target="xfoos.example.org"}'
+        values: "3+0x80"
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ConversionRevertedOutOfBand
+        exp_alerts: []

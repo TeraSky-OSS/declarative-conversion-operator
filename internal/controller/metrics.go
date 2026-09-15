@@ -31,6 +31,12 @@ type ManagerMetrics struct {
 	AnalyzeFailures  *prometheus.CounterVec
 	ApplyDuration    *prometheus.HistogramVec
 	PhaseTransitions *prometheus.CounterVec
+	// ConversionReverts counts times the operator found a previously
+	// applied conversion stanza missing from the live target. On a
+	// package-managed XRD this is Crossplane's establisher having
+	// overwritten it; the counter is what turns an invisible, silent,
+	// roughly-hourly hazard into a number.
+	ConversionReverts *prometheus.CounterVec
 }
 
 var (
@@ -56,11 +62,16 @@ func GetManagerMetrics() *ManagerMetrics {
 				Name: "dco_manager_phase_transitions_total",
 				Help: "Config status phase transitions observed by the manager (e.g. Applied→Stale, Applied→Failed).",
 			}, []string{"config_kind", "target", "from_phase", "to_phase", "reason"}),
+			ConversionReverts: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Name: "dco_manager_conversion_reverts_total",
+				Help: "Times a previously-applied conversion stanza was found missing from the target (an out-of-band overwrite, typically Crossplane's package establisher).",
+			}, []string{"config_kind", "target"}),
 		}
 		crmetrics.Registry.MustRegister(
 			managerMetrics.AnalyzeFailures,
 			managerMetrics.ApplyDuration,
 			managerMetrics.PhaseTransitions,
+			managerMetrics.ConversionReverts,
 		)
 	})
 	return managerMetrics

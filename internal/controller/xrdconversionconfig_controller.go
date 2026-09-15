@@ -116,6 +116,12 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	}
 	cfg.Status.ObservedXRDGeneration = xrd.GetGeneration()
 
+	// Both of these read only the XRD already fetched above — no extra
+	// API calls — and both are useful whether or not the admission guard
+	// is enabled, so they run before any gate.
+	setPackageManagedCondition(cfg, xrd)
+	r.observeConversionRevert(ctx, cfg, xrd)
+
 	// Step 2+3: analyze against the live schema.
 	source := xrdadapter.New(xrd)
 	ruleSets, err := cfg.ToRuleSets()
@@ -585,4 +591,67 @@ func (r *XRDConversionConfigReconciler) mapServerTransitionToAssignedConfigs(ctx
 		return watchmap.ListError(ctx, "xrdconversionconfig.mapServerTransitionToAssignedConfigs", err)
 	}
 	return reqs
+}
+
+// setPackageManagedCondition records whether the target XRD is established
+// by a Crossplane package. It is derived rather than configured, and it is
+// worth surfacing even when nothing can be done about it: an operator
+// otherwise has no way to tell whether they are exposed to the periodic
+// conversion strip at all.
+func setPackageManagedCondition(cfg *teraskyv1alpha1.XRDConversionConfig, xrd *unstructured.Unstructured) {
+	owner, managed := xrdadapter.PackageManagedBy(xrd)
+	if !managed {
+		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+			Type:    teraskyv1alpha1.ConditionPackageManaged,
+			Status:  metav1.ConditionFalse,
+			Reason:  "NotPackageManaged",
+			Message: "the target XRD has no Crossplane package-revision owner reference, so nothing re-establishes it out of band",
+		})
+		return
+	}
+	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+		Type:   teraskyv1alpha1.ConditionPackageManaged,
+		Status: metav1.ConditionTrue,
+		Reason: "OwnedByPackageRevision",
+		Message: fmt.Sprintf("the target XRD is owned by %s %q; Crossplane's package establisher re-writes established objects with a full Update on every revision reconcile (default --sync is one hour), which strips spec.conversion and this operator's annotations. The operator re-applies within seconds, but reads during that window return stored objects relabelled and unconverted, with no error. Enable the XRD conversion guard to close the window",
+			owner.Kind, owner.Name),
+	})
+}
+
+// observeConversionRevert increments dco_manager_conversion_reverts_total
+// when a config that has previously been applied finds the live XRD no
+// longer carrying our conversion stanza. That is the fingerprint of an
+// out-of-band overwrite — in practice Crossplane's package establisher,
+// whose client.Update is a full replace and drops the field entirely.
+//
+// It deliberately does not fire on the first apply (LastAppliedPlanHash is
+// empty until one has succeeded) and not while the config is being deleted
+// (reconcileDelete handles that path and never reaches here), so a user
+// removing the config themselves never moves the counter.
+func (r *XRDConversionConfigReconciler) observeConversionRevert(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig, xrd *unstructured.Unstructured) {
+	if cfg.Status.LastAppliedPlanHash == "" {
+		return
+	}
+	if !meta.IsStatusConditionTrue(cfg.Status.Conditions, teraskyv1alpha1.ConditionApplied) {
+		return
+	}
+	if conversionIsOurs(xrd, cfg.Name) {
+		return
+	}
+	GetManagerMetrics().ConversionReverts.WithLabelValues("xrd", cfg.Spec.TargetXRD.Name).Inc()
+	log.FromContext(ctx).Info("target XRD no longer carries the conversion stanza this config applied; re-applying",
+		"xrd", cfg.Spec.TargetXRD.Name, "config", cfg.Name)
+}
+
+// conversionIsOurs reports whether the live XRD still carries a
+// spec.conversion this config applied. Both halves matter: strategy
+// Webhook alone could be somebody else's hand-written webhook, and the
+// managed-by annotation alone could survive a conversion block that was
+// replaced rather than removed.
+func conversionIsOurs(xrd *unstructured.Unstructured, configName string) bool {
+	strategy, found, err := unstructured.NestedString(xrd.Object, "spec", "conversion", "strategy")
+	if err != nil || !found || strategy != "Webhook" {
+		return false
+	}
+	return xrd.GetAnnotations()[conversionpatch.ManagedByAnnotation] == configName
 }
