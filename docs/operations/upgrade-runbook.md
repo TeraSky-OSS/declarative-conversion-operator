@@ -63,10 +63,11 @@ edit a recoverable non-event rather than an outage.
 > kubectl get xrdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetXRD.name}{"\n"}{end}'
 > kubectl get crdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetCRD.name}{"\n"}{end}'
 >
-> # Which of them carry the label? Anything in the first list and not the
-> # second becomes unservable.
-> kubectl get compositeresourcedefinition -l <your-selector> -o name
-> kubectl get customresourcedefinition -l <your-selector> -o name
+> # Which of them carry the label? Both lists print bare names, so they can be
+> # compared directly -- anything in the first list and not the second becomes
+> # unservable.
+> kubectl get compositeresourcedefinition -l <your-selector> -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+> kubectl get customresourcedefinition -l <your-selector> -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
 > ```
 >
 > Native CRD targets are affected exactly as XRD targets are — the selector

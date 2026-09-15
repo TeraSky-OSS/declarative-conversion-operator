@@ -10,10 +10,13 @@
 # into the same loaded cluster, so the only variable is the code.
 #
 # The number reported is workingSetBytes from the kubelet Summary API, taken
-# after each process's caches have synced. Working set rather than Go heap
-# stats because it is what a container memory limit and the OOM killer are
-# evaluated against, and it is obtainable identically for both images without
-# either of them having to expose anything.
+# after each process's caches have synced. It is chosen because it is
+# obtainable identically for both images without either of them having to
+# expose anything, and because it tracks what the process actually retains
+# rather than what its allocator has reserved. It is not itself the quantity a
+# container memory limit is enforced against -- that is cgroup memory
+# accounting, which workingSetBytes is derived from -- so treat it as a
+# comparable figure between the two builds rather than as a limit to set.
 #
 # Usage:
 #   hack/measure-cache-memory.sh [--secrets N] [--crds N] [--keep]
@@ -132,9 +135,9 @@ make_crds() {
 # the kubelet gives one number, obtained the same way, for both processes
 # and both builds.
 #
-# workingSetBytes rather than RSS: it is what the kernel's OOM killer and a
-# container memory limit are evaluated against, so it is the number an
-# operator actually has to size.
+# workingSetBytes rather than RSS: it excludes reclaimable page cache, so it
+# tracks what the process actually retains. It is a comparison metric here,
+# not a limit to copy into resources.limits.memory.
 pod_memory() {
   local selector="$1" pod node
   pod="$(kubectl --context "${KCTX}" -n "${NAMESPACE}" get pod -l "${selector}" \

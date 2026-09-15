@@ -33,6 +33,10 @@ CERT_MANAGER_VERSION="v1.21.1"
 RELEASE_NAME="declarative-conversion-operator"
 
 PROXY_PORT="${PROXY_PORT:-18001}"
+# How long a single `rollout status` is allowed to take. Used both for the
+# wait itself and to size the traffic driver's backstop, so the two cannot
+# disagree.
+ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300}"
 DURATION=480
 RESTARTS=4
 OBJECTS=8
@@ -138,7 +142,14 @@ log "Driving reads and writes while restarting the webhook-server ${RESTARTS} ti
 # that is not driving traffic during a rollout proves nothing about it while
 # still reporting a pass. --duration is now only a backstop against a rollout
 # that hangs forever.
-MAX_DURATION=$(( DURATION * 4 ))
+# The backstop has to cover the worst case the loop below permits: every
+# sleep plus every rollout taking its full timeout. Sizing it as a multiple
+# of DURATION was wrong in the other direction -- at DURATION=60 the loop can
+# legitimately spend 300s sleeping and 1200s waiting, against a 240s backstop,
+# so the driver would exit early and the run would fail for a reason that has
+# nothing to do with the conversion path.
+gap=$(( DURATION / (RESTARTS + 1) ))
+MAX_DURATION=$(( gap * (RESTARTS + 1) + RESTARTS * ROLLOUT_TIMEOUT + 120 ))
 python3 "${REPO_ROOT}/hack/e2e-soak-client.py" \
   --base "http://127.0.0.1:${PROXY_PORT}" --duration "${MAX_DURATION}" \
   --stop-file "${STOP_FILE}" \
@@ -146,7 +157,6 @@ python3 "${REPO_ROOT}/hack/e2e-soak-client.py" \
 CLIENT_PID=$!
 
 dep="$(kubectl -n "${NAMESPACE}" get deploy -l app.kubernetes.io/name=declarative-conversion-webhook-server -o jsonpath='{.items[0].metadata.name}')"
-gap=$(( DURATION / (RESTARTS + 1) ))
 for i in $(seq 1 "${RESTARTS}"); do
   sleep "${gap}"
   if ! kill -0 "${CLIENT_PID}" 2>/dev/null; then
@@ -155,7 +165,7 @@ for i in $(seq 1 "${RESTARTS}"); do
   fi
   log "Rollout ${i}/${RESTARTS} of deployment/${dep}"
   kubectl -n "${NAMESPACE}" rollout restart "deployment/${dep}"
-  kubectl -n "${NAMESPACE}" rollout status "deployment/${dep}" --timeout=300s
+  kubectl -n "${NAMESPACE}" rollout status "deployment/${dep}" --timeout="${ROLLOUT_TIMEOUT}s"
 done
 
 # Keep driving briefly after the last rollout: the Endpoints of the final new

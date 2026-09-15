@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -58,6 +59,13 @@ def main() -> int:
     ap.add_argument("--names", required=True, help="comma-separated resource names")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+
+    # argparse's float accepts "nan" and "inf". A NaN deadline makes every
+    # comparison false, so the driver would run forever without a stop file;
+    # a non-positive one makes it exit before issuing a single request and
+    # report a pass-shaped result with no traffic in it.
+    if not math.isfinite(args.duration) or args.duration <= 0:
+        ap.error(f"--duration must be a positive, finite number of seconds, got {args.duration!r}")
 
     names = [n for n in args.names.split(",") if n]
     spoke = f"{args.base}/apis/nativecrd.example.org/v1/namespaces/{args.namespace}/gadgets"

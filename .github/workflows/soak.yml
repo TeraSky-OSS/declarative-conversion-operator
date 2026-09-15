@@ -73,6 +73,9 @@ jobs:
         run: |
           case "$SOAK_DURATION" in ''|*[!0-9]*) echo "duration must be a positive integer, got '$SOAK_DURATION'" >&2; exit 1 ;; esac
           case "$SOAK_RESTARTS" in ''|*[!0-9]*) echo "restarts must be a positive integer, got '$SOAK_RESTARTS'" >&2; exit 1 ;; esac
+          # All-digits admits 0, which produces a run with no traffic in it.
+          [ "$SOAK_DURATION" -gt 0 ] || { echo "duration must be greater than zero" >&2; exit 1; }
+          [ "$SOAK_RESTARTS" -gt 0 ] || { echo "restarts must be greater than zero; a soak with no rollout tests nothing" >&2; exit 1; }
           ./hack/e2e-soak.sh --duration "$SOAK_DURATION" --restarts "$SOAK_RESTARTS"
 
       # Published whether the soak passed or failed: a pass is the evidence
