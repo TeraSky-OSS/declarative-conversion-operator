@@ -1,0 +1,182 @@
+name: convctl fleet
+description: >-
+  Run convctl test --live against several clusters and aggregate the result
+  into one JUnit report with one suite per cluster.
+
+inputs:
+  config:
+    description: Path to the XRDConversionConfig or CRDConversionConfig.
+    required: true
+  xrd:
+    description: Path to the XRD (for an XRDConversionConfig).
+    required: false
+    default: ""
+  crd:
+    description: Path to the CRD (for a CRDConversionConfig).
+    required: false
+    default: ""
+  contexts:
+    description: >-
+      Comma-separated kubeconfig contexts, one per cluster.
+    required: false
+    default: ""
+  kubeconfig-dir:
+    description: >-
+      Directory of kubeconfig files, one per cluster. Mutually exclusive with
+      contexts.
+    required: false
+    default: ""
+  kubeconfig:
+    description: >-
+      Kubeconfig contents holding every context. Written with mode 600 and
+      never echoed.
+    required: false
+    default: ""
+  fail-on:
+    description: "Failure threshold: none, warn, or loss (default)."
+    required: false
+    default: loss
+  max-samples:
+    description: Cap how many objects are tested per cluster.
+    required: false
+    default: ""
+  sample-strategy:
+    description: "With max-samples: first, random, or newest."
+    required: false
+    default: ""
+  validate-output:
+    description: Validate converted objects against the destination schema.
+    required: false
+    default: "false"
+  upload-artifact:
+    description: Upload the aggregated JUnit report.
+    required: false
+    default: "true"
+  artifact-name:
+    description: Name for the uploaded artifact.
+    required: false
+    default: convctl-fleet-report
+
+outputs:
+  exit-code:
+    description: convctl's own exit code, preserved.
+    value: ${{ steps.run.outputs.exit-code }}
+  report-path:
+    description: Path of the aggregated JUnit report.
+    value: ${{ steps.run.outputs.report-path }}
+  clusters:
+    description: Number of clusters in the report.
+    value: ${{ steps.run.outputs.clusters }}
+  failed-clusters:
+    description: Number of clusters that failed or could not be reached.
+    value: ${{ steps.run.outputs.failed-clusters }}
+
+runs:
+  using: composite
+  steps:
+    # convctl is not installed here. A composite action cannot reference a
+    # local action by path once it is published: `./…` resolves against the
+    # CONSUMER's workspace, not this repository, so a nested setup step
+    # works in these tests and fails for everyone else. Run setup-convctl
+    # first — which also means installing once per job rather than once per
+    # Action.
+    - name: Check convctl is on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v convctl >/dev/null 2>&1; then
+          echo "::error::convctl is not on PATH. Run the setup-convctl Action before this one:" >&2
+          echo "  - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1" >&2
+          exit 1
+        fi
+        convctl version
+
+    - name: Write kubeconfig
+      if: inputs.kubeconfig != ''
+      shell: bash
+      env:
+        KUBECONFIG_CONTENTS: ${{ inputs.kubeconfig }}
+      run: |
+        set -euo pipefail
+        umask 077
+        printf '%s' "$KUBECONFIG_CONTENTS" > "$RUNNER_TEMP/kubeconfig"
+        echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+    - name: Run convctl test across the fleet
+      id: run
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        XRD: ${{ inputs.xrd }}
+        CRD: ${{ inputs.crd }}
+        CONTEXTS: ${{ inputs.contexts }}
+        KUBECONFIG_DIR: ${{ inputs.kubeconfig-dir }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        MAX_SAMPLES: ${{ inputs.max-samples }}
+        SAMPLE_STRATEGY: ${{ inputs.sample-strategy }}
+        VALIDATE_OUTPUT: ${{ inputs.validate-output }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$CONTEXTS" ] && [ -z "$KUBECONFIG_DIR" ]; then
+          echo "::error::one of contexts or kubeconfig-dir is required" >&2
+          exit 2
+        fi
+
+        report="$RUNNER_TEMP/convctl-fleet.junit.xml"
+        args=(--config "$CONFIG" --live --fail-on "$FAIL_ON")
+        if [ -n "$XRD" ];             then args+=(--xrd "$XRD"); fi
+        if [ -n "$CRD" ];             then args+=(--crd "$CRD"); fi
+        if [ -n "$CONTEXTS" ];        then args+=(--contexts "$CONTEXTS"); fi
+        if [ -n "$KUBECONFIG_DIR" ];  then args+=(--kubeconfig-dir "$KUBECONFIG_DIR"); fi
+        if [ -n "$MAX_SAMPLES" ];     then args+=(--max-samples "$MAX_SAMPLES"); fi
+        if [ -n "$SAMPLE_STRATEGY" ]; then args+=(--sample-strategy "$SAMPLE_STRATEGY"); fi
+        if [ "$VALIDATE_OUTPUT" = "true" ]; then args+=(--validate-output); fi
+
+        # convctl already records an unreachable cluster as a failed suite
+        # rather than skipping it, which is the behaviour that matters here:
+        # a fleet check that quietly covered four of five clusters and
+        # reported green is worse than one that did not run.
+        set +e
+        convctl test "${args[@]}" --output junit --output-file "$report" --quiet
+        code=$?
+        set -e
+
+        clusters=0
+        failed=0
+        if [ -f "$report" ]; then
+          # `grep -c` prints 0 AND exits 1 when it matches nothing, so
+          # `|| echo 0` appends a second zero and the output becomes two
+          # lines — which makes failed-clusters an invalid $GITHUB_OUTPUT
+          # entry and fails a run in which every cluster passed. Take the
+          # count, then normalise, rather than guarding the exit code.
+          clusters=$(grep -c '<testsuite ' "$report" || true)
+          failed=$(grep -o '<testsuite [^>]*' "$report" \
+            | grep -c -E 'failures="[1-9]|errors="[1-9]' || true)
+          clusters=${clusters:-0}
+          failed=${failed:-0}
+          {
+            echo "### convctl fleet"
+            echo ""
+            echo "| Clusters | Failed |"
+            echo "|---|---|"
+            echo "| $clusters | $failed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        {
+          echo "exit-code=$code"
+          echo "report-path=$report"
+          echo "clusters=$clusters"
+          echo "failed-clusters=$failed"
+        } >> "$GITHUB_OUTPUT"
+
+        exit "$code"
+
+    - name: Upload aggregated report
+      if: always() && inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.run.outputs.report-path }}
+        if-no-files-found: warn

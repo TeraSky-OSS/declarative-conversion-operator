@@ -105,24 +105,36 @@ func xrdGroupKind(xrd *unstructured.Unstructured) (group, kind string, err error
 // See fetchLiveSamplesByGVR for why hubVersion specifically, and why
 // pagination isn't capped.
 func FetchLiveSamples(ctx context.Context, dyn dynamic.Interface, xrd *unstructured.Unstructured, hubVersion string) ([]Sample, error) {
+	samples, _, err := FetchLiveSamplesSampled(ctx, dyn, xrd, hubVersion, SamplingOptions{}, "")
+	return samples, err
+}
+
+// FetchLiveSamplesSampled is FetchLiveSamples with a bound.
+//
+// The sampler sees every object while paginating — so the population count
+// is exact — but holds at most the cap, which is what makes a pre-upgrade
+// check runnable on the clusters where it matters most. Without a cap the
+// behaviour is unchanged.
+func FetchLiveSamplesSampled(ctx context.Context, dyn dynamic.Interface, xrd *unstructured.Unstructured, hubVersion string, sampling SamplingOptions, namespace string) ([]Sample, *SamplingReport, error) {
 	generated, err := xrdadapter.GeneratedCRDNames(xrd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var samples []Sample
+	s := newSampler(sampling)
 	for _, g := range generated {
 		gvr := schema.GroupVersionResource{Group: g.Group, Version: hubVersion, Resource: g.Plural}
-		got, err := fetchLiveSamplesByGVR(ctx, dyn, gvr, hubVersion)
-		if err != nil {
-			return nil, err
+		// A cluster-scoped composite cannot be narrowed by namespace; only
+		// the claim side can, which is why this is per generated CRD.
+		ns := ""
+		if g.Role == xrdadapter.RoleClaim {
+			ns = namespace
 		}
-		for i := range got {
-			got[i].CRD = g.Name
-			got[i].CRDRole = string(g.Role)
+		if err := streamLiveSamples(ctx, dyn, gvr, hubVersion, ns, s, g.Name, string(g.Role)); err != nil {
+			return nil, nil, err
 		}
-		samples = append(samples, got...)
 	}
-	return samples, nil
+	samples, rep := s.result()
+	return samples, rep, nil
 }
 
 // FetchLiveSamplesCRD is FetchLiveSamples's sibling for a native
@@ -138,6 +150,69 @@ func FetchLiveSamplesCRD(ctx context.Context, dyn dynamic.Interface, crd *extv1.
 	}
 	gvr := schema.GroupVersionResource{Group: crd.Spec.Group, Version: hubVersion, Resource: crd.Spec.Names.Plural}
 	return fetchLiveSamplesByGVR(ctx, dyn, gvr, hubVersion)
+}
+
+// FetchLiveSamplesCRDSampled is FetchLiveSamplesCRD with a bound.
+func FetchLiveSamplesCRDSampled(ctx context.Context, dyn dynamic.Interface, crd *extv1.CustomResourceDefinition, hubVersion string, sampling SamplingOptions, namespace string) ([]Sample, *SamplingReport, error) {
+	if crd.Spec.Group == "" {
+		return nil, nil, errors.New("crd is missing spec.group")
+	}
+	if crd.Spec.Names.Plural == "" {
+		return nil, nil, errors.New("crd is missing spec.names.plural")
+	}
+	ns := namespace
+	if crd.Spec.Scope != extv1.NamespaceScoped {
+		ns = ""
+	}
+	gvr := schema.GroupVersionResource{Group: crd.Spec.Group, Version: hubVersion, Resource: crd.Spec.Names.Plural}
+	s := newSampler(sampling)
+	if err := streamLiveSamples(ctx, dyn, gvr, hubVersion, ns, s, "", ""); err != nil {
+		return nil, nil, err
+	}
+	samples, rep := s.result()
+	return samples, rep, nil
+}
+
+// streamLiveSamples paginates and offers each object to the sampler as it
+// arrives, rather than accumulating the population and sampling afterwards.
+// Holding every object in order to keep fifty of them is the shape of the
+// problem this exists to solve.
+func streamLiveSamples(ctx context.Context, dyn dynamic.Interface, gvr schema.GroupVersionResource, hubVersion, namespace string, s *sampler, crdName, crdRole string) error {
+	continueToken := ""
+	for {
+		opts := metav1.ListOptions{Continue: continueToken, Limit: 200}
+		var (
+			list *unstructured.UnstructuredList
+			err  error
+		)
+		if namespace != "" {
+			list, err = dyn.Resource(gvr).Namespace(namespace).List(ctx, opts)
+		} else {
+			list, err = dyn.Resource(gvr).List(ctx, opts)
+		}
+		if err != nil {
+			return fmt.Errorf("listing %s (version %s): %w", gvr.GroupResource().String(), hubVersion, err)
+		}
+		for i := range list.Items {
+			item := list.Items[i]
+			s.add(Sample{
+				File:    "cluster:" + objectLabel(&item),
+				Object:  item.Object,
+				Version: versionFromAPIVersion(item.GetAPIVersion()),
+				CRD:     crdName,
+				CRDRole: crdRole,
+			}, &item)
+			if s.full() {
+				// Only the "first" strategy can stop early; the others
+				// need the whole population to be what they claim.
+				return nil
+			}
+		}
+		continueToken = list.GetContinue()
+		if continueToken == "" {
+			return nil
+		}
+	}
 }
 
 // fetchLiveSamplesByGVR is FetchLiveSamples/FetchLiveSamplesCRD's shared

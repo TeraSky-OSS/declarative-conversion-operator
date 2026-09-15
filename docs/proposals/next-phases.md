@@ -743,6 +743,39 @@ still stored at, or clients still writing, that version.
 
 ## Phase 13 — CI/CD: official GitHub Actions and CLI ergonomics
 
+> **Shipped.** Every deliverable below landed except krew, which was dropped
+> as a target rather than deferred (see 13.5). Five deviations are worth
+> recording:
+>
+> - **`--package` reads a local `.xpkg` only.** An xpkg is an OCI image saved
+>   as a tarball, so the local form — the tightest loop, before anything is
+>   published — needs nothing but the standard library. Registry and cluster
+>   references are recognised and rejected with the `crossplane xpkg pull`
+>   command that produces a local file, rather than silently unsupported.
+>   Supporting them means a registry client the offline path does not need.
+> - **`--live` streams into the sampler but still accumulates without a cap.**
+>   `--max-samples` genuinely bounds memory, and the population is counted
+>   without being held. Testing each page as it arrives, which would bound it
+>   with no cap at all, is not implemented — see [Limitations](../limitations.md).
+> - **Homebrew ships as a cask, not a formula.** GoReleaser deprecated
+>   `brews:` in favour of `homebrew_casks:`, which is macOS-only, so Linuxbrew
+>   users install from the deb, the rpm or the archive. The deprecation forced
+>   the trade; the docs state it rather than implying coverage that does not
+>   exist.
+> - **The `convctl` image stays distroless.** It has no shell, so commands
+>   cannot be chained inside it. Verified rather than assumed: the base does
+>   carry CA certificates, so `--live` reaches an HTTPS apiserver.
+> - **`convctl-test` emits annotations by relaying `--output github`** rather
+>   than mapping findings to lines inside the Action. The mapping lives in the
+>   tool, where it is tested, instead of being implemented a second time in
+>   YAML.
+>
+> One thing the test workflow taught, recorded because it shaped the tests:
+> the obvious "broken config" fixtures fail at *analysis*, with a plain error
+> and no annotations, because `convctl test` refuses to run against a config
+> that does not compile. Asserting on annotations needs a fixture that
+> compiles and fails later — the `--validate-output` one does.
+
 The theme: `convctl` is designed for CI (exit-code matrix, JUnit output,
 `--fail-on`, parallel `--live`) but there is no supported way to *get* it into
 a pipeline. Fixing F6 and F7 is the bulk of this phase.
@@ -815,9 +848,9 @@ goreleaser already builds the archives; add the publishing targets that make
 the tool installable the way people expect:
 
 - Homebrew tap (`brews`), Scoop, and `nfpms` for deb/rpm.
-- A **krew** plugin manifest — `kubectl conversion test|diff|plan` is the
-  natural home for a kubectl-adjacent tool, and krew is how the Kubernetes
-  ecosystem discovers one.
+- ~~A **krew** plugin manifest.~~ **Dropped.** `convctl` is not a kubectl
+  plugin, and the krew-index review cycle is weeks of process for a
+  distribution channel nobody asked for.
 - `convctl version --output json` with commit, build date, and Go version.
 - Reference pipeline templates for GitLab CI, Tekton, and Argo Workflows,
   mirroring the GitHub one.

@@ -1,0 +1,238 @@
+name: convctl test
+description: >-
+  Run convctl test and put the result where a reviewer will see it: a JUnit
+  artifact, a job summary, and annotations on the pull-request diff.
+
+inputs:
+  config:
+    description: Path to the XRDConversionConfig or CRDConversionConfig.
+    required: true
+  xrd:
+    description: Path to the XRD (for an XRDConversionConfig).
+    required: false
+    default: ""
+  crd:
+    description: Path to the CRD (for a CRDConversionConfig).
+    required: false
+    default: ""
+  package:
+    description: >-
+      Read the target XRD from a Crossplane package (.xpkg) instead of a file.
+    required: false
+    default: ""
+  target:
+    description: With package, the XRD to select when it ships several.
+    required: false
+    default: ""
+  samples:
+    description: Directory of sample objects. Mutually exclusive with live.
+    required: false
+    default: ""
+  live:
+    description: Test against every live object in a cluster.
+    required: false
+    default: "false"
+  kubeconfig:
+    description: >-
+      Kubeconfig contents for a live run. Written to a file with mode 600 and
+      never echoed.
+    required: false
+    default: ""
+  context:
+    description: Kubeconfig context for a live run.
+    required: false
+    default: ""
+  max-samples:
+    description: With live, cap how many objects are tested.
+    required: false
+    default: ""
+  sample-strategy:
+    description: "With max-samples: first, random, or newest."
+    required: false
+    default: ""
+  fail-on:
+    description: "Failure threshold: none, warn, or loss (default)."
+    required: false
+    default: loss
+  strict:
+    description: Escalate coverage gaps to failures.
+    required: false
+    default: "false"
+  validate-output:
+    description: >-
+      Validate every converted object against the destination schema.
+    required: false
+    default: "false"
+  concurrency:
+    description: Parallel workers.
+    required: false
+    default: ""
+  upload-artifact:
+    description: Upload the JUnit report as a workflow artifact.
+    required: false
+    default: "true"
+  artifact-name:
+    description: Name for the uploaded artifact.
+    required: false
+    default: convctl-test-report
+  annotate:
+    description: >-
+      Emit annotations pointing at the config lines that produced each
+      finding, so failures land on the diff rather than in a log.
+    required: false
+    default: "true"
+
+outputs:
+  exit-code:
+    description: convctl's own exit code, preserved.
+    value: ${{ steps.run.outputs.exit-code }}
+  report-path:
+    description: Path of the JUnit report.
+    value: ${{ steps.run.outputs.report-path }}
+  pass:
+    description: Passing conversion paths.
+    value: ${{ steps.run.outputs.pass }}
+  unacknowledged-loss:
+    description: Conversion paths that lost a field no rule declares lossy.
+    value: ${{ steps.run.outputs.unacknowledged-loss }}
+  errors:
+    description: Conversion errors.
+    value: ${{ steps.run.outputs.errors }}
+
+runs:
+  using: composite
+  steps:
+    # convctl is not installed here. A composite action cannot reference a
+    # local action by path once it is published: `./…` resolves against the
+    # CONSUMER's workspace, not this repository, so a nested setup step
+    # works in these tests and fails for everyone else. Run setup-convctl
+    # first — which also means installing once per job rather than once per
+    # Action.
+    - name: Check convctl is on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v convctl >/dev/null 2>&1; then
+          echo "::error::convctl is not on PATH. Run the setup-convctl Action before this one:" >&2
+          echo "  - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1" >&2
+          exit 1
+        fi
+        convctl version
+
+    - name: Write kubeconfig
+      if: inputs.kubeconfig != ''
+      shell: bash
+      env:
+        KUBECONFIG_CONTENTS: ${{ inputs.kubeconfig }}
+      run: |
+        set -euo pipefail
+        # umask before the write, not chmod after: between creation and
+        # chmod the file is briefly world-readable, and the runner is not
+        # the only thing on the machine.
+        umask 077
+        printf '%s' "$KUBECONFIG_CONTENTS" > "$RUNNER_TEMP/kubeconfig"
+        echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+    - name: Run convctl test
+      id: run
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        XRD: ${{ inputs.xrd }}
+        CRD: ${{ inputs.crd }}
+        PACKAGE: ${{ inputs.package }}
+        TARGET: ${{ inputs.target }}
+        SAMPLES: ${{ inputs.samples }}
+        LIVE: ${{ inputs.live }}
+        CONTEXT: ${{ inputs.context }}
+        MAX_SAMPLES: ${{ inputs.max-samples }}
+        SAMPLE_STRATEGY: ${{ inputs.sample-strategy }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        STRICT: ${{ inputs.strict }}
+        VALIDATE_OUTPUT: ${{ inputs.validate-output }}
+        CONCURRENCY: ${{ inputs.concurrency }}
+        ANNOTATE: ${{ inputs.annotate }}
+      run: |
+        set -euo pipefail
+
+        report="$RUNNER_TEMP/convctl-report.junit.xml"
+
+        # if-blocks rather than `[ -n "$X" ] && args+=(...)`: under set -e a
+        # false test as the last command of a line exits the script, so the
+        # terse form would silently stop the step the first time an optional
+        # input was empty.
+        args=(--config "$CONFIG" --fail-on "$FAIL_ON")
+        if [ -n "$XRD" ];             then args+=(--xrd "$XRD"); fi
+        if [ -n "$CRD" ];             then args+=(--crd "$CRD"); fi
+        if [ -n "$PACKAGE" ];         then args+=(--package "$PACKAGE"); fi
+        if [ -n "$TARGET" ];          then args+=(--target "$TARGET"); fi
+        if [ -n "$SAMPLES" ];         then args+=(--samples "$SAMPLES"); fi
+        if [ "$LIVE" = "true" ];      then args+=(--live); fi
+        if [ -n "$CONTEXT" ];         then args+=(--context "$CONTEXT"); fi
+        if [ -n "$MAX_SAMPLES" ];     then args+=(--max-samples "$MAX_SAMPLES"); fi
+        if [ -n "$SAMPLE_STRATEGY" ]; then args+=(--sample-strategy "$SAMPLE_STRATEGY"); fi
+        if [ "$STRICT" = "true" ];    then args+=(--strict); fi
+        if [ "$VALIDATE_OUTPUT" = "true" ]; then args+=(--validate-output); fi
+        if [ -n "$CONCURRENCY" ];     then args+=(--concurrency "$CONCURRENCY"); fi
+
+        # The JUnit report first, for the artifact and the summary counts.
+        # This is the one command whose failure is data rather than an
+        # error: convctl's exit code is the result, and the Action's
+        # contract is to preserve it.
+        set +e
+        convctl test "${args[@]}" --output junit --output-file "$report" --quiet
+        code=$?
+        set -e
+
+        # Then the same run rendered as annotations. convctl emits the
+        # workflow commands itself — including the file and line of the rule
+        # that produced each finding — so this Action relays rather than
+        # parsing YAML to re-derive what the tool already knows.
+        if [ "$ANNOTATE" = "true" ]; then
+          convctl test "${args[@]}" --output github --quiet || true
+        fi
+
+        {
+          echo "exit-code=$code"
+          echo "report-path=$report"
+        } >> "$GITHUB_OUTPUT"
+
+        # Counts for the summary and the outputs, read out of the JUnit
+        # report rather than recomputed.
+        if [ -f "$report" ]; then
+          tests=$(grep -o 'tests="[0-9]*"' "$report" | head -1 | grep -o '[0-9]*' || echo 0)
+          failures=$(grep -o 'failures="[0-9]*"' "$report" | head -1 | grep -o '[0-9]*' || echo 0)
+          errors=$(grep -o 'errors="[0-9]*"' "$report" | head -1 | grep -o '[0-9]*' || echo 0)
+          pass=$((tests - failures - errors))
+          {
+            echo "pass=$pass"
+            echo "unacknowledged-loss=$failures"
+            echo "errors=$errors"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### convctl test"
+            echo ""
+            echo "| Outcome | Count |"
+            echo "|---|---|"
+            echo "| Passed | $pass |"
+            echo "| Unacknowledged loss | $failures |"
+            echo "| Errors | $errors |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q 'name="sampled" value="true"' "$report"; then
+            population=$(grep -o 'name="samplePopulation" value="[0-9]*"' "$report" | grep -o '[0-9]*' || echo "?")
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> **This run was sampled** — $tests of $population objects. It did not cover everything." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        fi
+
+        exit "$code"
+
+    # always(): the report is most worth having when the step failed, which
+    # is exactly when a naive `uses:` after a failing step would not run.
+    - name: Upload report
+      if: always() && inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.run.outputs.report-path }}
+        if-no-files-found: warn

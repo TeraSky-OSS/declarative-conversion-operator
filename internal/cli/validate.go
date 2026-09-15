@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 // ValidateResult is the outcome of the `validate` subcommand: the same
@@ -31,6 +32,11 @@ type ValidateResult struct {
 	StructurallyValid bool     `json:"structurallyValid"`
 	SchemaValidated   bool     `json:"schemaValidated"`
 	Errors            []string `json:"errors,omitempty"`
+	// Analysis is the underlying report, kept so the CI output formats can
+	// attribute each diagnostic to the rule and line that produced it. Not
+	// serialized: the JSON shape of this result is a stable contract, and
+	// `analyze -o json` is where the full report already lives.
+	Analysis *engine.AnalyzeReport `json:"-"`
 }
 
 // RunValidate loads a config (and, if provided, its target XRD or CRD) and
@@ -39,8 +45,17 @@ type ValidateResult struct {
 // not by which flag the caller happened to pass — a config validated
 // against the wrong resource type is worse than not validated at all.
 func RunValidate(configPath, xrdPath, crdPath string) (*ValidateResult, error) {
+	return RunValidateFrom(configPath, xrdPath, crdPath, "", "")
+}
+
+// RunValidateFrom is RunValidate with a package as an alternative schema
+// source. See XRDFromSource.
+func RunValidateFrom(configPath, xrdPath, crdPath, packageRef, target string) (*ValidateResult, error) {
 	if xrdPath != "" && crdPath != "" {
 		return nil, errors.New("--xrd and --crd are mutually exclusive")
+	}
+	if packageRef != "" && crdPath != "" {
+		return nil, errors.New("--package and --crd are mutually exclusive: a package ships XRDs")
 	}
 	kind, err := PeekConfigKind(configPath)
 	if err != nil {
@@ -56,11 +71,11 @@ func RunValidate(configPath, xrdPath, crdPath string) (*ValidateResult, error) {
 		if crdPath != "" {
 			return nil, fmt.Errorf("%s is an XRDConversionConfig; use --xrd, not --crd, to validate it against a schema", configPath)
 		}
-		return runValidateXRD(configPath, xrdPath)
+		return runValidateXRD(configPath, xrdPath, packageRef, target)
 	}
 }
 
-func runValidateXRD(configPath, xrdPath string) (*ValidateResult, error) {
+func runValidateXRD(configPath, xrdPath, packageRef, target string) (*ValidateResult, error) {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return nil, err
@@ -73,10 +88,10 @@ func runValidateXRD(configPath, xrdPath string) (*ValidateResult, error) {
 	}
 	res.StructurallyValid = true
 
-	if xrdPath == "" {
+	if xrdPath == "" && packageRef == "" {
 		return res, nil
 	}
-	xrd, err := LoadXRD(xrdPath)
+	xrd, err := XRDFromSource(xrdPath, packageRef, target)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +100,7 @@ func runValidateXRD(configPath, xrdPath string) (*ValidateResult, error) {
 		res.Errors = append(res.Errors, err.Error())
 		return res, nil
 	}
+	res.Analysis = &report
 	if report.HasErrors() {
 		res.Errors = append(res.Errors, "configuration is invalid against the XRD schema:"+summarizeSpokeErrors(report))
 		return res, nil
@@ -118,6 +134,7 @@ func runValidateCRD(configPath, crdPath string) (*ValidateResult, error) {
 		res.Errors = append(res.Errors, err.Error())
 		return res, nil
 	}
+	res.Analysis = &report
 	if report.HasErrors() {
 		res.Errors = append(res.Errors, "configuration is invalid against the CRD schema:"+summarizeSpokeErrors(report))
 		return res, nil

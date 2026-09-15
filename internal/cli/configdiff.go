@@ -469,3 +469,85 @@ func writePathDeltas(w io.Writer, label string, added, removed []string) {
 		_, _ = fmt.Fprintf(w, "  - %s %s\n", label, p)
 	}
 }
+
+// WriteMarkdown renders the delta for a pull-request comment.
+//
+// Deterministic between runs on the same input — no timestamps, fixed
+// ordering — so a sticky comment updates in place rather than producing a
+// fresh diff on every CI run.
+func (d *DiffOutput) WriteMarkdown(w io.Writer) {
+	_, _ = fmt.Fprintf(w, "### Conversion config diff: `%s` → `%s`\n\n", d.From, d.To)
+	if !d.HasDeltas {
+		_, _ = fmt.Fprintf(w, "No differences. The two sides claim the same fields with the same losslessness for %s `%s`.\n", d.ResourceKind, d.Resource)
+		return
+	}
+
+	if d.HubVersionChange != nil {
+		_, _ = fmt.Fprintf(w, "> **The hub version changed: `%s` → `%s`.** Every spoke's mapping is defined relative to the hub, so this reshapes all of them.\n\n",
+			d.HubVersionChange.From, d.HubVersionChange.To)
+	}
+	if len(d.SpokesAdded) > 0 {
+		_, _ = fmt.Fprintf(w, "**Spokes added:** %s\n\n", mdCode(d.SpokesAdded))
+	}
+	if len(d.SpokesRemoved) > 0 {
+		_, _ = fmt.Fprintf(w, "**Spokes removed:** %s\n\n", mdCode(d.SpokesRemoved))
+	}
+
+	for _, s := range d.Spokes {
+		if !s.hasDeltas() {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "#### Spoke `%s`\n\n", s.Version)
+		_, _ = fmt.Fprintln(w, "| Change | Detail |")
+		_, _ = fmt.Fprintln(w, "|---|---|")
+		for _, c := range s.LosslessChanges {
+			verdict := "lossless → lossy"
+			if c.To {
+				verdict = "lossy → lossless"
+			}
+			_, _ = fmt.Fprintf(w, "| losslessness | `%s` %s |\n", c.Direction, verdict)
+		}
+		mdDeltaRow(w, "coverage lost (hub)", s.UncoveredHubAdded)
+		mdDeltaRow(w, "coverage gained (hub)", s.UncoveredHubRemoved)
+		mdDeltaRow(w, "coverage lost (spoke)", s.UncoveredSpokeAdded)
+		mdDeltaRow(w, "coverage gained (spoke)", s.UncoveredSpokeRemoved)
+		for _, r := range s.RuleClaimsAdded {
+			_, _ = fmt.Fprintf(w, "| rule added | `%s` hub:%s spoke:%s |\n", r.Strategy, mdCode(r.HubPaths), mdCode(r.SpokePaths))
+		}
+		for _, r := range s.RuleClaimsRemoved {
+			_, _ = fmt.Fprintf(w, "| rule removed | `%s` hub:%s spoke:%s |\n", r.Strategy, mdCode(r.HubPaths), mdCode(r.SpokePaths))
+		}
+		mdDeltaRow(w, "error introduced", s.ErrorsAdded)
+		mdDeltaRow(w, "error resolved", s.ErrorsRemoved)
+		mdDeltaRow(w, "warning introduced", s.WarningsAdded)
+		mdDeltaRow(w, "warning resolved", s.WarningsRemoved)
+		_, _ = fmt.Fprintln(w)
+	}
+}
+
+// mdDeltaRow renders one category, bounded: an unbounded list turns a
+// review comment into a wall GitHub truncates mid-sentence anyway.
+func mdDeltaRow(w io.Writer, label string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	const maxItems = 20
+	shown := items
+	suffix := ""
+	if len(shown) > maxItems {
+		shown = shown[:maxItems]
+		suffix = fmt.Sprintf(" _(+%d more)_", len(items)-maxItems)
+	}
+	_, _ = fmt.Fprintf(w, "| %s | %s%s |\n", label, mdCode(shown), suffix)
+}
+
+func mdCode(items []string) string {
+	if len(items) == 0 {
+		return "—"
+	}
+	out := make([]string, 0, len(items))
+	for _, i := range items {
+		out = append(out, "`"+strings.ReplaceAll(i, "|", "\\|")+"`")
+	}
+	return strings.Join(out, ", ")
+}

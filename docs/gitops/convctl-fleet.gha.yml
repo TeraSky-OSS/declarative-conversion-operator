@@ -1,9 +1,8 @@
 # Reference GitHub Actions workflow — copy into a platform repo.
 # This file is not wired into this operator's own CI.
 #
-# Each matrix.context is one cluster. fail-fast is false so one red
-# cluster does not hide the rest. Upload the JUnit / diff JSON as
-# artifacts for a test reporter or PR review.
+# Everything here runs as written. The only things to change are the
+# `context` matrix, the paths, and the kubeconfig secret.
 name: convctl fleet
 
 on:
@@ -15,55 +14,80 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write # for the sticky diff comment
 
 jobs:
-  fleet:
+  # The fast, offline check. No cluster, no credentials — so it runs on
+  # every commit and tells you about an unpaired or broken config before any
+  # of the slow jobs start.
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
+      - run: convctl lint ./apis/ --output github
+
+  # One leg per cluster. fail-fast: false is required — a red cluster must
+  # not hide the others.
+  per-cluster:
+    runs-on: ubuntu-latest
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
         context: [prod-us, prod-eu]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Install convctl
-        run: |
-          # Pin to a released convctl, or build from this repo:
-          # go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest
-          echo "install convctl and place it on PATH" >&2
-          exit 1
+      # Once per job. The Actions below consume convctl from PATH rather
+      # than each installing their own.
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
 
-      - name: Write kubeconfig
-        env:
-          KUBECONFIG_B64: ${{ secrets.FLEET_KUBECONFIG }}
-        run: |
-          mkdir -p "${HOME}/.kube"
-          printf '%s' "${KUBECONFIG_B64}" | base64 -d > "${HOME}/.kube/config"
-          chmod 600 "${HOME}/.kube/config"
+      # The delta, as a sticky comment per cluster. Exit 1 (deltas found) is
+      # a review artifact and does not fail the job; exit 2 (cannot reach the
+      # cluster) does.
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-diff@v1
+        with:
+          config: apis/widgets/conversion.yaml
+          xrd: apis/widgets/xrd.yaml
+          live: "true"
+          context: ${{ matrix.context }}
+          kubeconfig: ${{ secrets.FLEET_KUBECONFIG }}
+          comment-tag: diff-${{ matrix.context }}
 
-      - name: convctl diff --live
-        # Exit 1 is a coverage/claim delta (review artifact). Exit 2 is a
-        # usage/cluster error and must fail the job.
-        run: |
-          mkdir -p fleet-out
-          set +e
-          convctl diff --config path/to/xrdconversionconfig.yaml --live \
-            --context "${{ matrix.context }}" -o json \
-            > "fleet-out/${{ matrix.context }}.diff.json"
-          rc=$?
-          if [ "${rc}" -eq 2 ]; then exit 2; fi
-          exit 0
-
-      - name: convctl test --live
-        if: ${{ always() }}
-        run: |
-          convctl test --config path/to/xrdconversionconfig.yaml \
-            --xrd path/to/xrd.yaml --live \
-            --context "${{ matrix.context }}" \
-            --output junit --output-file "fleet-out/${{ matrix.context }}.junit.xml"
-
-      - uses: actions/upload-artifact@v4
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-test@v1
         if: always()
         with:
-          name: convctl-${{ matrix.context }}
-          path: fleet-out/
+          config: apis/widgets/conversion.yaml
+          xrd: apis/widgets/xrd.yaml
+          live: "true"
+          context: ${{ matrix.context }}
+          kubeconfig: ${{ secrets.FLEET_KUBECONFIG }}
+          validate-output: "true"
+          artifact-name: convctl-${{ matrix.context }}
+          # On a large cluster, bound the run and let the report say it
+          # sampled rather than quietly OOMing.
+          max-samples: "500"
+          sample-strategy: random
+
+  # Or, instead of the matrix: one job that tests every context and emits a
+  # single aggregated report with one suite per cluster.
+  aggregated:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-fleet@v1
+        with:
+          config: apis/widgets/conversion.yaml
+          xrd: apis/widgets/xrd.yaml
+          contexts: prod-us,prod-eu
+          kubeconfig: ${{ secrets.FLEET_KUBECONFIG }}
+          validate-output: "true"

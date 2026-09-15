@@ -3,13 +3,14 @@
 `convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Most commands work identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch. `migrate-storage` is the exception: it is a live, mutating housekeeping command that takes cluster resource names (not files) and does not need a conversion config.
 
 ```console
-convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
-convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
-convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
+convctl lint          [path...] [--schema-dir dir] [--package platform.xpkg] [--exclude glob] [-o table|json|github|sarif|markdown]
+convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml | --package p.xpkg] [-o table|json|github|sarif|markdown]
+convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml | --package p.xpkg) [-o table|json|github|sarif|markdown]
+convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml | --package p.xpkg) (--samples ./samples/ | --live) [-o table|json|junit|github|sarif|markdown] [flags]
 convctl plan          --to v2 (--xrd xrd.yaml | --crd crd.yaml) [--config config.yaml] [-o table|json]
 convctl versions      --xrd xrd.yaml [--config config.yaml] [--check-unserve v1] [-o table|json]
 convctl compat        --base REV --head REV --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
-convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
+convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
 convctl diff          --config config.yaml --live [-o json|table]
 convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
 convctl suggest       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
@@ -24,6 +25,79 @@ convctl crossplane status <xrd-name> [-o table|json]
 `plan` is the one to start from if you are mid-migration and unsure what comes next: it prints the ordered, gated path from the target's current state to the version you name, and marks the one step that is safe to do now.
 
 Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations. Around all of it, `plan` sequences the migration, `versions` answers whether an old version can be retired yet, and `compat` gates config edits in review.
+
+## Schema sources
+
+Every command that needs a schema takes one of these, interchangeably:
+
+| Source | Flag | Answers |
+|---|---|---|
+| A file | `--xrd xrd.yaml` / `--crd crd.yaml` | "does my config hold against this schema?" |
+| A Crossplane package | `--package ./platform.xpkg` | "does it hold against the XRDs I am about to publish?" — no registry, no cluster |
+| The cluster | `--live` (a **sample** source, not a schema source) | — |
+
+`--package` slots in exactly where `--xrd` does rather than being a new verb,
+so `validate`, `analyze`, `test` and `lint` all take it.
+
+### Why a package is its own source
+
+For a platform shipped as a Crossplane `Configuration`, **the unit of API
+change is a package version** — not a git commit, and not the live cluster.
+The team whose XRDs most need conversion testing is otherwise the team least
+able to run it.
+
+```console
+# Does my config hold against the XRDs I am about to publish?
+convctl test --package ./platform.xpkg --config config.yaml --samples ./samples/
+
+# The one that matters most: the version about to be rolled out, against the
+# objects already in the cluster that will receive it.
+convctl test --package ./platform.xpkg --config config.yaml --live
+
+# A whole package against a whole config tree — the Configuration repo's gate.
+convctl lint ./configs/ --package ./platform.xpkg
+```
+
+`--package` is a schema source and `--live` is a sample source, so they
+compose: *"if I bump this Configuration, do my 4,000 existing composites still
+convert?"* is the question platform teams have before an upgrade, and nothing
+else answers it.
+
+`--target <xrd-name>` selects one XRD when a package ships several. Omitting
+it is an error naming the candidates rather than a guess — picking the first
+would make the answer depend on the order the package was built in.
+
+### What is implemented
+
+Only the **local `.xpkg`** form. An xpkg is an OCI image saved as a tarball,
+so reading it needs nothing but the standard library — and it is the tightest
+loop, before anything is published anywhere.
+
+Registry references (`ghcr.io/org/platform:v1.4.0`) and cluster references
+(`configuration/<name>`, `configurationrevision/<name>`) are recognised and
+rejected with the command that gets you a local file:
+
+```console
+$ convctl analyze --package ghcr.io/org/platform:v1.4.0 --config config.yaml
+error: reading a package from a registry (ghcr.io/org/platform:v1.4.0) is not implemented yet;
+`crossplane xpkg pull ghcr.io/org/platform:v1.4.0 -o package.xpkg` and pass the file
+```
+
+Adding them means a registry client (`go-containerregistry`), which the
+offline path does not need and should not carry.
+
+## Running it in a container
+
+```console
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/terasky-oss/declarative-conversion-convctl:v0.5.0 \
+  lint ./platform/
+```
+
+Published on every release for `linux/amd64` and `linux/arm64`, signed and
+attested like the operator images. It is distroless and has no shell, so run
+one `convctl` invocation per step rather than chaining — see
+[Installation: the `convctl` container image](installation.md#the-convctl-container-image).
 
 ## `convctl validate`
 
@@ -311,6 +385,43 @@ author actually caused.
 > pipelines should set it; the default is planned to flip in a future
 > release, and the change will be called out in the release notes.
 
+### Bounded sampling on a large cluster
+
+`--live` lists and tests every object of the target type. On a cluster with
+tens of thousands of composites that is exactly where a pre-upgrade check is
+most valuable and least able to run.
+
+`--max-samples <n>` caps what gets tested, with `--sample-strategy`:
+
+| Strategy | Behaviour | Cost |
+|---|---|---|
+| `first` (default) | stops listing at the cap | cheapest — the only one that can stop early |
+| `random` | reservoir-samples while paginating, so the whole population is represented without ever being held | lists everything, holds `n` |
+| `newest` | the `n` most recently created objects, where a schema change shows up first | lists everything, holds `n` |
+
+`random` is reproducible: pass `--seed` and the same objects are chosen, so a
+CI failure can be re-run rather than re-rolled.
+
+**A sampled run says so, in every format.** The table prints it, the JSON
+carries a `sampling` block, and the JUnit suite carries `sampled`,
+`samplePopulation` and `sampleTested` properties:
+
+```console
+SAMPLED: 50 of 41,204 live object(s), strategy random, seed 7 — this run did NOT cover every object
+```
+
+That line is the feature. A sampled green result that reads like an
+exhaustive green result is worse than no result, because somebody upgrades on
+the strength of it — and a JUnit reporter showing fifty green tests is where
+that mistake is easiest to make.
+
+`--namespace` narrows a `--live` run to one namespace. Only the namespaced
+object class is affected: on a claim-offering XRD the composites are
+cluster-scoped, so there is nothing to narrow on that side.
+
+Sampling interacts with `--concurrency` only in the obvious way — fewer
+samples, less to parallelise.
+
 ### Parallelism and progress
 
 Samples are tested in parallel, one worker per available CPU by default. This matters most for `--live`, where the sample set is every object of the target type in the cluster rather than a handful of fixtures. Set `--concurrency N` to pin the worker count (`--concurrency 1` to go fully sequential).
@@ -327,6 +438,65 @@ While more than one sample is in flight, a `tested N/M samples` progress line is
 convctl test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./samples/ \
   --output junit --output-file report.junit.xml
 ```
+
+### CI-native formats: `github`, `sarif`, `markdown`
+
+`table`, `json` and `junit` all put a finding somewhere a person has to go
+looking for it. These three put it on the line of the config that produced it.
+
+| Format | Renders | Use it for |
+|---|---|---|
+| `github` | GitHub workflow commands (`::error file=…,line=…::…`) on stdout, plus a markdown table appended to `$GITHUB_STEP_SUMMARY` when the runner sets it | annotations on the pull-request diff |
+| `sarif` | SARIF 2.1.0 | `github/codeql-action/upload-sarif` — findings land in code scanning, so they appear on the diff **and** in the Security tab, and can be triaged and suppressed like any other scanner's |
+| `markdown` | a deterministic table | a PR comment in any CI system |
+
+Available on `test`, `validate` and `analyze`; `diff` has `markdown` (its
+delta is a structured comparison, not a finding list).
+
+```console
+$ convctl analyze --xrd xrd.yaml --config config.yaml -o github
+::error file=config.yaml,line=13,col=7,title=Conversion config error::hub field "spec.size" is not covered by any rule and has no identical counterpart in the spoke schema
+```
+
+Locations come from a second, position-preserving parse of the config.
+`sigs.k8s.io/yaml` routes through `encoding/json` — which is what makes the
+strict typed decode possible and also what throws line numbers away — so the
+formats read positions separately and never decide whether a config is valid.
+
+A finding the tool cannot place precisely is still reported, against the file
+with no line, or against the config's document. Dropping it would hide
+whole-config errors, which are the most serious kind.
+
+#### Finding ids
+
+The `ruleId` in SARIF and the finding name in the tables are a compatibility
+surface: a suppression in code scanning is keyed on the id, so renaming one
+silently un-suppresses everything somebody dismissed. Ids are added, never
+renamed.
+
+| Id | Meaning |
+|---|---|
+| `convctl/unacknowledged-loss` | a round trip lost a field no rule declares lossy |
+| `convctl/acknowledged-loss` | a declared, deliberate loss — reported at note severity, never a failure |
+| `convctl/conversion-error` | a conversion failed outright |
+| `convctl/schema-violation` | the converted object violates the destination schema (`--validate-output`) |
+| `convctl/uncovered-field` | a schema field no rule claims |
+| `convctl/rule-never-exercised` | a declared rule no sample reached |
+| `convctl/golden-drift` | the committed corpus and the current output disagree |
+| `convctl/config-error`, `convctl/config-warning` | a diagnostic with no more specific id |
+| `convctl/required-field-*` | required-field analysis — the engine's own codes, lower-kebab |
+
+```yaml
+- run: convctl test --xrd xrd.yaml --config config.yaml --samples ./samples/ -o sarif > convctl.sarif
+  continue-on-error: true
+- uses: github/codeql-action/upload-sarif@v4
+  with:
+    sarif_file: convctl.sarif
+```
+
+`continue-on-error` on the first step is deliberate: the upload should happen
+whether or not the run failed, or a red build hides the findings explaining
+why it is red.
 
 ### Exit codes
 
@@ -351,6 +521,91 @@ Here is every threshold against every outcome:
 **Acknowledged loss alone never fails, at any threshold.** `acknowledgeLossy: true` is the config author stating on the record that a field is expected to be dropped or rounded; re-litigating that decision on every CI run would just train people to pass `--fail-on none`. What the default threshold catches is loss that *nobody* declared.
 
 `--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
+
+## `convctl lint`
+
+One command, one exit code, over a whole tree.
+
+```console
+$ convctl lint ./platform/
+
+convctl lint: 12 config(s), 12 schema(s)
+
+STATUS  CONFIG                                  TARGET                  SCHEMA                        FINDINGS
+OK      platform/apis/buckets/conversion.yaml   xbuckets.example.org    platform/apis/buckets/xrd.yaml  0
+OK      platform/apis/widgets/conversion.yaml   widgets.example.org     platform/apis/widgets/crd.yaml  0
+
+SUMMARY: 0 error(s), 0 warning(s), 0 unpaired, 0 duplicate
+```
+
+A repository with fifty XRDs otherwise needs fifty invocations, each pairing a
+config with its schema by hand and each producing an exit code the caller has
+to aggregate — which in practice means a bash loop in every consumer's CI,
+written slightly differently each time.
+
+`lint` walks the paths given (default `.`), recognises every
+`XRDConversionConfig` and `CRDConversionConfig` **by its own `apiVersion` and
+`kind`** rather than by filename — including multi-document files — pairs each
+with the XRD or CRD whose `metadata.name` it targets, and runs the checks
+`validate` and `analyze` run.
+
+### Unpaired and duplicate configs are errors, never skips
+
+A config paired with nothing looks exactly like a config that passed. So an
+unpaired config is an **error** naming the target it looked for:
+
+```console
+ERROR  platform/apis/orders/conversion.yaml  xorders.example.org  —  1
+  error  platform/apis/orders/conversion.yaml:1  no XRD named "xorders.example.org" was found in the tree, so this
+                                                 config could not be checked against a schema; pass --schema-dir if
+                                                 its schema lives elsewhere
+```
+
+A second config targeting the same resource is reported the same way. The
+operator enforces one config per target, and finding that out from an
+admission rejection after merge is what this command exists to prevent.
+
+A manifest that is neither — a Deployment, a kustomization — is ignored rather
+than rejected. A platform tree is full of files that are none of this
+command's business.
+
+### Offline by design
+
+`lint` constructs **no Kubernetes client at all**. It is the fast check that
+runs on every commit; [`test --live`](#convctl-test) is the slow one that runs
+before merge.
+
+### As a pre-commit hook
+
+A [`.pre-commit-hooks.yaml`](https://github.com/TeraSky-OSS/declarative-conversion-operator/blob/main/.pre-commit-hooks.yaml)
+ships in the repository:
+
+```yaml
+repos:
+  - repo: https://github.com/TeraSky-OSS/declarative-conversion-operator
+    rev: v0.5.0
+    hooks:
+      - id: convctl-lint
+```
+
+The hook runs once over the tree rather than once per changed file: pairing a
+config with its schema needs to see both, and a per-file hook would report
+every config as unpaired.
+
+### Flags and exit codes
+
+| Flag | Meaning |
+|---|---|
+| `--schema-dir` | additional trees to search for XRDs and CRDs, when schemas live apart from configs (repeatable) |
+| `--exclude` | glob patterns to skip, matched against the path and its base name (repeatable) |
+| `--concurrency` | parallel workers (default one per CPU); the report order is the walk order regardless |
+| `--fail-on` | `none` \| `warn` \| `loss` (default), the same matrix as `test` |
+
+| Code | Meaning |
+|---|---|
+| 0 | clean at the chosen threshold |
+| 1 | findings at or above it, or any unpaired/duplicate config |
+| 2 | usage error |
 
 ## `convctl plan`
 

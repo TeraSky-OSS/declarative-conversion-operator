@@ -1,0 +1,304 @@
+name: Set up convctl
+description: >-
+  Install a verified convctl onto PATH. Verifies the cosign signature on the
+  release's checksums.txt and the archive's own checksum, by default.
+
+inputs:
+  version:
+    description: 'Release tag to install (e.g. v0.5.0), or "latest".'
+    required: false
+    default: latest
+  verify:
+    description: >-
+      Verify the cosign signature on checksums.txt and the archive's checksum
+      against it. Defaults to true — an action that verifies by default is the
+      point, because it turns the signing work already done into something
+      every consumer gets without reading anything.
+    required: false
+    default: "true"
+  token:
+    description: >-
+      Token for the GitHub releases API, to avoid anonymous rate limits.
+    required: false
+    default: ${{ github.token }}
+  cache:
+    description: >-
+      Restore and save the binary through actions/cache. Turn it off for a
+      runner where the cache is not wanted — or where a deterministic
+      download is, as in this repository's own tamper test, since a cache
+      restore would overwrite the archive the test deliberately corrupted.
+    required: false
+    default: "true"
+  binary:
+    description: >-
+      Path to a convctl that already exists, used instead of downloading
+      one. For a runner that vendors the binary or has no egress to the
+      releases API — and for this repository's own workflows, which have to
+      exercise the Actions against the build under test rather than against
+      the last release.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: The resolved release tag, or the supplied binary's version.
+    value: ${{ inputs.binary != '' && steps.supplied.outputs.version || steps.resolve.outputs.version }}
+  path:
+    description: Path of the binary that ended up on PATH.
+    value: ${{ inputs.binary != '' && steps.supplied.outputs.path || steps.install.outputs.path }}
+  cache-hit:
+    description: Whether the binary came from the runner cache.
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # A binary that is already here needs no resolving, downloading or
+    # verifying: there is no artifact whose provenance could be in question.
+    - name: Use the supplied binary
+      id: supplied
+      if: inputs.binary != ''
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+      run: |
+        set -euo pipefail
+        if [ ! -x "$BINARY" ]; then
+          echo "::error::binary input points at $BINARY, which is not an executable file" >&2
+          exit 1
+        fi
+        # Linked into a directory of our own as "convctl", rather than
+        # putting the supplied binary's directory on PATH. Every Action that
+        # follows invokes the literal command `convctl`, so a binary named
+        # convctl-linux-amd64 — which is exactly what a download or a build
+        # matrix produces — would be on PATH and still not found. Linking
+        # also avoids adding a directory of unrelated executables to PATH.
+        dir="$RUNNER_TEMP/convctl-supplied"
+        mkdir -p "$dir"
+        name=convctl
+        case "$RUNNER_OS" in Windows) name=convctl.exe ;; esac
+        rm -f "$dir/$name"
+        ln -s "$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" "$dir/$name" 2>/dev/null \
+          || cp "$BINARY" "$dir/$name"
+        chmod +x "$dir/$name"
+
+        echo "$dir" >> "$GITHUB_PATH"
+        {
+          echo "path=$dir/$name"
+          echo "version=$("$dir/$name" version | awk '{print $1}')"
+        } >> "$GITHUB_OUTPUT"
+        echo "using the supplied convctl at $BINARY" >> "$GITHUB_STEP_SUMMARY"
+
+    # Resolve "latest" to a concrete tag and pin it in the step summary, so a
+    # re-run six months from now is explainable rather than mysterious.
+    - name: Resolve version and platform
+      id: resolve
+      if: inputs.binary == ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REQUESTED: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        if [ "$REQUESTED" = "latest" ]; then
+          version="$(gh api repos/TeraSky-OSS/declarative-conversion-operator/releases/latest --jq .tag_name)"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::could not resolve the latest convctl release" >&2
+            exit 1
+          fi
+        else
+          version="$REQUESTED"
+        fi
+
+        case "$RUNNER_OS" in
+          Linux)   os=linux   ; ext=tar.gz ; bin=convctl ;;
+          macOS)   os=darwin  ; ext=tar.gz ; bin=convctl ;;
+          Windows) os=windows ; ext=zip    ; bin=convctl.exe ;;
+          *) echo "::error::unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::unsupported runner architecture: $RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+
+        # The archive name carries the version without its leading v, which
+        # is what GoReleaser's .Version produces.
+        bare="${version#v}"
+        archive="declarative-conversion-operator-cli_${bare}_${os}_${arch}.${ext}"
+
+        {
+          echo "version=$version"
+          echo "os=$os"
+          echo "arch=$arch"
+          echo "ext=$ext"
+          echo "bin=$bin"
+          echo "archive=$archive"
+          echo "dir=$RUNNER_TEMP/convctl-$bare"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "convctl $version ($os/$arch)" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Restore cached binary
+      id: cache
+      if: inputs.binary == '' && inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: convctl-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.arch }}
+
+    - name: Download release assets
+      if: inputs.binary == '' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ steps.resolve.outputs.version }}
+        ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        VERIFY: ${{ inputs.verify }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$DIR"
+        cd "$DIR"
+
+        assets=("$ARCHIVE" checksums.txt)
+        if [ "$VERIFY" = "true" ]; then
+          assets+=(checksums.txt.sig checksums.txt.pem)
+        fi
+        # An asset already in the directory is kept rather than re-fetched:
+        # the download is not what makes an archive trustworthy, the
+        # verification below is, and re-downloading would quietly repair
+        # exactly the tampering that step exists to catch.
+        for asset in "${assets[@]}"; do
+          if [ -f "$asset" ]; then
+            echo "$asset is already present"
+            continue
+          fi
+          gh release download "$VERSION" \
+            --repo TeraSky-OSS/declarative-conversion-operator \
+            --pattern "$asset"
+        done
+
+    # Cosign is only installed when it is going to be used, so verify: false
+    # costs nothing beyond the download.
+    - name: Install cosign
+      if: inputs.verify == 'true'
+      # Pinned to an exact version: sigstore publishes a floating v3 tag but
+      # no v4, so `@v4` resolves to nothing and the step fails with "unable
+      # to find version" rather than anything about cosign.
+      uses: sigstore/cosign-installer@v4.1.2
+
+    # Verification runs on a cache hit too. A poisoned cache that could be
+    # laundered by a cache hit would make the whole verification decorative:
+    # the cached branch is the one that runs in practice.
+    - name: Verify signature and checksum
+      if: inputs.binary == '' && inputs.verify == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ steps.resolve.outputs.version }}
+        ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        cd "$DIR"
+
+        # A cache holds the archive but not necessarily the signature
+        # material, so fetch whatever is missing before verifying. Present
+        # files are left alone, for the same reason as above.
+        for asset in checksums.txt checksums.txt.sig checksums.txt.pem "$ARCHIVE"; do
+          if [ ! -f "$asset" ]; then
+            gh release download "$VERSION" \
+              --repo TeraSky-OSS/declarative-conversion-operator \
+              --pattern "$asset"
+          fi
+        done
+
+        # The certificate identity is pinned to this repository's release
+        # workflow at a tag, not to a wildcard: a signature from any other
+        # workflow in any other repository is exactly what this is meant to
+        # reject.
+        #
+        # The owner is matched case-insensitively. Fulcio records the
+        # canonical casing GitHub renders — TeraSky-OSS — and a lowercase
+        # pattern fails with "none of the expected identities matched",
+        # which reads like a bad signature rather than a typo.
+        cosign verify-blob \
+          --certificate checksums.txt.pem \
+          --signature checksums.txt.sig \
+          --certificate-identity-regexp '^https://github\.com/(?i:terasky-oss)/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          checksums.txt
+
+        # Then the archive against the now-trusted checksums file. grep for
+        # this archive's line only: checksums.txt covers every platform, and
+        # sha256sum -c would fail on the absent ones.
+        grep " \{1,2\}${ARCHIVE}\$" checksums.txt > archive.sha256
+        if [ ! -s archive.sha256 ]; then
+          echo "::error::${ARCHIVE} has no entry in the signed checksums.txt" >&2
+          exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+          sha256sum -c archive.sha256
+        else
+          shasum -a 256 -c archive.sha256
+        fi
+
+        if [ "$CACHE_HIT" = "true" ]; then
+          echo "verified the cached archive against the signed checksums" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Extract and add to PATH
+      id: install
+      if: inputs.binary == ''
+      shell: bash
+      env:
+        ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        EXT: ${{ steps.resolve.outputs.ext }}
+        BIN: ${{ steps.resolve.outputs.bin }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        VERIFY: ${{ inputs.verify }}
+      run: |
+        set -euo pipefail
+        cd "$DIR"
+
+        # With verification on, the binary is always re-extracted from the
+        # archive that was just verified. Keeping an existing $BIN would
+        # trust a file nothing checked: the checksum covers the archive, and
+        # a cache entry can hold an intact archive beside an altered binary.
+        # That is the shape of the attack the verification exists to stop,
+        # and skipping extraction would walk straight past it.
+        if [ "$VERIFY" = "true" ] || [ ! -f "$BIN" ]; then
+          rm -f "$BIN"
+          if [ "$EXT" = "zip" ]; then
+            unzip -o "$ARCHIVE" >/dev/null
+          else
+            tar -xzf "$ARCHIVE"
+          fi
+        fi
+        chmod +x "$BIN"
+
+        echo "$DIR" >> "$GITHUB_PATH"
+        echo "path=$DIR/$BIN" >> "$GITHUB_OUTPUT"
+
+    - name: Verify it runs
+      if: inputs.binary == ''
+      shell: bash
+      env:
+        EXPECTED: ${{ steps.resolve.outputs.version }}
+        BINARY: ${{ steps.install.outputs.path }}
+      run: |
+        set -euo pipefail
+        got="$("$BINARY" version | awk '{print $1}')"
+        # Compare without the leading v. Releases before this Action existed
+        # were built with GoReleaser's .Version, which strips it, so the
+        # binary reports 0.3.0 for tag v0.3.0 — and an installer that
+        # rejected its own project's releases would be worse than one that
+        # did not check at all.
+        if [ "${got#v}" != "${EXPECTED#v}" ]; then
+          echo "::error::installed convctl reports $got, expected $EXPECTED" >&2
+          exit 1
+        fi
+        echo "convctl $got is on PATH"

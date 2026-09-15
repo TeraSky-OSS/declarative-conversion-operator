@@ -15,7 +15,15 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      # commit and date go in too: "convctl says this conversion is lossy"
+      # is unactionable in a bug report without knowing which convctl.
+      - -s -w
+      # .Tag, not .Version: .Version strips the leading v, so the binary
+      # reported 0.3.0 for the release everyone calls v0.3.0 — a mismatch
+      # every consumer has to know about to compare the two.
+      - -X main.version={{ .Tag }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
 
 archives:
   - id: convctl
@@ -26,6 +34,59 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+
+# Linux packages, attached to the release. Installing a kubectl-adjacent
+# tool by downloading a tarball is not how the ecosystem works.
+nfpms:
+  - id: convctl
+    ids: [convctl]
+    package_name: convctl
+    vendor: TeraSky
+    homepage: https://terasky-oss.github.io/declarative-conversion-operator/
+    maintainer: TeraSky OSS <oss@terasky.com>
+    description: |-
+      CLI for the declarative conversion operator: validate, analyze and test
+      Crossplane XRD and CRD conversion configs offline or against a cluster.
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+
+# Homebrew. GoReleaser deprecated `brews:` in favour of casks, which are
+# macOS-only — so Linuxbrew users install from the deb/rpm above or the
+# archive, which is the trade the deprecation forces.
+homebrew_casks:
+  - name: convctl
+    ids: [convctl]
+    repository:
+      owner: terasky-oss
+      name: homebrew-tap
+      # index rather than .Env.X: the dotted form errors when the variable
+      # is unset, which would fail a release because a tap repository does
+      # not exist yet. Unset means skip, below.
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+      branch: main
+    homepage: https://terasky-oss.github.io/declarative-conversion-operator/
+    description: CLI for the declarative conversion operator
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    # No quarantine-stripping hook. Removing com.apple.quarantine would
+    # turn Gatekeeper off for this binary, and a checksum is not a
+    # substitute for code signing and notarization: it proves the file is
+    # the one the release published, not that anybody vouched for what it
+    # does. macOS will warn on first run until these artifacts are notarized,
+    # which is the honest state of affairs rather than one papered over
+    # during install.
+
+scoops:
+  - name: convctl
+    ids: [convctl]
+    repository:
+      owner: terasky-oss
+      name: scoop-bucket
+      token: '{{ index .Env "SCOOP_BUCKET_TOKEN" }}'
+    homepage: https://terasky-oss.github.io/declarative-conversion-operator/
+    description: CLI for the declarative conversion operator
+    license: Apache-2.0
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'
 
 checksum:
   name_template: "checksums.txt"

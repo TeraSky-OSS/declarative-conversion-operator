@@ -41,7 +41,16 @@ updates:
       - go
 
   - package-ecosystem: github-actions
-    directory: /
+    # The workflows, and the composite Actions this repository publishes.
+    # "/" alone covers .github/workflows and a root action.yml, not actions
+    # in subdirectories — which is where ours live, and which are the ones
+    # consumers depend on.
+    directories:
+      - /
+      - /.github/actions/setup-convctl
+      - /.github/actions/convctl-test
+      - /.github/actions/convctl-diff
+      - /.github/actions/convctl-fleet
     schedule:
       interval: weekly
       day: monday

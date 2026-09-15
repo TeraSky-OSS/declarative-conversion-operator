@@ -41,6 +41,10 @@ type AnalyzeOutput struct {
 	// not be determined.
 	// +optional
 	Scope *ScopeView `json:"scope,omitempty"`
+	// Analysis is the underlying report, kept so the CI output formats can
+	// attribute each diagnostic to the rule and line that produced it. Not
+	// serialized: the views above are the stable JSON contract.
+	Analysis *engine.AnalyzeReport `json:"-"`
 }
 
 // ScopeView reports a resolved Crossplane XRD scope and how much the
@@ -68,6 +72,12 @@ type AnalyzeSpokeView struct {
 // static analysis, with no samples involved. Which of xrdPath/crdPath
 // applies is determined by the config's own kind.
 func RunAnalyze(xrdPath, crdPath, configPath string) (*AnalyzeOutput, error) {
+	return RunAnalyzeFrom(xrdPath, crdPath, configPath, "", "")
+}
+
+// RunAnalyzeFrom is RunAnalyze with a package as an alternative schema
+// source. See XRDFromSource.
+func RunAnalyzeFrom(xrdPath, crdPath, configPath, packageRef, target string) (*AnalyzeOutput, error) {
 	kind, err := PeekConfigKind(configPath)
 	if err != nil {
 		return nil, err
@@ -79,15 +89,15 @@ func RunAnalyze(xrdPath, crdPath, configPath string) (*AnalyzeOutput, error) {
 		}
 		return runAnalyzeCRDCmd(crdPath, configPath)
 	default: // "XRDConversionConfig"
-		if xrdPath == "" {
-			return nil, fmt.Errorf("%s is an XRDConversionConfig; pass its target schema with --xrd, not --crd", configPath)
+		if xrdPath == "" && packageRef == "" {
+			return nil, fmt.Errorf("%s is an XRDConversionConfig; pass its target schema with --xrd or --package, not --crd", configPath)
 		}
-		return runAnalyzeXRDCmd(xrdPath, configPath)
+		return runAnalyzeXRDCmd(xrdPath, configPath, packageRef, target)
 	}
 }
 
-func runAnalyzeXRDCmd(xrdPath, configPath string) (*AnalyzeOutput, error) {
-	xrd, err := LoadXRD(xrdPath)
+func runAnalyzeXRDCmd(xrdPath, configPath, packageRef, target string) (*AnalyzeOutput, error) {
+	xrd, err := XRDFromSource(xrdPath, packageRef, target)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +131,7 @@ func runAnalyzeCRDCmd(crdPath, configPath string) (*AnalyzeOutput, error) {
 }
 
 func buildAnalyzeOutput(resourceKind, resourceName, configName, hubVersion string, report engine.AnalyzeReport) *AnalyzeOutput {
-	out := &AnalyzeOutput{ResourceKind: resourceKind, Resource: resourceName, Config: configName, HubVersion: hubVersion, Lossless: report.OverallLossless()}
+	out := &AnalyzeOutput{ResourceKind: resourceKind, Resource: resourceName, Config: configName, HubVersion: hubVersion, Lossless: report.OverallLossless(), Analysis: &report}
 	for _, sr := range report.SpokeReports {
 		v := AnalyzeSpokeView{Version: sr.Version, LosslessHubToSpoke: sr.Lossless.HubToSpoke, LosslessSpokeToHub: sr.Lossless.SpokeToHub, RulesEvaluated: len(sr.RuleResults)}
 		for _, d := range sr.Errors {

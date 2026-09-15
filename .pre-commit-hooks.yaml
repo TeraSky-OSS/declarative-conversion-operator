@@ -1,0 +1,25 @@
+# Pre-commit hooks for convctl.
+#
+# convctl lint is the fast, offline check — it constructs no Kubernetes
+# client — so it belongs on every commit. `convctl test --live` is the slow
+# one that belongs before merge.
+#
+# Usage, in a consumer's .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/TeraSky-OSS/declarative-conversion-operator
+#       rev: v0.5.0            # pin a release tag
+#       hooks:
+#         - id: convctl-lint
+#
+- id: convctl-lint
+  name: convctl lint
+  description: Validate every conversion config in the tree against the schema it targets.
+  entry: convctl lint
+  language: system
+  # Run once over the tree rather than once per changed file: pairing a
+  # config with its schema needs to see both, and a hook that ran per file
+  # would report every config as unpaired.
+  pass_filenames: false
+  always_run: true
+  types: [yaml]

@@ -14,6 +14,23 @@ cluster that will apply that YAML:
 Neither command writes to the cluster. The invoking identity only needs
 `get`/`list` on the target XRD/CRD and its instances.
 
+## Lint on commit, test before merge
+
+Two checks, two speeds. `convctl lint` is offline — it constructs no
+Kubernetes client — so it belongs on every commit, as a pre-commit hook and as
+the first job in CI:
+
+```console
+convctl lint ./platform/
+```
+
+It pairs every conversion config in the tree with the XRD or CRD it targets
+and reports an unpaired or duplicated config as an error rather than skipping
+it. See [`convctl lint`](../cli.md#convctl-lint).
+
+`convctl test --live` is the slow one, and the one that needs credentials for
+every cluster. Run it before merge, not on every commit.
+
 ## Built-in: `convctl test --live --contexts`
 
 Once you have more than one context in a single kubeconfig:
@@ -30,12 +47,12 @@ single-cluster report. A connection error on one cluster is recorded as a
 failed suite; the others still run.
 
 `convctl diff` stays one cluster per invocation (`--context`). The
-[shell loop](#shell-loop) still wraps both commands when you want
+[shell loop](#shell-loop-non-github-ci) still wraps both commands when you want
 `diff --live` in the same gate.
 
-## Shell loop
+## Shell loop (non-GitHub CI)
 
-[`convctl-fleet.sh`](convctl-fleet.sh) is a copy-pasteable wrapper. It
+For Tekton, GitLab, Jenkins or anything else, [`convctl-fleet.sh`](convctl-fleet.sh) is a copy-pasteable wrapper. It
 walks `CONTEXTS` (space-separated kubeconfig context names), writes one
 JUnit file per cluster, and exits non-zero if any cluster failed.
 
@@ -51,13 +68,38 @@ export CONVCTL_CONFIG=examples/field-rename/xrdconversionconfig.yaml
 one kubeconfig file per cluster instead of contexts, set `KUBECONFIGS` to
 a list of paths (the script uses each file's `current-context`).
 
-## GitHub Actions matrix
+## GitHub Actions
 
-[`convctl-fleet.gha.yml`](convctl-fleet.gha.yml) is a reference workflow,
-not a job this repository runs. Copy it into your platform repo and
-replace the `context` matrix with your fleet. Each matrix leg is one
-cluster; `actions/upload-artifact` collects the JUnit files so a
-test-reporter can show a per-cluster breakdown.
+Three first-party Actions cover the fleet pattern, so the workflow is
+configuration rather than a copy-pasted script:
+
+```yaml
+- uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-fleet@v1
+  with:
+    config: apis/widgets/conversion.yaml
+    xrd: apis/widgets/xrd.yaml
+    contexts: prod-us,prod-eu
+    kubeconfig: ${{ secrets.FLEET_KUBECONFIG }}
+```
+
+One aggregated JUnit report with a `<testsuite>` per cluster, a summary
+table, and a cluster that could not be reached recorded as a **failed suite**
+rather than silently skipped.
+
+| Action | Does |
+|---|---|
+| [`setup-convctl`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/setup-convctl) | installs a cosign-verified `convctl` |
+| [`convctl-test`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-test) | one cluster or fixtures: JUnit artifact, job summary, diff annotations |
+| [`convctl-diff`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-diff) | the coverage delta as a sticky pull-request comment |
+| [`convctl-fleet`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-fleet) | every cluster, one aggregated report |
+
+[`convctl-fleet.gha.yml`](convctl-fleet.gha.yml) is the full reference
+workflow, built on those Actions. It runs as written — the only things to
+change are the `context` matrix, the paths, and the kubeconfig secret. Copy
+it into your platform repo.
+
+`fail-fast: false` on a per-cluster matrix is still required: a red cluster
+must not hide the others.
 
 ```yaml
 strategy:
@@ -133,9 +175,12 @@ jobs:
         run: |
           git fetch --depth=1 origin \
             "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-      - name: Install convctl
-        run: |
-          go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest
+      # A pinned release with its signature verified, rather than
+      # `go install ...@latest`, which resolves to whatever is newest when
+      # the job runs and checks nothing about what it got.
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
+        with:
+          version: v0.5.0
       - run: |
           convctl compat \
             --base "origin/${{ github.base_ref }}" --head HEAD \

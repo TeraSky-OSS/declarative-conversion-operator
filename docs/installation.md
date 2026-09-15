@@ -156,3 +156,77 @@ For Flux or Argo, use the [GitOps operator sync](gitops/operator-sync.md)
 examples (`examples/gitops/flux`, `examples/gitops/argo`). Keep
 `driftPolicy: KeepServingStale` on GitOps-managed configs — `FailClosed`
 drops conversions while the schema and config reconcile independently.
+
+## Installing `convctl`
+
+| Method | Command | Platforms |
+|---|---|---|
+| Homebrew | `brew install terasky-oss/tap/convctl` | macOS (casks are macOS-only; on Linuxbrew use the package or archive) |
+| Scoop | `scoop bucket add terasky-oss https://github.com/terasky-oss/scoop-bucket` then `scoop install convctl` | Windows |
+| deb | `sudo dpkg -i convctl_<version>_linux_amd64.deb` | Debian, Ubuntu |
+| rpm | `sudo rpm -i convctl_<version>_linux_amd64.rpm` | RHEL, Fedora, SUSE |
+| Archive | download `declarative-conversion-operator-cli_<version>_<os>_<arch>.tar.gz` from the [releases page](https://github.com/TeraSky-OSS/declarative-conversion-operator/releases) | all |
+| Container | see [below](#the-convctl-container-image) | linux/amd64, linux/arm64 |
+| Source | `go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest` | all — note that `@latest` resolves at install time and nothing verifies the result; prefer a release artifact in CI |
+
+Every archive's checksum is covered by the cosign-signed `checksums.txt`; see
+the signed-artifact section of any release for the verification commands.
+
+### `convctl version`
+
+```console
+$ convctl version
+v0.5.0 (a1b2c3d4e5f6) linux/amd64 go1.26.6
+
+$ convctl version -o json
+{
+  "version": "v0.5.0",
+  "commit": "a1b2c3d4e5f6...",
+  "date": "2026-09-15T20:06:15Z",
+  "goVersion": "go1.26.6",
+  "platform": "linux/amd64"
+}
+```
+
+That is what belongs in a bug report: *"convctl says this conversion is
+lossy"* is unactionable without knowing which convctl.
+
+A `go install` build has no release ldflags, and reports the module version
+and VCS stamps the Go toolchain embeds rather than `dev` — a version nobody
+can map to a commit is the same as no version. A build from a dirty working
+tree says so, with a `-dirty` suffix on the commit.
+
+## The `convctl` container image
+
+For pipelines that would rather pin a digest than download a binary — Tekton,
+Argo Workflows, GitLab's `image:`, a GitHub `container:` job — the CLI is
+published alongside the two operator images:
+
+```console
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/terasky-oss/declarative-conversion-convctl:v0.5.0 \
+  test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./samples/
+```
+
+`linux/amd64` and `linux/arm64`, cosign-signed with build-provenance and SBOM
+attestations exactly like the other two — the digest is listed in each
+release's signed-artifact table, and the same `cosign verify` invocation
+applies.
+
+### Base image: distroless, and what that costs you
+
+The CLI image uses the same `gcr.io/distroless/static:nonroot` base as the
+operator, deliberately:
+
+- **`--live` works.** The base includes `/etc/ssl/certs/ca-certificates.crt`,
+  so TLS to an HTTPS apiserver verifies. (Checked, not assumed.)
+- **There is no shell.** `ENTRYPOINT` is the binary, so
+  `docker run <image> test …` reads naturally — but you cannot chain commands
+  inside the container, and `sh -c` is not available. In a CI system that
+  expects to run a script in the container, either run one `convctl`
+  invocation per step, or use the released binary with
+  the released binary on a normal runner image.
+
+A shell-bearing variant was considered and not published: two images means
+two bases to patch, and the operator's base stays as it is regardless.
+

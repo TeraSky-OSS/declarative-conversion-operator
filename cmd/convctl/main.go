@@ -25,10 +25,19 @@ import (
 	"github.com/terasky-oss/declarative-conversion-operator/internal/cli"
 )
 
-// version is overridden at build time via -ldflags "-X main.version=...".
-var version = "dev"
+// Overridden at build time via -ldflags "-X main.version=..." and friends.
+// Absent those — a `go install` build — internal/cli falls back to the build
+// information the Go toolchain embeds, so the binary still reports something
+// that maps to a commit.
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
 
 func main() {
 	cli.Version = version
+	cli.Commit = commit
+	cli.Date = date
 	os.Exit(cli.Execute())
 }

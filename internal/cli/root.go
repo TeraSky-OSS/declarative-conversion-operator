@@ -58,7 +58,7 @@ cluster. Every command works against either resource type:
 		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
-		newCompatCmd(), newVersionsCmd(), newPlanCmd(),
+		newCompatCmd(), newVersionsCmd(), newPlanCmd(), newLintCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -74,14 +74,33 @@ cluster. Every command works against either resource type:
 var exitCode = ExitOK
 
 func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
+	var output string
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the convctl version",
+		Long: `Print the version, and with -o json the commit, build date, Go version and
+platform as well.
+
+"convctl says this conversion is lossy" is unactionable without knowing which
+convctl, so the JSON form is what belongs in a bug report. A binary built with
+go install reports its module version and VCS stamps rather than "dev": those
+are embedded by the toolchain, and a version nobody can map to a commit is the
+same as no version.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), Version)
+			if err := checkOutputFormat(output, "table", "json"); err != nil {
+				return err
+			}
+			info := versionInfo()
+			if output == "json" {
+				return writeJSON(cmd, info)
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), info.String())
 			return err
 		},
 	}
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	registerOutputCompletions(cmd, "table", "json")
+	return cmd
 }
 
 // Version is set at build time via -ldflags; defaults to "dev" for local
@@ -89,7 +108,7 @@ func newVersionCmd() *cobra.Command {
 var Version = "dev"
 
 func newValidateCmd() *cobra.Command {
-	var configPath, xrdPath, crdPath, output string
+	var configPath, xrdPath, crdPath, output, packagePath, packageTarget string
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate a conversion config the same way the admission webhook does",
@@ -100,12 +119,21 @@ Without --xrd/--crd, only structural checks on the config itself run. Supply the
 matching schema file to also compile every rule against the real hub and spoke
 schemas.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			res, err := RunValidate(configPath, xrdPath, crdPath)
+			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
+			res, err := RunValidateFrom(configPath, xrdPath, crdPath, packagePath, packageTarget)
 			if err != nil {
 				return err
 			}
 			if output == "json" {
 				return writeJSON(cmd, res)
+			}
+			if isCIFormat(output) {
+				if len(res.Errors) > 0 {
+					exitCode = ExitTestFailure
+				}
+				return writeFindings(cmd, output, validateFindings(res, configPath), "convctl validate: "+res.Config)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "config: %s\nstructurally valid: %v\n", res.Config, res.StructurallyValid)
 			if xrdPath != "" || crdPath != "" {
@@ -123,16 +151,22 @@ schemas.`,
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (optional; enables live schema validation against an XRDConversionConfig)")
 	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (optional; enables live schema validation against a CRDConversionConfig)")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.Flags().StringVar(&packagePath, "package", "", "Read the target XRD from a Crossplane package instead of a file (a local .xpkg). The unit of API change for a platform shipped as a Configuration is a package version")
+	cmd.Flags().StringVar(&packageTarget, "target", "", "With --package, select one XRD by name when the package ships several")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	// --package is a schema source like --xrd, so it joins that group --
+	// not the sample group, where --live lives.
+	cmd.MarkFlagsMutuallyExclusive("xrd", "package")
+	cmd.MarkFlagsMutuallyExclusive("crd", "package")
 	registerOfflineFlagCompletions(cmd)
-	registerOutputCompletions(cmd, "table", "json")
+	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
 
 func newAnalyzeCmd() *cobra.Command {
-	var xrdPath, crdPath, configPath, output string
+	var xrdPath, crdPath, configPath, output, packagePath, packageTarget string
 	cmd := &cobra.Command{
 		Use:   "analyze",
 		Short: "Report lossiness and rule coverage from schemas alone",
@@ -142,12 +176,22 @@ objects required.
 Answers whether the config would validate against the target XRD/CRD, which rules
 are lossy in which direction, and whether every schema field is covered.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out, err := RunAnalyze(xrdPath, crdPath, configPath)
+			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
+			out, err := RunAnalyzeFrom(xrdPath, crdPath, configPath, packagePath, packageTarget)
 			if err != nil {
 				return err
 			}
 			if output == "json" {
 				return writeJSON(cmd, out)
+			}
+			if isCIFormat(output) {
+				var findings []Finding
+				if out.Analysis != nil {
+					findings = findingsFromAnalyze(*out.Analysis, SourceMapForConfig(configPath))
+				}
+				return writeFindings(cmd, output, findings, "convctl analyze: "+out.Config)
 			}
 			// A lossless=false result here is informational, not a failure:
 			// a non-zero-error config would already have failed above, so
@@ -158,19 +202,26 @@ are lossy in which direction, and whether every schema field is covered.`,
 	}
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for an XRDConversionConfig)")
 	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for a CRDConversionConfig)")
+	cmd.Flags().StringVar(&packagePath, "package", "", "Read the target XRD from a Crossplane package instead of a file (a local .xpkg). The unit of API change for a platform shipped as a Configuration is a package version")
+	cmd.Flags().StringVar(&packageTarget, "target", "", "With --package, select one XRD by name when the package ships several")
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	_ = cmd.MarkFlagRequired("config")
-	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsOneRequired("xrd", "crd", "package")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	// --package is a schema source like --xrd, so it joins that group --
+	// not the sample group, where --live lives.
+	cmd.MarkFlagsMutuallyExclusive("xrd", "package")
+	cmd.MarkFlagsMutuallyExclusive("crd", "package")
 	registerOfflineFlagCompletions(cmd)
-	registerOutputCompletions(cmd, "table", "json")
+	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
 
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
+		packagePath, packageTarget                                           string
 		recordDir, goldenDir, recordFailures                                 string
 		fuzzN                                                                int
 		fuzzSeed                                                             int64
@@ -179,6 +230,8 @@ func newTestCmd() *cobra.Command {
 		kubeconfig, kubeContext, kubeconfigDir                               string
 		contexts                                                             []string
 		concurrency                                                          int
+		maxSamples                                                           int
+		sampleStrategy, namespace                                            string
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
@@ -225,7 +278,9 @@ It is off by default only so that upgrading does not turn existing green
 pipelines red without warning; the default is planned to flip in a later
 release. Turn it on now in new pipelines.
 
---output selects table (default), json, or junit (for CI test-result reporters).
+--output selects table (default), json, junit (for CI test-result reporters),
+or the CI-native formats github, sarif and markdown, which report findings at
+the line of the config that produced them rather than as a log to read.
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
 
@@ -233,10 +288,14 @@ Samples are tested in parallel (--concurrency, default one worker per CPU) with
 progress on stderr (--quiet to silence it). The report is identical either way:
 results are collected by sample index, never by completion order.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch output {
-			case "table", "json", "junit":
-			default:
-				return fmt.Errorf("invalid --output value %q (want table, json, or junit)", output)
+			if err := checkOutputFormat(output, "table", "json", "junit", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
+			if err := ValidateSamplingOptions(SamplingOptions{MaxSamples: maxSamples, Strategy: sampleStrategy, Seed: fuzzSeed}); err != nil {
+				return err
+			}
+			if (maxSamples > 0 || sampleStrategy != "" || namespace != "") && !live {
+				return errors.New("--max-samples, --sample-strategy and --namespace only apply to --live runs")
 			}
 			switch failOn {
 			case failOnNone, failOnWarn, failOnLoss:
@@ -260,10 +319,13 @@ results are collected by sample index, never by completion order.`,
 			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
+				PackagePath: packagePath, PackageTarget: packageTarget,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
+				Sampling:          SamplingOptions{MaxSamples: maxSamples, Strategy: sampleStrategy, Seed: fuzzSeed},
+				Namespace:         namespace,
 				VerifyPropagation: verifyPropagation,
 				ValidateOutput:    validateOutput,
 				RecordDir:         recordDir,
@@ -318,13 +380,18 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
 	cmd.Flags().StringSliceVar(&contexts, "contexts", nil, "Run --live against each of these kubeconfig contexts and aggregate the report; mutually exclusive with --context")
 	cmd.Flags().StringVar(&kubeconfigDir, "kubeconfig-dir", "", "Directory of kubeconfig files; --live runs against each file (current-context unless --contexts is also set)")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|junit")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|junit|github|sarif|markdown")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write the full report to this file instead of stdout; a short summary still prints to stdout")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
 	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
+	cmd.Flags().StringVar(&packagePath, "package", "", "Read the target XRD from a Crossplane package instead of a file (a local .xpkg). The unit of API change for a platform shipped as a Configuration is a package version")
+	cmd.Flags().StringVar(&packageTarget, "target", "", "With --package, select one XRD by name when the package ships several")
+	cmd.Flags().IntVar(&maxSamples, "max-samples", 0, "With --live, cap how many objects are tested (default: every object). The report says so when a run was sampled")
+	cmd.Flags().StringVar(&sampleStrategy, "sample-strategy", "", "With --max-samples: first (cheapest), random (uniform, reproducible with --seed), or newest (default: first)")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "With --live, narrow to one namespace. Only namespaced object classes are affected; a cluster-scoped composite cannot be narrowed")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
 	cmd.Flags().IntVar(&fuzzN, "fuzz", 0, "Generate N schema-valid objects from the hub version's own schema and test them too. Biased toward the boundaries fixtures miss: empty arrays, absent optionals, length and range limits, first and last enum members")
@@ -334,8 +401,12 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringVar(&goldenDir, "golden", "", "Replay a corpus recorded by --record and fail on any difference, reporting which fields changed. Mutually exclusive with --record")
 	cmd.Flags().BoolVar(&validateOutput, "validate-output", false, "Validate every converted object against the destination version's OpenAPI schema, using the apiserver's own validator. A violation is an error, not a loss. Off by default this release; the default is planned to flip")
 	_ = cmd.MarkFlagRequired("config")
-	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsOneRequired("xrd", "crd", "package")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	// --package is a schema source like --xrd, so it joins that group --
+	// not the sample group, where --live lives.
+	cmd.MarkFlagsMutuallyExclusive("xrd", "package")
+	cmd.MarkFlagsMutuallyExclusive("crd", "package")
 	// --fuzz is a third source of samples, and composes with --samples:
 	// generated objects test the boundaries, fixtures test the cases
 	// somebody deliberately wrote down.
@@ -345,7 +416,7 @@ results are collected by sample index, never by completion order.`,
 	cmd.MarkFlagsMutuallyExclusive("kubeconfig", "kubeconfig-dir")
 	registerOfflineFlagCompletions(cmd)
 	registerKubeFlagCompletions(cmd)
-	registerOutputCompletions(cmd, "table", "json", "junit")
+	registerOutputCompletions(cmd, "table", "json", "junit", "github", "sarif", "markdown")
 	_ = cmd.RegisterFlagCompletionFunc("fail-on", cobra.FixedCompletions([]string{failOnNone, failOnWarn, failOnLoss}, cobra.ShellCompDirectiveNoFileComp))
 	if cmd.Flags().Lookup("contexts") != nil {
 		_ = cmd.RegisterFlagCompletionFunc("contexts", completeKubeContexts)
@@ -379,10 +450,8 @@ same spokes — "what would applying this claim?" rather than an error.
 Exits 0 when the two sides are equivalent and 1 when any delta is found, so it
 drops straight into a CI gate.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch output {
-			case "table", "json":
-			default:
-				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			if err := checkOutputFormat(output, "table", "json", "markdown"); err != nil {
+				return err
 			}
 			out, err := RunDiff(DiffOptions{
 				ConfigPaths: configPaths, XRDPath: xrdPath, CRDPath: crdPath,
@@ -391,10 +460,15 @@ drops straight into a CI gate.`,
 			if err != nil {
 				return err
 			}
-			if output == "table" {
+			switch output {
+			case "table":
 				out.WriteTable(cmd.OutOrStdout())
-			} else if err := writeJSON(cmd, out); err != nil {
-				return err
+			case "markdown":
+				out.WriteMarkdown(cmd.OutOrStdout())
+			default:
+				if err := writeJSON(cmd, out); err != nil {
+					return err
+				}
 			}
 			if out.HasDeltas {
 				exitCode = ExitTestFailure
@@ -440,6 +514,11 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 			err = writeJSONTo(&buf, fleet)
 		case "junit":
 			err = fleet.WriteJUnit(&buf)
+		case "github", "sarif", "markdown":
+			// A fleet run has no single config to annotate, so its
+			// findings are aggregated per cluster and rendered without
+			// line numbers rather than attributed to the wrong file.
+			err = writeFindingsTo(&buf, output, fleet.findings(), "convctl test (fleet)")
 		default:
 			fleet.WriteTable(&buf)
 		}
@@ -449,6 +528,8 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 			err = writeJSONTo(&buf, rep)
 		case "junit":
 			err = rep.WriteJUnit(&buf)
+		case "github", "sarif", "markdown":
+			err = writeFindingsTo(&buf, output, findingsFromReport(rep, SourceMapForConfig(rep.Meta.ConfigPath)), "convctl test: "+rep.Meta.Resource)
 		default:
 			rep.WriteTable(&buf)
 		}
@@ -785,5 +866,82 @@ Exit codes: 0 a plan was produced, 1 the target state is unreachable,
 	_ = cmd.MarkFlagRequired("to")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+func newLintCmd() *cobra.Command {
+	var (
+		schemaDirs, exclude []string
+		output, failOn      string
+		concurrency         int
+		packageRef          string
+	)
+	cmd := &cobra.Command{
+		Use:   "lint [path...]",
+		Short: "Validate every conversion config in a tree against the schema it targets",
+		Long: `Check a whole repository in one run.
+
+A platform repo with fifty XRDs otherwise needs fifty invocations, each one
+pairing a config with its schema by hand and each producing an exit code the
+caller has to aggregate — which in practice means a bash loop in every
+consumer's CI, written slightly differently each time.
+
+lint walks the given paths (default "."), finds every XRDConversionConfig and
+CRDConversionConfig by its own apiVersion and kind rather than by filename,
+pairs each with the XRD or CRD whose metadata.name it targets, runs the same
+checks validate and analyze run, and reports once.
+
+An unpaired config is an ERROR naming what it looked for, never a silent
+skip: a config nothing checked looks exactly like a config that passed, and a
+tool that cannot tell you the difference is not worth running. A second
+config targeting the same resource is reported the same way — the operator
+enforces one config per target, and finding that out from an admission
+rejection after merge is what this command exists to prevent.
+
+Deliberately offline: it constructs no Kubernetes client at all. This is the
+check that runs on every commit; test --live is the slow one that runs before
+merge.
+
+Exit codes follow the same matrix as test: 0 clean, 1 findings at or above
+the --fail-on threshold, 2 usage error.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
+			switch failOn {
+			case failOnNone, failOnWarn, failOnLoss:
+			default:
+				return fmt.Errorf("invalid --fail-on value %q (want none, warn, or loss)", failOn)
+			}
+			rep, err := RunLint(LintOptions{
+				Paths: args, SchemaDirs: schemaDirs, Exclude: exclude, Concurrency: concurrency,
+				PackageRef: packageRef,
+			})
+			if err != nil {
+				return err
+			}
+			switch {
+			case output == "json":
+				if err := writeJSON(cmd, rep); err != nil {
+					return err
+				}
+			case isCIFormat(output):
+				if err := writeFindings(cmd, output, rep.Findings(), "convctl lint"); err != nil {
+					return err
+				}
+			default:
+				rep.WriteTable(cmd.OutOrStdout())
+			}
+			exitCode = decideLintExitCode(rep, failOn)
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&schemaDirs, "schema-dir", nil, "Additional directories to search for XRDs and CRDs (repeatable)")
+	cmd.Flags().StringVar(&packageRef, "package", "", "Pair every config in the tree against the XRDs a Crossplane package ships (a local .xpkg), rather than against schema files")
+	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "Glob patterns to skip, matched against the path and its base name (repeatable)")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
+	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Failure threshold: none|warn|loss")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Parallel workers (default one per CPU)")
+	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
