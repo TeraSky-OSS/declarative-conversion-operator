@@ -1,0 +1,186 @@
+name: convctl diff
+description: >-
+  Run convctl diff and upsert the coverage delta as a sticky pull-request
+  comment, updated in place as the branch changes.
+
+inputs:
+  config:
+    description: >-
+      Path to a conversion config. Pass twice (newline-separated) to compare
+      two files, or once with live to compare against the cluster.
+    required: true
+  xrd:
+    description: Path to the XRD.
+    required: false
+    default: ""
+  crd:
+    description: Path to the CRD.
+    required: false
+    default: ""
+  live:
+    description: Compare the config against what the cluster has.
+    required: false
+    default: "false"
+  kubeconfig:
+    description: Kubeconfig contents for a live comparison.
+    required: false
+    default: ""
+  context:
+    description: Kubeconfig context for a live comparison.
+    required: false
+    default: ""
+  comment:
+    description: Upsert the delta as a pull-request comment.
+    required: false
+    default: "true"
+  comment-tag:
+    description: >-
+      Identifies the comment to update. Defaults to the config path, so two
+      configs in one pull request get one comment each without configuration.
+    required: false
+    default: ""
+  fail-on-delta:
+    description: >-
+      Fail the job when a delta is found. Off by default — a coverage delta
+      is a review artifact, not automatically a failure. A usage or cluster
+      error (exit 2) always fails.
+    required: false
+    default: "false"
+  version:
+    description: convctl release tag to install.
+    required: false
+    default: latest
+  token:
+    description: Token used to upsert the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: convctl's own exit code (1 means deltas were found).
+    value: ${{ steps.run.outputs.exit-code }}
+  has-deltas:
+    description: Whether any delta was found.
+    value: ${{ steps.run.outputs.has-deltas }}
+  markdown-path:
+    description: Path of the rendered markdown.
+    value: ${{ steps.run.outputs.markdown-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up convctl
+      uses: ./.github/actions/setup-convctl
+      with:
+        version: ${{ inputs.version }}
+
+    - name: Write kubeconfig
+      if: inputs.kubeconfig != ''
+      shell: bash
+      env:
+        KUBECONFIG_CONTENTS: ${{ inputs.kubeconfig }}
+      run: |
+        set -euo pipefail
+        umask 077
+        printf '%s' "$KUBECONFIG_CONTENTS" > "$RUNNER_TEMP/kubeconfig"
+        echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+    - name: Run convctl diff
+      id: run
+      shell: bash
+      env:
+        CONFIGS: ${{ inputs.config }}
+        XRD: ${{ inputs.xrd }}
+        CRD: ${{ inputs.crd }}
+        LIVE: ${{ inputs.live }}
+        CONTEXT: ${{ inputs.context }}
+        FAIL_ON_DELTA: ${{ inputs.fail-on-delta }}
+      run: |
+        set -euo pipefail
+
+        md="$RUNNER_TEMP/convctl-diff.md"
+        args=()
+        while IFS= read -r cfg; do
+          if [ -n "$cfg" ]; then args+=(--config "$cfg"); fi
+        done <<< "$CONFIGS"
+        if [ -n "$XRD" ];    then args+=(--xrd "$XRD"); fi
+        if [ -n "$CRD" ];    then args+=(--crd "$CRD"); fi
+        if [ "$LIVE" = "true" ]; then args+=(--live); fi
+        if [ -n "$CONTEXT" ];    then args+=(--context "$CONTEXT"); fi
+
+        set +e
+        convctl diff "${args[@]}" --output markdown > "$md"
+        code=$?
+        set -e
+
+        # Exit 1 means deltas were found, which is the thing being reported
+        # rather than a failure. Exit 2 means the command could not run —
+        # a usage error, or a cluster it could not reach — and a gate that
+        # treated that as "no deltas" would be silently useless.
+        case "$code" in
+          0) has_deltas=false ;;
+          1) has_deltas=true  ;;
+          *)
+            echo "::error::convctl diff failed to run (exit $code)" >&2
+            cat "$md" >&2 || true
+            exit "$code"
+            ;;
+        esac
+
+        {
+          echo "exit-code=$code"
+          echo "has-deltas=$has_deltas"
+          echo "markdown-path=$md"
+        } >> "$GITHUB_OUTPUT"
+
+        cat "$md" >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$has_deltas" = "true" ] && [ "$FAIL_ON_DELTA" = "true" ]; then
+          exit 1
+        fi
+
+    - name: Upsert the pull-request comment
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TAG: ${{ inputs.comment-tag != '' && inputs.comment-tag || inputs.config }}
+        MD: ${{ steps.run.outputs.markdown-path }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        FORK: ${{ github.event.pull_request.head.repo.fork }}
+      run: |
+        set -euo pipefail
+
+        # A pull_request event from a fork has a read-only token. That is a
+        # notice, not a failure: the delta is already in the job summary, and
+        # failing here would make every fork contribution red for a reason
+        # the contributor cannot fix.
+        if [ "$FORK" = "true" ]; then
+          echo "::notice::pull request is from a fork, so the token cannot comment; the delta is in the job summary"
+          exit 0
+        fi
+        if [ ! -f "$MD" ]; then
+          echo "::notice::no diff output to comment"
+          exit 0
+        fi
+
+        marker="<!-- convctl-diff:$TAG -->"
+        body="$RUNNER_TEMP/convctl-diff-comment.md"
+        {
+          echo "$marker"
+          cat "$MD"
+        } > "$body"
+
+        # Find this tag's comment and edit it, so repeated runs update one
+        # comment rather than appending a new one each push.
+        existing="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq "[.[] | select(.body | contains(\"$marker\"))] | .[0].id // empty")"
+
+        if [ -n "$existing" ]; then
+          gh api --method PATCH "repos/$REPO/issues/comments/$existing" \
+            -F body=@"$body" --silent
+        else
+          gh api --method POST "repos/$REPO/issues/$PR/comments" \
+            -F body=@"$body" --silent
+        fi
