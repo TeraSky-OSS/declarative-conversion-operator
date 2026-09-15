@@ -97,8 +97,16 @@ func GeneratedCRDNames(xrd *unstructured.Unstructured) ([]GeneratedCRD, error) {
 		Namespaced: scope.Scope == ScopeNamespaced,
 	}}
 
+	// A malformed spec.claimNames is an error, not "no claims": silently
+	// returning the composite alone would leave the claim CRD unresolved
+	// everywhere — unsampled by test --live, unpruned by migrate-storage,
+	// unchecked for propagation — which is exactly the blind spot
+	// GeneratedCRDNames exists to close.
 	claimPlural, found, err := unstructured.NestedString(xrd.Object, "spec", "claimNames", "plural")
-	if err != nil || !found || claimPlural == "" {
+	if err != nil {
+		return nil, fmt.Errorf("xrdadapter: XRD %q has a malformed spec.claimNames: %w", xrd.GetName(), err)
+	}
+	if !found || claimPlural == "" {
 		return out, nil
 	}
 	claimKind, found, err := unstructured.NestedString(xrd.Object, "spec", "claimNames", "kind")

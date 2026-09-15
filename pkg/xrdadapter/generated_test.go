@@ -17,6 +17,7 @@ limitations under the License.
 package xrdadapter
 
 import (
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -155,5 +156,23 @@ func TestWriteGroupVersion(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestGeneratedCRDNames_MalformedClaimNamesIsAnError guards the same
+// distinction on the resolution path. Returning the composite alone for a
+// mistyped spec.claimNames would leave the claim CRD unresolved everywhere
+// — unsampled by test --live, unpruned by migrate-storage, unchecked for
+// propagation — which is the exact blind spot this helper exists to close.
+func TestGeneratedCRDNames_MalformedClaimNamesIsAnError(t *testing.T) {
+	xrd := scopeXRD("LegacyCluster", false, false)
+	_ = unstructured.SetNestedField(xrd.Object, "widgets", "spec", "claimNames")
+
+	got, err := GeneratedCRDNames(xrd)
+	if err == nil {
+		t.Fatalf("expected an error, got %+v", got)
+	}
+	if !strings.Contains(err.Error(), "malformed spec.claimNames") {
+		t.Errorf("error should name the problem, got %v", err)
 	}
 }

@@ -106,13 +106,34 @@ func ResolveScope(xrd *unstructured.Unstructured) ScopeResolution {
 		return ScopeResolution{Scope: ScopeIndeterminate, Confidence: ConfidenceNone, Reason: "no XRD object to read scope from"}
 	}
 
-	declared, _, _ := unstructured.NestedString(xrd.Object, "spec", "scope")
+	// A read error means spec.scope is present but not a string. That is
+	// not the same as absent, and must not fall through to API-version
+	// defaulting: defaulting answers "what would the apiserver do with a
+	// MISSING field", and this field is not missing, it is malformed.
+	// Treating it as absent would hand back a confident Namespaced for an
+	// object the apiserver would reject outright.
+	declared, _, err := unstructured.NestedString(xrd.Object, "spec", "scope")
+	if err != nil {
+		return ScopeResolution{Scope: ScopeIndeterminate, Confidence: ConfidenceNone,
+			Reason: fmt.Sprintf("spec.scope is not a string: %v", err)}
+	}
 
+	// Same reasoning as spec.scope above: a malformed signal is not an
+	// absent one. Swallowing the error here would read a mistyped
+	// spec.claimNames as "this XRD has no claims", which is the single
+	// signal that outranks spec.scope — so getting it wrong silently
+	// misclassifies the whole XRD.
 	var legacySignals []string
-	if _, found, _ := unstructured.NestedMap(xrd.Object, "spec", "claimNames"); found {
+	if _, found, err := unstructured.NestedMap(xrd.Object, "spec", "claimNames"); err != nil {
+		return ScopeResolution{Scope: ScopeIndeterminate, Confidence: ConfidenceNone,
+			Reason: fmt.Sprintf("spec.claimNames is not an object: %v", err)}
+	} else if found {
 		legacySignals = append(legacySignals, "spec.claimNames")
 	}
-	if _, found, _ := unstructured.NestedSlice(xrd.Object, "spec", "connectionSecretKeys"); found {
+	if _, found, err := unstructured.NestedSlice(xrd.Object, "spec", "connectionSecretKeys"); err != nil {
+		return ScopeResolution{Scope: ScopeIndeterminate, Confidence: ConfidenceNone,
+			Reason: fmt.Sprintf("spec.connectionSecretKeys is not a list: %v", err)}
+	} else if found {
 		legacySignals = append(legacySignals, "spec.connectionSecretKeys")
 	}
 	signals := joinSignals(legacySignals)

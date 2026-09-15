@@ -205,3 +205,82 @@ func TestResolveScope(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveScope_MalformedScopeIsNotTreatedAsAbsent guards the gap
+// between "the field is missing" and "the field is the wrong type".
+// unstructured.NestedString returns "" for both, and only the first one may
+// fall through to API-version defaulting: defaulting answers what the
+// apiserver would do with a MISSING field, and a malformed one is not
+// missing — the apiserver would reject it.
+func TestResolveScope_MalformedScopeIsNotTreatedAsAbsent(t *testing.T) {
+	xrd := scopeXRD("Namespaced", false, false)
+	// A list where a string belongs.
+	_ = unstructured.SetNestedSlice(xrd.Object, []any{"Namespaced"}, "spec", "scope")
+
+	got := ResolveScope(xrd)
+	if !got.Indeterminate() {
+		t.Fatalf("a non-string spec.scope must not resolve to a scope, got %q/%q (reason: %s)",
+			got.Scope, got.Confidence, got.Reason)
+	}
+	if !strings.Contains(got.Reason, "not a string") {
+		t.Errorf("reason should name the actual problem, got %q", got.Reason)
+	}
+}
+
+// And the same object must degrade the injected-path check to warnings
+// rather than asserting a scope's set with confidence.
+func TestSource_MalformedScopeYieldsTheUncertainUnion(t *testing.T) {
+	xrd := scopeXRD("Namespaced", false, false)
+	_ = unstructured.SetNestedSlice(xrd.Object, []any{"Namespaced"}, "spec", "scope")
+
+	got := New(xrd).PlatformInjectedPaths()
+	if !got.Uncertain {
+		t.Fatal("a malformed scope must degrade the platform checks to warnings")
+	}
+	set := pathSet(got.Paths)
+	if !set["spec.crossplane"] || !set["spec.compositionRef"] {
+		t.Errorf("expected the union of every scope's set, got %v", got.Paths)
+	}
+}
+
+// TestResolveScope_MalformedLegacySignalsAreNotAbsent extends the same
+// reasoning to the two signals that OUTRANK spec.scope. Reading a mistyped
+// spec.claimNames as "this XRD has no claims" would misclassify the whole
+// XRD, and silently — the resulting scope would carry High confidence.
+func TestResolveScope_MalformedLegacySignalsAreNotAbsent(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*unstructured.Unstructured)
+		want   string
+	}{
+		{
+			name: "claimNames is not an object",
+			mutate: func(x *unstructured.Unstructured) {
+				_ = unstructured.SetNestedField(x.Object, "widgets", "spec", "claimNames")
+			},
+			want: "spec.claimNames is not an object",
+		},
+		{
+			name: "connectionSecretKeys is not a list",
+			mutate: func(x *unstructured.Unstructured) {
+				_ = unstructured.SetNestedField(x.Object, "username", "spec", "connectionSecretKeys")
+			},
+			want: "spec.connectionSecretKeys is not a list",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xrd := scopeXRD("Namespaced", false, false)
+			tc.mutate(xrd)
+
+			got := ResolveScope(xrd)
+			if !got.Indeterminate() {
+				t.Errorf("expected Indeterminate, got %q/%q (reason: %s)", got.Scope, got.Confidence, got.Reason)
+				return
+			}
+			if !strings.Contains(got.Reason, tc.want) {
+				t.Errorf("reason %q does not mention %q", got.Reason, tc.want)
+			}
+		})
+	}
+}
