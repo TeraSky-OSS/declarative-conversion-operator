@@ -1,0 +1,53 @@
+# The XRD exactly as a Crossplane Configuration package would carry it:
+# NO spec.conversion, and none of this operator's annotations. This file is
+# what hack/e2e-test-package-managed.sh replays at the apiserver to
+# reproduce the package establisher's write.
+#
+# The script adds a ConfigurationRevision ownerReference (pointing at a real
+# revision it creates — a fabricated UID would have the garbage collector
+# delete this XRD within seconds) and, for the replace, a resourceVersion.
+# Everything else about the object is here.
+#
+# The establisher's write is a full client.Update from the package
+# contents — not a Server-Side Apply, not merge-aware, and it ignores SSA
+# field ownership — so anything the operator added is gone. `kubectl
+# replace` is that same API call.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xpackagedwidgets.e2e.example.org
+spec:
+  scope: Namespaced
+  group: e2e.example.org
+  names:
+    kind: XPackagedWidget
+    plural: xpackagedwidgets
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                memoryMB:
+                  type: integer
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string
+                memoryGB:
+                  type: integer

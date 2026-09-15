@@ -9,7 +9,7 @@ end-to-end, see [Adding a strategy](docs/contributing/adding-a-strategy.md).
 - Go matching `go.mod`
 - Docker (for image builds / e2e)
 - `kubectl`, `kind`, and `helm` for e2e targets
-- `python3` and `curl` for `make test-e2e-load`
+- `python3` and `curl` for `make test-e2e-load`; `python3` for `make test-e2e-package-managed`
 
 ## Development loop
 
@@ -28,6 +28,8 @@ Useful extras:
 make helm-sync          # copy generated CRDs into the Helm chart
 make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
+make test-e2e-legacy-claims   # kind + a scope: LegacyCluster XRD with claims (both generated CRDs)
+make test-e2e-package-managed # kind + the XRD conversion guard, including a guard-off run that must fail
 make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)
 make test-e2e-scale     # kind + generated CRD fleet + parallel Get/List (TARGETS/INSTANCES)
 make dev-up             # kind + cert-manager + Crossplane + operator (+ monitoring + Kyverno)

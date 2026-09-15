@@ -1,0 +1,25 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xpackagedwidgets-e2e-conversion
+spec:
+  targetXRD:
+    name: xpackagedwidgets.e2e.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.storageGB
+            spokePath: spec.storageSize
+        - strategy: NumericScale
+          numericScale:
+            hubPath: spec.memoryMB
+            spokePath: spec.memoryGB
+            factor: 1024
+          # Both fields are integers, so a hub value that is not a whole
+          # multiple of 1024 cannot round-trip. The fixture uses 8192, which
+          # does, but the engine judges the rule rather than the fixture.
+          acknowledgeLossy: true
+          reason: "memoryMB -> memoryGB is integer division; a non-multiple of 1024 does not round-trip"

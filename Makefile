@@ -66,6 +66,14 @@ test-e2e-crd-only: ## Run the e2e test for the native-CRD-only deployment shape:
 test-e2e-crossplane-only: ## Run the e2e test for the Crossplane-only deployment shape: features.nativeCRD.enabled=false. Same prerequisites as test-e2e.
 	./hack/e2e-test-crossplane-only.sh
 
+.PHONY: test-e2e-legacy-claims
+test-e2e-legacy-claims: ## Run the e2e test for scope: LegacyCluster with claims: proves a claim created at one version reads back converted at another, that the bare spec.* machinery survives, and that both generated CRDs are wired and pruned. Same prerequisites as test-e2e, plus go.
+	./hack/e2e-test-legacy-claims.sh
+
+.PHONY: test-e2e-package-managed
+test-e2e-package-managed: ## Run the e2e test for the XRD conversion guard: replays the package establisher's full non-SSA replace and asserts no read ever comes back unconverted — then repeats with the guard off and asserts the test CAN see the failure. Same prerequisites as test-e2e, plus python3.
+	./hack/e2e-test-package-managed.sh
+
 .PHONY: test-e2e-load
 test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
 	./hack/e2e-load.sh
