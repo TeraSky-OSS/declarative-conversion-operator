@@ -6,7 +6,7 @@
 |---|---|
 | Kubernetes 1.27+ | Baseline for the API machinery this operator depends on. |
 | [cert-manager](https://cert-manager.io/docs/installation/) | Issues TLS certificates for **both** webhook surfaces: this operator's own admission webhook, and every `ConversionWebhookServer` instance's conversion webhook. |
-| [Crossplane](https://docs.crossplane.io/latest/software/install/) (current major, `apiextensions.crossplane.io/v2`) — **only if you want `XRDConversionConfig` support** | Set `features.crossplane.enabled: false` (see [Feature toggles](#feature-toggles)) on clusters without Crossplane installed; native-CRD support via `CRDConversionConfig` works with no Crossplane dependency at all. |
+| **[Crossplane 2.x](https://docs.crossplane.io/latest/software/install/)** — **only if you want `XRDConversionConfig` support** | The operator reads XRDs at `apiextensions.crossplane.io/v2`, which a Crossplane **1.x** control plane does not serve at all — 1.x is out of scope, not merely untested. `scope: LegacyCluster` XRDs (the v1 compatibility layer *inside* 2.x, including claims and connection secrets) **are** fully supported. Set `features.crossplane.enabled: false` (see [Feature toggles](#feature-toggles)) on clusters without Crossplane; native-CRD support via `CRDConversionConfig` works with no Crossplane dependency at all. |
 
 ## Install
 
@@ -66,7 +66,7 @@ features:
     enabled: true
 ```
 
-**If Crossplane isn't installed on this cluster, set `features.crossplane.enabled: false`.** The manager watches Crossplane's `CompositeResourceDefinition` type as part of `XRDConversionConfig` support; establishing that watch fails fatally at startup if the type doesn't exist. `features.nativeCRD.enabled` carries no equivalent risk — `CustomResourceDefinition` is a core Kubernetes type that's always present — so disabling it is purely a matter of not wanting the feature active.
+**If Crossplane 2.x isn't installed on this cluster, set `features.crossplane.enabled: false`.** The manager watches Crossplane's `CompositeResourceDefinition` type at `apiextensions.crossplane.io/v2` as part of `XRDConversionConfig` support. With XRD support enabled, the manager checks that API version at startup and exits with an actionable error naming the Crossplane 2.x requirement if the cluster does not serve it (rather than failing later with an opaque "no matches for kind"). `features.nativeCRD.enabled` carries no equivalent risk — `CustomResourceDefinition` is a core Kubernetes type that's always present — so disabling it is purely a matter of not wanting the feature active.
 
 Both CRDs (`XRDConversionConfig`, `CRDConversionConfig`) are always installed regardless of these toggles — Helm's `crds/` directory doesn't support conditionals, and an unused CRD with no active controller behind it is harmless. The toggles instead control which controllers and watches the manager, and every `ConversionWebhookServer` replica, actually set up. If a toggle is off, the admission webhook for that config kind still exists but rejects creates with a clear error, rather than silently accepting an object that will never be reconciled.
 
@@ -92,7 +92,7 @@ Both CRDs (`XRDConversionConfig`, `CRDConversionConfig`) are always installed re
 | `metrics.serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor`. Opt-in by value, not capability-detected, so chart behavior doesn't change based on how it's rendered. | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in alerts. | `false` |
 | `dashboards.enabled` | Create Grafana sidecar ConfigMaps labeled `grafana_dashboard: "1"` (Conversion Overview, per-target Conversion Target Detail, and Conversion Platform Stability). | `false` |
-| `features.crossplane.enabled` | Enable `XRDConversionConfig` support. Requires Crossplane installed. | `true` |
+| `features.crossplane.enabled` | Enable `XRDConversionConfig` support. Requires **Crossplane 2.x** (`apiextensions.crossplane.io/v2`) installed. | `true` |
 | `features.nativeCRD.enabled` | Enable `CRDConversionConfig` support. | `true` |
 | `crds.install` | Install the two CRDs from `crds/`. Disable if you manage CRDs separately (e.g. a dedicated CRD-management pipeline). | `true` |
 

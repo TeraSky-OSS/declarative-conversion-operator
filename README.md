@@ -9,6 +9,9 @@ Both Crossplane XRDs and native CRDs support multiple version schemas, but wirin
 
 Both are independently toggleable (`--enable-xrd-support` / `--enable-crd-support`, or `features.crossplane.enabled` / `features.nativeCRD.enabled` in the Helm chart) — disable XRD support on clusters without Crossplane installed, since Crossplane isn't otherwise a hard dependency.
 
+> [!IMPORTANT]
+> **XRD support requires Crossplane 2.x.** The operator reads XRDs at `apiextensions.crossplane.io/v2`, which a Crossplane 1.x control plane does not serve — 1.x clusters are out of scope, not merely untested, and the manager now says so at startup instead of failing with an opaque watch error. The v1 compatibility layer *inside* Crossplane 2.x — `scope: LegacyCluster` XRDs, claims, connection secrets — **is** fully supported.
+
 ## Why
 
 - **Declarative, not hand-written.** No Go code, no bespoke webhook deployment per XRD.
@@ -67,7 +70,7 @@ charts/declarative-conversion-operator/  Helm chart (the supported install path)
 ## Quick start
 
 ```console
-# Install (requires cert-manager and Crossplane already installed)
+# Install (requires cert-manager, plus Crossplane 2.x if you want XRD support)
 helm install declarative-conversion-operator charts/declarative-conversion-operator \
   --namespace declarative-conversion-system --create-namespace
 

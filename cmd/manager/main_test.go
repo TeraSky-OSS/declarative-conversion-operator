@@ -21,9 +21,16 @@ limitations under the License.
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/rest"
 )
 
 func TestCurrentNamespace_PodNamespaceEnvVar(t *testing.T) {
@@ -61,5 +68,73 @@ func TestCurrentNamespace_FallsBackToDefault(t *testing.T) {
 
 	if got := currentNamespace(); got != "default" {
 		t.Fatalf("expected the \"default\" fallback outside a cluster, got %q", got)
+	}
+}
+
+// fakeDiscovery stubs just the one discovery call the startup check makes.
+type fakeDiscovery struct {
+	discovery.DiscoveryInterface
+	resources *metav1.APIResourceList
+	err       error
+}
+
+func (f *fakeDiscovery) ServerResourcesForGroupVersion(string) (*metav1.APIResourceList, error) {
+	return f.resources, f.err
+}
+
+func withFakeDiscovery(t *testing.T, f discovery.DiscoveryInterface, err error) {
+	t.Helper()
+	old := newDiscoveryClient
+	newDiscoveryClient = func(*rest.Config) (discovery.DiscoveryInterface, error) { return f, err }
+	t.Cleanup(func() { newDiscoveryClient = old })
+}
+
+func TestCheckCrossplaneV2Served_PresentWhenKindIsListed(t *testing.T) {
+	withFakeDiscovery(t, &fakeDiscovery{resources: &metav1.APIResourceList{
+		GroupVersion: "apiextensions.crossplane.io/v2",
+		APIResources: []metav1.APIResource{
+			{Name: "compositionrevisions", Kind: "CompositionRevision"},
+			{Name: "compositeresourcedefinitions", Kind: "CompositeResourceDefinition"},
+		},
+	}}, nil)
+
+	if err := checkCrossplaneV2Served(&rest.Config{}); err != nil {
+		t.Fatalf("expected the v2 XRD API to be considered served, got %v", err)
+	}
+}
+
+func TestCheckCrossplaneV2Served_GroupAbsent(t *testing.T) {
+	// A cluster with no Crossplane (or Crossplane 1.x) reports the group
+	// version as missing rather than returning an empty resource list.
+	withFakeDiscovery(t, &fakeDiscovery{err: apierrors.NewNotFound(
+		schema.GroupResource{Group: "apiextensions.crossplane.io", Resource: "v2"}, "")}, nil)
+
+	if err := checkCrossplaneV2Served(&rest.Config{}); !errors.Is(err, errCrossplaneV2NotServed) {
+		t.Fatalf("expected errCrossplaneV2NotServed, got %v", err)
+	}
+}
+
+func TestCheckCrossplaneV2Served_GroupServedWithoutTheKind(t *testing.T) {
+	// Defensive: a group version that exists but does not carry the XRD
+	// kind is not a usable Crossplane 2.x for this operator's purposes.
+	withFakeDiscovery(t, &fakeDiscovery{resources: &metav1.APIResourceList{
+		GroupVersion: "apiextensions.crossplane.io/v2",
+		APIResources: []metav1.APIResource{{Name: "compositions", Kind: "Composition"}},
+	}}, nil)
+
+	if err := checkCrossplaneV2Served(&rest.Config{}); !errors.Is(err, errCrossplaneV2NotServed) {
+		t.Fatalf("expected errCrossplaneV2NotServed, got %v", err)
+	}
+}
+
+func TestCheckCrossplaneV2Served_TransientErrorIsNotReportedAsMissing(t *testing.T) {
+	// An unreachable apiserver must not be reported to the user as "install
+	// Crossplane" — that would send them chasing the wrong problem.
+	boom := apierrors.NewServiceUnavailable("apiserver is having a moment")
+	withFakeDiscovery(t, &fakeDiscovery{err: boom}, nil)
+
+	err := checkCrossplaneV2Served(&rest.Config{})
+	if err == nil || errors.Is(err, errCrossplaneV2NotServed) {
+		t.Fatalf("expected the transient error to propagate distinctly, got %v", err)
 	}
 }

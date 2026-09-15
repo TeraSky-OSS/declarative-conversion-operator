@@ -38,10 +38,16 @@ crds:
 # harmless. These toggles instead control which controllers/watches the
 # manager and every webhook-server replica actually set up.
 features:
-  # Crossplane must already be installed for this to be safe: the manager
-  # watches Crossplane's CompositeResourceDefinition GVK, and establishing
-  # that watch is fatal at startup if the GVK doesn't exist on the
-  # cluster. Disable on clusters without Crossplane.
+  # Crossplane 2.x must already be installed for this to be safe: the
+  # manager watches Crossplane's CompositeResourceDefinition GVK at
+  # apiextensions.crossplane.io/v2, which a Crossplane 1.x control plane
+  # does not serve at all. With this enabled the manager checks for that
+  # API version at startup and exits with an actionable error if it is
+  # absent. Disable on clusters without Crossplane 2.x.
+  #
+  # scope: LegacyCluster XRDs (the v1 compatibility layer inside
+  # Crossplane 2.x — claims and connection secrets included) are fully
+  # supported; "2.x only" is about the control plane, not claims.
   crossplane:
     enabled: true
   # Native CRD conversion support (CRDConversionConfig) watches a core

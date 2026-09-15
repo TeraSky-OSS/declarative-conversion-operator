@@ -47,7 +47,7 @@ See [Architecture](architecture.md) for the full picture.
 ## Why declarative-conversion-operator
 
 - **Declarative, not hand-written.** No Go code, no bespoke webhook deployment per resource — describe the mapping, the operator does the rest.
-- **Works for Crossplane XRDs and plain native CRDs alike**, independently toggleable — disable XRD support entirely on clusters without Crossplane installed.
+- **Works for Crossplane XRDs and plain native CRDs alike**, independently toggleable — disable XRD support entirely on clusters without Crossplane installed. XRD support requires **Crossplane 2.x** (`apiextensions.crossplane.io/v2`); `scope: LegacyCluster` XRDs and their claims are fully supported, but Crossplane 1.x control planes are out of scope — see [Limitations](limitations.md).
 - **Conservative by default.** Any conversion the engine can't prove is lossless is rejected unless you explicitly acknowledge it. Unknown fields are treated as lossy, never silently passed through.
 - **Safe by construction.** The target resource is never patched until the config is validated, it's healthy, and the assigned webhook server is confirmed ready. Deleting a config that would leave clients stranded on a non-storage version is blocked, not silently reverted.
 - **Fast where it matters.** Every rule is precompiled into a resolved-path plan once; the webhook server's hot path is pure in-memory execution against a lock-free, copy-on-write registry — no network calls, no re-parsing, on the API admission critical path.

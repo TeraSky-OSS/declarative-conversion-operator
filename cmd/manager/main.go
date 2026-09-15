@@ -24,13 +24,18 @@ limitations under the License.
 package main
 
 import (
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -40,6 +45,7 @@ import (
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/controller"
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 var scheme = runtime.NewScheme()
@@ -76,7 +82,25 @@ func main() {
 
 	namespace := currentNamespace()
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restConfig := ctrl.GetConfigOrDie()
+
+	// Fail fast, and legibly, on a control plane that does not serve the
+	// v2 XRD API. Without this the first symptom is controller-runtime
+	// refusing to establish the CompositeResourceDefinition watch with a
+	// bare "no matches for kind", which reads like a scheme bug rather
+	// than "Crossplane 2.x is a prerequisite".
+	if enableXRDSupport {
+		if err := checkCrossplaneV2Served(restConfig); err != nil {
+			logger.Error(err, "XRD support is enabled but this cluster does not serve the Crossplane 2.x XRD API. "+
+				"Install Crossplane 2.x (https://docs.crossplane.io/latest/software/install/), or disable XRD support "+
+				"with --enable-xrd-support=false (Helm: features.crossplane.enabled=false). Crossplane 1.x control "+
+				"planes are out of scope; note that scope: LegacyCluster XRDs are fully supported on Crossplane 2.x.",
+				"requiredAPI", xrdadapter.GroupVersionKind.GroupVersion().String())
+			os.Exit(1)
+		}
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
@@ -171,6 +195,43 @@ func main() {
 		logger.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// errCrossplaneV2NotServed is returned by checkCrossplaneV2Served when the
+// cluster's discovery document has no apiextensions.crossplane.io/v2 group
+// version, which is what a Crossplane 1.x control plane (or a cluster with
+// no Crossplane at all) looks like.
+var errCrossplaneV2NotServed = errors.New("the apiextensions.crossplane.io/v2 API is not served by this cluster")
+
+// newDiscoveryClient is a var so the startup check can be unit-tested
+// against a fake discovery document without a live apiserver.
+var newDiscoveryClient = func(cfg *rest.Config) (discovery.DiscoveryInterface, error) {
+	return discovery.NewDiscoveryClientForConfig(cfg)
+}
+
+// checkCrossplaneV2Served reports whether this cluster serves the XRD API
+// version the operator reads. A discovery error that is not "group version
+// absent" is returned as-is: an unreachable or briefly-unavailable
+// apiserver should not be reported to the user as a missing Crossplane.
+func checkCrossplaneV2Served(cfg *rest.Config) error {
+	dc, err := newDiscoveryClient(cfg)
+	if err != nil {
+		return fmt.Errorf("building discovery client: %w", err)
+	}
+	gv := xrdadapter.GroupVersionKind.GroupVersion().String()
+	resources, err := dc.ServerResourcesForGroupVersion(gv)
+	if err != nil {
+		if apierrors.IsNotFound(err) || discovery.IsGroupDiscoveryFailedError(err) {
+			return errCrossplaneV2NotServed
+		}
+		return fmt.Errorf("discovering %s: %w", gv, err)
+	}
+	for _, r := range resources.APIResources {
+		if r.Kind == xrdadapter.GroupVersionKind.Kind {
+			return nil
+		}
+	}
+	return errCrossplaneV2NotServed
 }
 
 // serviceAccountNamespaceFile is a var (not a const) so tests can point it
