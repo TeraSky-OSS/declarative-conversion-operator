@@ -79,6 +79,12 @@ func (g *GoldenReport) driftFatal() bool {
 	return false
 }
 
+// FuzzMeta records how a --fuzz run was generated.
+type FuzzMeta struct {
+	Objects int   `json:"objects"`
+	Seed    int64 `json:"seed"`
+}
+
 // GoldenReport is the outcome of a --record or --golden run.
 type GoldenReport struct {
 	Dir     string        `json:"dir"`
@@ -135,6 +141,11 @@ type Report struct {
 		ServedVersions []string `json:"servedVersions"`
 		GeneratedAt    string   `json:"generatedAt,omitempty"`
 		DurationMs     float64  `json:"durationMs"`
+		// Fuzz records the generated-object count and the seed that
+		// produced them. The seed is printed on failure and on success:
+		// a fuzz failure nobody can reproduce is noise, and the seed is
+		// the whole reproduction.
+		Fuzz *FuzzMeta `json:"fuzz,omitempty"`
 		// Scope is the detected Crossplane scope (XRD targets only) —
 		// which injected-field set is in play, and how much the resolver
 		// trusts the answer. See pkg/xrdadapter.ResolveScope.
@@ -175,6 +186,10 @@ func (r *Report) WriteTable(w io.Writer) {
 	}
 	_, _ = fmt.Fprintln(w)
 
+	if r.Meta.Fuzz != nil {
+		_, _ = fmt.Fprintf(w, "FUZZ: %d generated object(s), seed %d — reproduce with --fuzz %d --seed %d\n\n",
+			r.Meta.Fuzz.Objects, r.Meta.Fuzz.Seed, r.Meta.Fuzz.Objects, r.Meta.Fuzz.Seed)
+	}
 	r.Golden.write(w)
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)

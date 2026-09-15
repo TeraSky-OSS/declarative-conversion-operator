@@ -89,6 +89,84 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 
 Each sample's asserted starting version is inferred from its own `apiVersion` — no separate index file needed.
 
+### Property-based testing (`--fuzz`)
+
+Fixtures test the cases the config author thought of. They reliably miss the
+empty array, the absent optional object, the `maxLength` boundary, the enum
+value nobody uses, and the single-element map — which is exactly where
+conversion rules break.
+
+`--fuzz N` generates N schema-valid objects from the hub version's own schema
+and runs them through every conversion path:
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --fuzz 50 --seed 42
+FUZZ: 50 generated object(s), seed 42 — reproduce with --fuzz 50 --seed 42
+...
+fuzz-1  (conversion)  v3 → v2  error  jsonPatch: apply: move operation does not
+                                      apply: doc is missing from path:
+                                      /spec/legacyFlag: missing value
+```
+
+That example is not hypothetical: it is what `--fuzz` reports against this
+repository's own full-coverage fixture, which exercises all 29 strategies.
+Four classes come out of it, and all four are the same shape — a rule that
+assumes an optional field is present:
+
+| What fails | Why |
+|---|---|
+| `jsonPatch: move ... doc is missing from path: /spec/legacyFlag` | `move` on a field the schema does not require |
+| `cel: no such key: spec` | an expression assuming `spec` exists, on an object where every property is optional |
+| `arrayToMapByKey: element 0 ... is missing key field "name"` | the key field is not `required` in the item schema |
+| `duration: "27us" is not a whole number of seconds` | the schema types the field as `string` and permits durations the rule cannot represent |
+
+Each one is a conversion that would fail on a real object the apiserver would
+have accepted. Fixtures had covered every strategy in that config and found
+none of them.
+
+Generation is **biased toward the boundaries** rather than toward typical
+values: empty and single-element arrays, arrays at `maxItems`, strings at
+`minLength` and `maxLength`, numbers at `minimum` and `maximum`, the first
+and last enum members, and absent optionals.
+
+`--seed` makes a run reproducible, and the seed is printed on every run so a
+CI failure is replayable locally. **Use a fixed seed in a gating job** so the
+job is deterministic; leave it off for exploratory runs.
+
+`--fuzz` composes with `--samples` (generated objects alongside the ones you
+wrote) and with `--validate-output`, which together are the strongest
+offline check available: generated inputs, and the destination schema applied
+to the result.
+
+#### Promoting a discovered failure
+
+`--record-failures <dir>` writes every object that failed conversion as an
+ordinary sample file. Move it into your fixtures and it is tested on every
+run by everyone, instead of depending on somebody re-rolling the same seed.
+That promotion path is what makes fuzzing pay off over time.
+
+#### What the generator will not invent
+
+A schema can say `type: string` while a rule expects a Kubernetes quantity, a
+Go duration, or a number. A random string there is schema-valid and certain
+to fail conversion — which reads as a conversion bug and is not one. So the
+generator reads the compiled rules and produces the right lexical shape for
+`quantity`, `duration`, `numericScale` and `typeCoerce` paths.
+
+For paths whose form it cannot construct — a `pattern` it cannot invert, a
+`cel` expression, a `jsonPatch`, a split/join template — it leaves the field
+**absent** rather than filling it with something guaranteed to be rejected.
+Absence is a legitimate input and a real boundary; a random string is
+neither.
+
+Every generated object is validated against the schema it was generated from
+before any conversion runs. A generator bug is reported as a generator bug,
+with the seed, rather than being allowed to masquerade as a conversion
+failure.
+
+Runs are capped at 10,000 objects: a fuzz count large enough to hang CI is a
+footgun, not a feature.
+
 ### Golden-corpus testing (`--record` / `--golden`)
 
 When a conversion config changes, a reviewer sees a YAML diff of the rules

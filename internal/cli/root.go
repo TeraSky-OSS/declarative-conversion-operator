@@ -169,7 +169,9 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		recordDir, goldenDir                                                 string
+		recordDir, goldenDir, recordFailures                                 string
+		fuzzN                                                                int
+		fuzzSeed                                                             int64
 		skipIdentity, strict, live, quiet, verifyPropagation, validateOutput bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext, kubeconfigDir                               string
@@ -245,6 +247,12 @@ results are collected by sample index, never by completion order.`,
 			if verifyPropagation && !live {
 				return errors.New("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
 			}
+			if fuzzN < 0 {
+				return fmt.Errorf("--fuzz must not be negative, got %d", fuzzN)
+			}
+			if recordFailures != "" && fuzzN == 0 {
+				return errors.New("--record-failures requires --fuzz: it exists to promote generated failures into the fixture corpus")
+			}
 			if recordDir != "" && goldenDir != "" {
 				return errors.New("--record and --golden are mutually exclusive: recording while comparing would compare a corpus against itself")
 			}
@@ -258,6 +266,9 @@ results are collected by sample index, never by completion order.`,
 				ValidateOutput:    validateOutput,
 				RecordDir:         recordDir,
 				GoldenDir:         goldenDir,
+				Fuzz:              fuzzN,
+				FuzzSeed:          fuzzSeed,
+				RecordFailuresDir: recordFailures,
 			}
 			targets, err := resolveLiveTargets(opts)
 			if err != nil {
@@ -314,13 +325,19 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
+	cmd.Flags().IntVar(&fuzzN, "fuzz", 0, "Generate N schema-valid objects from the hub version's own schema and test them too. Biased toward the boundaries fixtures miss: empty arrays, absent optionals, length and range limits, first and last enum members")
+	cmd.Flags().Int64Var(&fuzzSeed, "seed", 0, "Seed for --fuzz. Zero picks one and prints it, so a CI failure is replayable; pass a fixed seed in a gating job to keep it deterministic")
+	cmd.Flags().StringVar(&recordFailures, "record-failures", "", "With --fuzz, write objects that failed conversion into this directory as ordinary samples, so a discovered case can be promoted into the permanent fixture corpus")
 	cmd.Flags().StringVar(&recordDir, "record", "", "Write the conversion result for every sample on every path into a golden corpus at this directory, plus a manifest recording the plan hash, schema hash and convctl version")
 	cmd.Flags().StringVar(&goldenDir, "golden", "", "Replay a corpus recorded by --record and fail on any difference, reporting which fields changed. Mutually exclusive with --record")
 	cmd.Flags().BoolVar(&validateOutput, "validate-output", false, "Validate every converted object against the destination version's OpenAPI schema, using the apiserver's own validator. A violation is an error, not a loss. Off by default this release; the default is planned to flip")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
-	cmd.MarkFlagsOneRequired("samples", "live")
+	// --fuzz is a third source of samples, and composes with --samples:
+	// generated objects test the boundaries, fixtures test the cases
+	// somebody deliberately wrote down.
+	cmd.MarkFlagsOneRequired("samples", "live", "fuzz")
 	cmd.MarkFlagsMutuallyExclusive("samples", "live")
 	cmd.MarkFlagsMutuallyExclusive("context", "contexts")
 	cmd.MarkFlagsMutuallyExclusive("kubeconfig", "kubeconfig-dir")

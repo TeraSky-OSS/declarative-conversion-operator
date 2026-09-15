@@ -76,6 +76,24 @@ type TestOptions struct {
 	// red on first upgrade. The default flips in a later release.
 	ValidateOutput bool
 
+	// Fuzz generates N schema-valid objects from the hub version's own
+	// schema and runs them through every conversion path, alongside (or
+	// instead of) SamplesDir.
+	//
+	// Fixtures test the cases the author thought of; they reliably miss the
+	// empty array, the absent optional, the maxLength boundary and the enum
+	// value nobody uses, which is where conversion rules break. Generation
+	// is biased toward exactly those.
+	Fuzz int
+	// FuzzSeed makes a run reproducible. Zero means "pick one and print
+	// it", so a CI failure is replayable locally.
+	FuzzSeed int64
+	// RecordFailuresDir writes objects that failed conversion as ordinary
+	// sample files, so a discovered case can be promoted into the permanent
+	// fixture corpus. That promotion path is what makes fuzzing pay off
+	// over time rather than being a one-off.
+	RecordFailuresDir string
+
 	// RecordDir writes the conversion result for every sample on every
 	// path into a golden corpus, and GoldenDir replays one. A committed
 	// corpus turns the next rule change into a reviewable diff: "this
@@ -95,6 +113,16 @@ type TestOptions struct {
 	// CRDConversionConfig's target *is* the CRD, so there is nothing to
 	// propagate.
 	VerifyPropagation bool
+}
+
+// effectiveSeed returns the seed a fuzz run should use, choosing one when
+// the caller did not. The chosen seed is reported so a CI failure is
+// replayable locally — a fuzz failure nobody can reproduce is noise.
+func (o TestOptions) effectiveSeed() int64 {
+	if o.FuzzSeed != 0 {
+		return o.FuzzSeed
+	}
+	return time.Now().UnixNano()
 }
 
 // effectiveConcurrency clamps Concurrency to at least one worker, and to
@@ -129,6 +157,11 @@ func (o TestOptions) effectiveConcurrency(samples int) int {
 // Which of XRDPath/CRDPath applies is determined by the config's own
 // kind, not by which field the caller happened to set.
 func RunTest(opts TestOptions) (*Report, error) {
+	// Resolve the seed once, here, so the objects that were generated and
+	// the seed the report prints for reproducing them cannot disagree.
+	if opts.Fuzz > 0 && opts.FuzzSeed == 0 {
+		opts.FuzzSeed = time.Now().UnixNano()
+	}
 	kind, err := PeekConfigKind(opts.ConfigPath)
 	if err != nil {
 		return nil, err
@@ -202,7 +235,7 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		if len(samples) == 0 {
 			return nil, fmt.Errorf("no live objects of %s found at version %s", xrdName(xrd), cfg.Spec.HubVersion)
 		}
-	} else {
+	} else if opts.SamplesDir != "" {
 		samples, err = LoadSamples(opts.SamplesDir)
 		if err != nil {
 			return nil, err
@@ -226,6 +259,22 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	}
 	if report.HasErrors() {
 		return nil, fmt.Errorf("configuration is invalid against the XRD schema, cannot test conversions:%s", summarizeSpokeErrors(report))
+	}
+	// Generated after analysis, because generation needs the hub schema the
+	// analysis just read.
+	if opts.Fuzz > 0 {
+		group, kind, gvkErr := xrdGroupKind(xrd)
+		if gvkErr != nil {
+			return nil, gvkErr
+		}
+		fuzzed, ferr := generateFuzzSamples(versions, cfg.Spec.HubVersion, group, kind, opts.Fuzz, opts.effectiveSeed(), shapesFromRules(report))
+		if ferr != nil {
+			return nil, ferr
+		}
+		samples = append(samples, fuzzed...)
+	}
+	if len(samples) == 0 {
+		return nil, errors.New("nothing to test: pass --samples, --live, or --fuzz")
 	}
 	router, err := buildRouter(cfg, report)
 	if err != nil {
@@ -271,7 +320,7 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 		if len(samples) == 0 {
 			return nil, fmt.Errorf("no live objects of %s found at version %s", crdName(crd), cfg.Spec.HubVersion)
 		}
-	} else {
+	} else if opts.SamplesDir != "" {
 		samples, err = LoadSamples(opts.SamplesDir)
 		if err != nil {
 			return nil, err
@@ -292,6 +341,16 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 	if report.HasErrors() {
 		return nil, fmt.Errorf("configuration is invalid against the CRD schema, cannot test conversions:%s", summarizeSpokeErrors(report))
 	}
+	if opts.Fuzz > 0 {
+		fuzzed, ferr := generateFuzzSamples(versions, cfg.Spec.HubVersion, crd.Spec.Group, crd.Spec.Names.Kind, opts.Fuzz, opts.effectiveSeed(), shapesFromRules(report))
+		if ferr != nil {
+			return nil, ferr
+		}
+		samples = append(samples, fuzzed...)
+	}
+	if len(samples) == 0 {
+		return nil, errors.New("nothing to test: pass --samples, --live, or --fuzz")
+	}
 	router, err := buildRouterCRD(cfg, report)
 	if err != nil {
 		return nil, err
@@ -306,6 +365,7 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 // whether the target is an XRD or a native CRD, once a Router and an
 // AnalyzeReport already exist.
 func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, injected []engine.FieldPath, start time.Time) (*Report, error) {
+	seed := opts.FuzzSeed
 	var corp *corpus
 	switch {
 	case opts.RecordDir != "":
@@ -385,6 +445,15 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 	wg.Wait()
 	if progress {
 		_, _ = fmt.Fprintln(os.Stderr)
+	}
+
+	if opts.Fuzz > 0 {
+		rep.Meta.Fuzz = &FuzzMeta{Objects: opts.Fuzz, Seed: seed}
+	}
+	if opts.RecordFailuresDir != "" {
+		if err := recordFailingSamples(opts.RecordFailuresDir, samples, results); err != nil {
+			return nil, err
+		}
 	}
 
 	rep.Samples = results
