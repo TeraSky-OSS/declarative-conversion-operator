@@ -57,6 +57,7 @@ cluster. Every command works against either resource type:
 		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
+		newCompatCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -520,4 +521,96 @@ func writeJSONTo(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func newCompatCmd() *cobra.Command {
+	var (
+		base, head, configPath, xrdPath, crdPath, output string
+		allow                                            []string
+	)
+	cmd := &cobra.Command{
+		Use:   "compat",
+		Short: "Compare a conversion config and its schema at two revisions, and classify the delta",
+		Long: `Compare the schema and conversion config at two git revisions and classify
+every difference by severity, so a branch-protection rule can require:
+"you may not merge a change that breaks an existing conversion without
+acknowledging it."
+
+CLASS                 SEVERITY  MEANING
+LosslessToLossy       breaking  a direction that used to round-trip no longer does
+CoverageLost          breaking  a field that had a rule no longer has one
+ServedVersionRemoved  breaking  a version dropped while objects may still be stored at it
+RuleRemoved           breaking  a rule deleted without a replacement claiming its paths
+HubChanged            breaking  the hub moved (legitimate, but must be deliberate)
+StrategyChanged       review    same paths, different strategy
+MappingChanged        review    same paths and strategies, wired to each other differently
+CoverageGained        safe      a field is newly covered
+NewVersion            safe      a version is newly served
+
+--allow <class> acknowledges a class deliberately, so a real hub promotion
+passes the gate with an explicit flag rather than by disabling the check.
+The output names which acknowledgements were used.
+
+Revisions are read with "git show <ref>:<path>" rather than requiring a
+checkout, so this works in a shallow CI clone (fetch-depth: 2).
+
+Exit codes: 0 no unacknowledged breaking changes, 1 breaking changes found,
+2 usage or resolution error.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json", "markdown":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table, json, or markdown)", output)
+			}
+			for _, a := range allow {
+				if !knownCompatClass(a) {
+					return fmt.Errorf("unknown --allow class %q", a)
+				}
+			}
+			rep, err := RunCompat(CompatOptions{
+				Base: base, Head: head, ConfigPath: configPath,
+				XRDPath: xrdPath, CRDPath: crdPath, Allow: allow,
+			})
+			if err != nil {
+				return err
+			}
+			switch output {
+			case "json":
+				if err := writeJSON(cmd, rep); err != nil {
+					return err
+				}
+			case "markdown":
+				rep.WriteMarkdown(cmd.OutOrStdout())
+			default:
+				rep.WriteTable(cmd.OutOrStdout())
+			}
+			if rep.Breaking() {
+				exitCode = ExitTestFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&base, "base", "", "Base git revision (required)")
+	cmd.Flags().StringVar(&head, "head", "", "Head git revision (required)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to the conversion config, as it appears in the repository (required)")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to the XRD, as it appears in the repository")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to the CRD, as it appears in the repository")
+	cmd.Flags().StringSliceVar(&allow, "allow", nil, "Acknowledge a breaking change class (repeatable)")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|markdown")
+	_ = cmd.MarkFlagRequired("base")
+	_ = cmd.MarkFlagRequired("head")
+	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+func knownCompatClass(s string) bool {
+	switch s {
+	case ClassLosslessToLossy, ClassCoverageLost, ClassServedVersionRemove,
+		ClassRuleRemoved, ClassHubChanged, ClassStrategyChanged,
+		ClassMappingChanged, ClassCoverageGained, ClassNewVersion:
+		return true
+	}
+	return false
 }

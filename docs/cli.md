@@ -329,6 +329,77 @@ Here is every threshold against every outcome:
 
 `--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
 
+## `convctl compat`
+
+A single command a branch-protection rule can require: *you may not merge a
+change that breaks an existing conversion without acknowledging it.*
+
+`convctl diff` compares two configs against one schema. `compat` compares
+**schema + config at two points in time** and classifies the delta by
+severity.
+
+```console
+$ convctl compat --base origin/main --head HEAD --config config.yaml --xrd xrd.yaml
+Compatibility: origin/main → HEAD (config.yaml)
+
+SEVERITY  CLASS          DETAIL
+breaking  CoverageLost   spoke v1: "spec.tier" had a rule and no longer does
+breaking  RuleRemoved    spoke v1: rule 1 (FieldRename) was removed and no replacement claims its paths
+
+RESULT: breaking changes found. Acknowledge a deliberate one with --allow <class>.
+```
+
+| Class | Severity | Meaning |
+|---|---|---|
+| `LosslessToLossy` | breaking | a direction that used to round-trip no longer does |
+| `CoverageLost` | breaking | a field that had a rule no longer has one |
+| `ServedVersionRemoved` | breaking | a version dropped while objects may still be stored at it |
+| `RuleRemoved` | breaking | a rule deleted without a replacement claiming its paths |
+| `HubChanged` | breaking | the hub moved — legitimate, but must be deliberate |
+| `StrategyChanged` | review | same paths, different strategy |
+| `CoverageGained` | safe | a field is newly covered |
+| `NewVersion` | safe | a version is newly served |
+
+`--allow <class>` (repeatable) acknowledges a class **deliberately**, so a
+real hub promotion passes the gate with an explicit flag rather than by
+switching the check off. The output names which acknowledgements were used,
+and acknowledging one class does not acknowledge the others.
+
+Revisions are read with `git show <ref>:<path>`, so no checkout is needed and
+the gate works in a shallow CI clone (`fetch-depth: 2`). Paths are the ones
+you would type into any other `convctl` command — relative to your working
+directory, not to the repository root — so running `compat` from inside the
+directory that holds the config works the same as running it from the top.
+
+`--output markdown` is stable between runs on the same input — no timestamps,
+fixed ordering — so a sticky PR comment updates in place instead of producing
+a fresh diff on every CI run.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | no unacknowledged breaking changes |
+| 1 | breaking changes found |
+| 2 | usage, or a revision that could not be resolved |
+
+### As a required status check
+
+```yaml
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 2          # compat needs the base revision, not the history
+    persist-credentials: false
+- run: |
+    convctl compat \
+      --base "origin/${{ github.base_ref }}" --head HEAD \
+      --config config.yaml --xrd xrd.yaml \
+      --output markdown | tee compat.md
+```
+
+Make that job a required check and a breaking conversion change cannot merge
+without somebody adding `--allow` and saying why in the PR.
+
 ## `convctl diff`
 
 Analyzes two conversion configs against the same schema and reports what changed between them — the review question "what does this config edit actually do?", answered in terms of coverage and lossiness rather than YAML lines.
