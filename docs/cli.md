@@ -115,8 +115,9 @@ fuzz-1  (conversion)  v3 → v2  error  jsonPatch: apply: move operation does no
 
 That example is not hypothetical: it is what `--fuzz` reports against this
 repository's own full-coverage fixture, which exercises all 29 strategies.
-Four classes come out of it, and all four are the same shape — a rule that
-assumes an optional field is present:
+Four classes come out of it. Three are the same shape — a rule that assumes
+an optional field is present — and the fourth is a schema that admits a
+lexical form its rule cannot represent:
 
 | What fails | Why |
 |---|---|
@@ -163,6 +164,23 @@ For paths whose form it cannot construct — a `pattern` it cannot invert, a
 **absent** rather than filling it with something guaranteed to be rejected.
 Absence is a legitimate input and a real boundary; a random string is
 neither.
+
+That works only while the field is optional. A **required** field it cannot
+construct would make every generated object violate the schema it was
+generated from, so `--fuzz` stops and says so, naming the field and whether
+the obstacle is the schema's pattern or a rule's lexical shape:
+
+```console
+cannot generate objects for v3: required field "spec.serial" cannot be filled — the schema
+constrains it with pattern "^SN-[0-9]{6}-[A-Z]{3}$", which the generator cannot invert, and it
+has neither a default nor an enum to fall back on. Give it one in the schema, or test that path
+with --samples instead of --fuzz
+```
+
+Generated arrays and strings are also capped at 256 elements or bytes
+regardless of what `minItems` / `maxLength` say, and a *minimum* above that
+cap makes the field unconstructible. A schema asking for a million-element
+array is not a fuzz case worth allocating.
 
 Every generated object is validated against the schema it was generated from
 before any conversion runs. A generator bug is reported as a generator bug,
@@ -380,7 +398,7 @@ Hub: v1 → v2
 
   7. [BLOCKED] Stop serving v1
      run:      edit xwidgets.example.org: set spec.versions[name=v1].served: false (mark it deprecated first, with a deprecationWarning)
-     gate:     nothing is stored at v1, nothing is writing it, and no objects remain readable at it
+     gate:     v1 is not in status.storedVersions, no field manager is still writing it, and the object walk completed
      verify:   convctl versions --xrd <xrd.yaml> --check-unserve v1
      blocked:  step 3 (Promote v2 to the hub) has not been done yet
 
@@ -402,8 +420,9 @@ plan is a queue, not a checklist.
 
 ### `UNKNOWN`, and why it is not `READY`
 
-Three steps — retargeting Compositions, migrating storage, pruning
-`storedVersions` — have no answer in a manifest. Whether every stored object
+Three steps on an XRD — retargeting Compositions, migrating storage, pruning
+`storedVersions` — have no answer in a manifest. (A native CRD has two: there
+are no Compositions to retarget.) Whether every stored object
 has been rewritten is a fact about the cluster.
 
 Those steps are marked `UNKNOWN` rather than guessed at. `UNKNOWN` is neither
@@ -419,6 +438,29 @@ need a cluster:
 
 ```console
 Nothing outstanding that can be determined from files. 3 step(s) need a cluster to confirm — run their verify commands.
+```
+
+### Retirement waits for the cluster
+
+Un-serving a version, and dropping its block, are the only irreversible steps
+in the sequence — and whether either is safe rests entirely on the three
+`UNKNOWN` steps above. So they are never offered as the next thing to do on
+the strength of a manifest. They are printed, with their gates, marked
+`BLOCKED` on the steps that need confirming:
+
+```console
+  7. [BLOCKED] Stop serving v1
+     blocked:  step(s) 4, 5, 6 need a cluster to confirm and retiring a version is irreversible; run their verify commands, then re-run with --assume-verified
+```
+
+`--assume-verified` is you saying you ran those verify commands. It asserts
+the cluster-only gates and nothing else — three of them on an XRD, two on a
+native CRD — and every other step is still judged from the files.
+
+```console
+$ convctl plan --xrd xrd.yaml --config config.yaml --to v3 --assume-verified
+...
+NEXT: step 8 — Drop the v1 version block
 ```
 
 ### Package-managed XRDs are ordered differently
@@ -472,7 +514,11 @@ $ convctl plan --crd crd.yaml --config crdconversionconfig.yaml --to v2
 
 ## `convctl versions`
 
-One table that answers *is it safe to drop this version yet?*
+One table that answers *is it safe to stop serving this version yet?*
+
+(Stopping to serve it and removing its version block are two different
+steps — the second is irreversible for anything still stored at it, and
+[`convctl compat`](#convctl-compat) is the check for that one.)
 
 Deciding that requires four facts that live in four different places: is
 anything still stored at it, is anything still *writing* it, is it marked
@@ -497,9 +543,18 @@ v1 is deprecated: use v3; v1 will stop being served in the next release
 | `HUB` | `referenceable` / `storage` |
 | `DEPRECATED` | `deprecated` + `deprecationWarning` |
 | `SPOKE RULES` | whether the conversion config has a spoke entry |
-| `LIVE OBJECTS` | instance count, across **both** generated CRDs on a claim-offering XRD |
+| `LIVE OBJECTS` | instance count, across **both** generated CRDs on a claim-offering XRD — see the note below on what it does *not* mean |
 | `LAST WRITTEN AT` | derived from each object's `managedFields[].apiVersion` |
 | `STORED` | whether the version appears in `status.storedVersions` |
+
+**`LIVE OBJECTS` is inventory, not evidence about that version.** The
+apiserver converts on read, so listing at any served version returns *every*
+object converted to it — the count is the same on every served row, and it is
+not the number of objects stored at that version. It is therefore **not** a
+blocker for `--check-unserve`: if it were, a single XR anywhere would block
+un-serving every spoke forever. `STORED` is what answers the storage
+question, and `LAST WRITTEN AT` answers who is still writing. Both are
+genuinely per version.
 
 **`LAST WRITTEN AT` is usually the one that decides.** "Nothing is stored at
 v1" says the data has moved; it says nothing about the controller that still
@@ -519,14 +574,16 @@ version". The row then says so underneath, and `--check-unserve` treats it as
 a blocker. This is the one command where mistaking *"I could not look"* for
 *"there are none"* unserves a version the fleet is still reading.
 
-### As a gate
+### As a gate on un-serving
+
+`--check-unserve` gates the `served: false` flip, not the removal of the
+version block. Passing it does not mean the version can be deleted.
 
 ```console
 $ convctl versions --xrd xrd.yaml --check-unserve v1
 
 v1 is NOT safe to stop serving:
   - it appears in status.storedVersions, so the apiserver believes objects are still persisted at it — run `convctl migrate-storage` first
-  - 3 live object(s) are readable at it
   - still actively written by: legacy-reconciler
 ```
 
@@ -567,6 +624,7 @@ RESULT: breaking changes found. Acknowledge a deliberate one with --allow <class
 | `RuleRemoved` | breaking | a rule deleted without a replacement claiming its paths |
 | `HubChanged` | breaking | the hub moved — legitimate, but must be deliberate |
 | `StrategyChanged` | review | same paths, different strategy |
+| `MappingChanged` | review | same paths and strategies, wired to each other differently — two renames that swapped destinations change every object while leaving every aggregate identical |
 | `CoverageGained` | safe | a field is newly covered |
 | `NewVersion` | safe | a version is newly served |
 
@@ -580,6 +638,13 @@ the gate works in a shallow CI clone (`fetch-depth: 2`). Paths are the ones
 you would type into any other `convctl` command — relative to your working
 directory, not to the repository root — so running `compat` from inside the
 directory that holds the config works the same as running it from the top.
+
+If either revision does not analyze cleanly, the report says so as a `NOTE`
+above the table. Those are not compatibility changes — an uncovered field or
+an unserved spoke is ordinary currency here, and several of them are exactly
+what the classes above describe — but *"No differences"* between two
+revisions that both fail `convctl validate` reads as a pass, so the
+comparison names the side it could not fully analyze.
 
 `--output markdown` is stable between runs on the same input — no timestamps,
 fixed ordering — so a sticky PR comment updates in place instead of producing
@@ -600,6 +665,11 @@ a fresh diff on every CI run.
   with:
     fetch-depth: 2          # compat needs the base revision, not the history
     persist-credentials: false
+# checkout fetches only the triggering ref, so origin/<base> does not exist
+# yet. This refspec is what creates it; one commit is enough.
+- run: |
+    git fetch --depth=1 origin \
+      "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
 - run: |
     convctl compat \
       --base "origin/${{ github.base_ref }}" --head HEAD \

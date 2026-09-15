@@ -126,6 +126,16 @@ jobs:
           # base commit but not the history.
           fetch-depth: 2
           persist-credentials: false
+      - name: Fetch the base branch
+        # checkout fetches only the ref that triggered the run, so
+        # origin/<base> does not exist yet. The explicit refspec is what
+        # creates the remote-tracking ref --base names; one commit is enough.
+        run: |
+          git fetch --depth=1 origin \
+            "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      - name: Install convctl
+        run: |
+          go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest
       - run: |
           convctl compat \
             --base "origin/${{ github.base_ref }}" --head HEAD \

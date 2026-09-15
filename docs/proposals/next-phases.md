@@ -257,7 +257,7 @@ into the phases as deliverables rather than left as loose ends.
 > cache entirely (`client.CacheOptions.DisableFor`) rather than scoped, so
 > there is no Secret informer at all; the owned workload informers are
 > label-scoped to this operator's own children. Measured before/after in
-> [Capacity planning](../operations/capacity.md#memory-what-each-process-holds).
+> [Capacity planning](../operations/capacity.md#memory-the-manager).
 
 
 `cmd/manager/main.go:79` constructs the manager with no `Cache` options, and
@@ -645,6 +645,41 @@ trustworthy than a defaulted `spec.scope` read at `v2`.
 
 ## Phase 12 — XRD/CRD API evolution lifecycle
 
+> **Shipped.** Every deliverable below landed. Four deviations are worth
+> recording:
+>
+> - **`convctl plan` is offline, not live.** The design had it reading the live
+>   XRD, the Compositions, the XR inventory and `status.storedVersions`. It
+>   reads manifests instead, and the three steps whose completion genuinely
+>   lives in the cluster — retargeting Compositions, migrating storage, pruning
+>   `storedVersions` — are reported as `UNKNOWN` carrying the command that
+>   answers them, rather than guessed at. `UNKNOWN` neither becomes the next
+>   step nor blocks the ones after it; marking it `READY` would claim a check
+>   that never happened, and `BLOCKED` would hide the whole remaining tail of a
+>   late-stage plan. A files-only command also works in a PR, which is where
+>   the question usually gets asked.
+> - **Required-field analysis needed a weaker ancestor rule than the design
+>   assumed.** "Every ancestor must itself be declared required" excludes
+>   everything under `spec`, which a CRD root never lists as required — the
+>   first implementation reported nothing at all. An ancestor now counts as
+>   present if it is required *or* the conversion writes into it. The
+>   three-way verdict (unsatisfiable / conditional / unprovable) is also new:
+>   collapsing "provably cannot be produced" into "might not be" would have
+>   made the check unusable in CI.
+> - **The fuzzer has to be rule-aware, not just schema-aware.** Generating from
+>   `openAPIV3Schema` alone produced 48 failures dominated by one shape: a
+>   field the schema types as `string` that a `quantity` rule then fails to
+>   parse. Generated values now take their lexical shape from the rules that
+>   consume the field, so the fuzzer finds conversion bugs instead of
+>   re-reporting that random strings are not quantities.
+> - **`convctl versions` is XRD-only.** Native CRD targets are rejected with a
+>   clear message rather than silently answering a narrower question; see
+>   [Limitations](../limitations.md). `plan` and `compat` do cover `--crd`.
+>
+> Landing 12.3 also fixed a latent engine bug: `ScalarToFields` and
+> `FieldsToScalar` ranged over a capture-group map, so their path ordering
+> varied between processes. Invisible until a golden corpus hashed the plan.
+
 The theme: the individual steps of an API evolution all exist; the *sequence*
 lives only in prose, and nothing makes an API change reviewable as a diff.
 
@@ -927,9 +962,9 @@ apiserver's write path".
 
 ## Phase 16 — Engine and strategy expansion
 
-- **Required-field satisfaction analysis** (see 12.3) — the highest-value
-  engine change, because it converts a production admission failure into a
-  compile-time error.
+- ~~**Required-field satisfaction analysis**~~ — **shipped in 12.3**, where it
+  belonged: it converts a production admission failure into a compile-time
+  error, which is the same job as the rest of that deliverable.
 - **`oneOf` / `anyOf` branch mapping.** Currently opaque and documented as out
   of scope. Union-typed API fields are common in mature XRDs, and a branch-aware
   strategy (`branchMap`) would unblock migrations that today need `jsonPatch`.

@@ -77,5 +77,5 @@ Two things deliberately do **not** report:
   required fields apply.
 
 For the unprovable residue, use
-[`convctl test --validate-output`](../cli.md#validating-the-converted-output---validate-output)
+[`convctl test --validate-output`](../cli.md#validating-the-converted-output-validate-output)
 and `--fuzz`, which check the result rather than reasoning about the rules.

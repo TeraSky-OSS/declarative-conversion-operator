@@ -81,6 +81,16 @@ The `kubectl` / `convctl` commands from here on are relative to this directory:
 cd examples/crossplane-xr-multiversion
 ```
 
+At any stage, `convctl plan` will tell you which step you are on and what is
+safe to do next — it reads the same files and prints the same sequence these
+six stages walk through:
+
+```console
+convctl plan --xrd 02-add-v2/xrd.yaml --config 02-add-v2/xrdconversionconfig.yaml --to v2
+...
+NEXT: step 3 — Promote v2 to the hub
+```
+
 ---
 
 ## Stage 1 — one version, no conversion
@@ -407,6 +417,6 @@ GitHub-hosted Actions cannot reach kind; this demo does not use ACT.
 
 - [Field Rename](https://terasky-oss.github.io/declarative-conversion-operator/strategies/field-rename/)
 - [Changing the hub version](https://terasky-oss.github.io/declarative-conversion-operator/configuration/xrdconversionconfig/#changing-the-hub-version)
-- [CLI Reference](https://terasky-oss.github.io/declarative-conversion-operator/cli/) — `convctl test`, `--live`, and [`migrate-storage`](https://terasky-oss.github.io/declarative-conversion-operator/cli/#convctl-migrate-storage)
+- [CLI Reference](https://terasky-oss.github.io/declarative-conversion-operator/cli/) — [`plan`](https://terasky-oss.github.io/declarative-conversion-operator/cli/#convctl-plan) (this sequence as a command), [`versions`](https://terasky-oss.github.io/declarative-conversion-operator/cli/#convctl-versions) (is stage 6 safe yet?), `convctl test`, `--live`, and [`migrate-storage`](https://terasky-oss.github.io/declarative-conversion-operator/cli/#convctl-migrate-storage)
 - [function-go-templating](https://github.com/crossplane-contrib/function-go-templating) ·
   [function-auto-ready](https://github.com/crossplane-contrib/function-auto-ready)
