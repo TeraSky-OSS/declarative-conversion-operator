@@ -52,6 +52,11 @@ jobs:
       - name: Static checks on the composite Actions
         run: go test ./test/actions/ -v
 
+      # And their shell, which is most of the shell in this repository and
+      # which actionlint's shellcheck pass never reaches.
+      - name: Shellcheck the composite Actions
+        run: hack/shellcheck-actions.sh
+
   setup:
     name: setup-convctl (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -73,12 +78,14 @@ jobs:
 
       - name: It resolved a concrete tag and works
         shell: bash
+        env:
+          RESOLVED: ${{ steps.latest.outputs.version }}
         run: |
           set -euo pipefail
-          test -n "${{ steps.latest.outputs.version }}"
-          case "${{ steps.latest.outputs.version }}" in
+          test -n "$RESOLVED"
+          case "$RESOLVED" in
             v*) ;;
-            *) echo "resolved version is not a tag: ${{ steps.latest.outputs.version }}" >&2; exit 1 ;;
+            *) echo "resolved version is not a tag: $RESOLVED" >&2; exit 1 ;;
           esac
           convctl version
           convctl lint --help >/dev/null
@@ -94,9 +101,11 @@ jobs:
 
       - name: The second install came from the cache and still verified
         shell: bash
+        env:
+          CACHE_HIT: ${{ steps.cached.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.cached.outputs.cache-hit }}" != "true" ]; then
+          if [ "$CACHE_HIT" != "true" ]; then
             echo "second install was not a cache hit; the cached path is untested" >&2
             exit 1
           fi
@@ -141,11 +150,12 @@ jobs:
 
       - name: Assert the step failed
         shell: bash
+        env:
+          OUTCOME: ${{ steps.tampered.outcome }}
         run: |
           set -euo pipefail
-          outcome="${{ steps.tampered.outcome }}"
-          if [ "$outcome" != "failure" ]; then
-            echo "::error::setup-convctl accepted a tampered archive (outcome: $outcome)" >&2
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::setup-convctl accepted a tampered archive (outcome: $OUTCOME)" >&2
             echo "A verification step that cannot be shown to fail is not a verification step." >&2
             exit 1
           fi
@@ -170,18 +180,26 @@ jobs:
           samples: internal/cli/testdata/full/samples
           artifact-name: actions-test-clean
 
+      # Outputs go through env rather than being interpolated into the
+      # script: an output the Action never set would otherwise expand to
+      # nothing and make `[ "" -lt 1 ]` a bash error rather than a failed
+      # assertion, which reads as a broken test instead of a broken Action.
       - name: It passed and reported real numbers
         shell: bash
+        env:
+          EXIT_CODE: ${{ steps.clean.outputs.exit-code }}
+          PASSED: ${{ steps.clean.outputs.pass }}
+          REPORT: ${{ steps.clean.outputs.report-path }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.clean.outputs.exit-code }}" != "0" ]; then
+          if [ "$EXIT_CODE" != "0" ]; then
             echo "a clean fixture did not pass" >&2; exit 1
           fi
-          if [ "${{ steps.clean.outputs.pass }}" -lt 1 ]; then
-            echo "the pass count is ${{ steps.clean.outputs.pass }}; the Action exited correctly while reporting nothing" >&2
+          if [ "${PASSED:-0}" -lt 1 ]; then
+            echo "the pass count is '${PASSED:-}'; the Action exited correctly while reporting nothing" >&2
             exit 1
           fi
-          test -f "${{ steps.clean.outputs.report-path }}"
+          test -f "$REPORT"
 
       # A deliberately broken fixture must fail AND say where. Asserting on
       # the annotation payload rather than only the exit code: every one of
@@ -245,13 +263,16 @@ jobs:
 
       - name: Assert it failed, and reported why
         shell: bash
+        env:
+          OUTCOME: ${{ steps.failing.outcome }}
+          ERRORS: ${{ steps.failing.outputs.errors }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.failing.outcome }}" != "failure" ]; then
+          if [ "$OUTCOME" != "failure" ]; then
             echo "::error::a fixture that produces schema violations did not fail the Action" >&2
             exit 1
           fi
-          if [ "${{ steps.failing.outputs.errors }}" = "0" ]; then
+          if [ "${ERRORS:-0}" -lt 1 ]; then
             echo "::error::the Action failed but reported no errors, so its summary would read as a mystery" >&2
             exit 1
           fi
@@ -268,9 +289,11 @@ jobs:
 
       - name: It still ran
         shell: bash
+        env:
+          EXIT_CODE: ${{ steps.quiet.outputs.exit-code }}
         run: |
           set -euo pipefail
-          test "${{ steps.quiet.outputs.exit-code }}" = "0"
+          test "$EXIT_CODE" = "0"
 
   diff-action:
     name: convctl-diff renders a delta
@@ -295,17 +318,21 @@ jobs:
 
       - name: A delta was found and did not fail the job
         shell: bash
+        env:
+          HAS_DELTAS: ${{ steps.diff.outputs.has-deltas }}
+          EXIT_CODE: ${{ steps.diff.outputs.exit-code }}
+          MARKDOWN: ${{ steps.diff.outputs.markdown-path }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.diff.outputs.has-deltas }}" != "true" ]; then
+          if [ "$HAS_DELTAS" != "true" ]; then
             echo "two different configs produced no delta" >&2; exit 1
           fi
-          if [ "${{ steps.diff.outputs.exit-code }}" != "1" ]; then
-            echo "expected exit 1 for deltas, got ${{ steps.diff.outputs.exit-code }}" >&2; exit 1
+          if [ "$EXIT_CODE" != "1" ]; then
+            echo "expected exit 1 for deltas, got '$EXIT_CODE'" >&2; exit 1
           fi
           # The rendering is the product; an empty one is a silent failure.
-          test -s "${{ steps.diff.outputs.markdown-path }}"
-          grep -q '^### Conversion config diff' "${{ steps.diff.outputs.markdown-path }}"
+          test -s "$MARKDOWN"
+          grep -q '^### Conversion config diff' "$MARKDOWN"
           echo "delta rendered, job stayed green"
 
       - name: Identical configs report no deltas
@@ -320,7 +347,10 @@ jobs:
 
       - name: And say so rather than rendering nothing
         shell: bash
+        env:
+          HAS_DELTAS: ${{ steps.same.outputs.has-deltas }}
+          MARKDOWN: ${{ steps.same.outputs.markdown-path }}
         run: |
           set -euo pipefail
-          test "${{ steps.same.outputs.has-deltas }}" = "false"
-          grep -q 'No differences' "${{ steps.same.outputs.markdown-path }}"
+          test "$HAS_DELTAS" = "false"
+          grep -q 'No differences' "$MARKDOWN"
