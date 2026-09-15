@@ -100,12 +100,21 @@ Without --xrd/--crd, only structural checks on the config itself run. Supply the
 matching schema file to also compile every rule against the real hub and spoke
 schemas.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
 			res, err := RunValidate(configPath, xrdPath, crdPath)
 			if err != nil {
 				return err
 			}
 			if output == "json" {
 				return writeJSON(cmd, res)
+			}
+			if isCIFormat(output) {
+				if len(res.Errors) > 0 {
+					exitCode = ExitTestFailure
+				}
+				return writeFindings(cmd, output, validateFindings(res, configPath), "convctl validate: "+res.Config)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "config: %s\nstructurally valid: %v\n", res.Config, res.StructurallyValid)
 			if xrdPath != "" || crdPath != "" {
@@ -123,11 +132,11 @@ schemas.`,
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (optional; enables live schema validation against an XRDConversionConfig)")
 	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (optional; enables live schema validation against a CRDConversionConfig)")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	registerOfflineFlagCompletions(cmd)
-	registerOutputCompletions(cmd, "table", "json")
+	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
 
@@ -142,12 +151,22 @@ objects required.
 Answers whether the config would validate against the target XRD/CRD, which rules
 are lossy in which direction, and whether every schema field is covered.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
 			out, err := RunAnalyze(xrdPath, crdPath, configPath)
 			if err != nil {
 				return err
 			}
 			if output == "json" {
 				return writeJSON(cmd, out)
+			}
+			if isCIFormat(output) {
+				var findings []Finding
+				if out.Analysis != nil {
+					findings = findingsFromAnalyze(*out.Analysis, SourceMapForConfig(configPath))
+				}
+				return writeFindings(cmd, output, findings, "convctl analyze: "+out.Config)
 			}
 			// A lossless=false result here is informational, not a failure:
 			// a non-zero-error config would already have failed above, so
@@ -159,12 +178,12 @@ are lossy in which direction, and whether every schema field is covered.`,
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for an XRDConversionConfig)")
 	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for a CRDConversionConfig)")
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	registerOfflineFlagCompletions(cmd)
-	registerOutputCompletions(cmd, "table", "json")
+	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
 
@@ -225,7 +244,9 @@ It is off by default only so that upgrading does not turn existing green
 pipelines red without warning; the default is planned to flip in a later
 release. Turn it on now in new pipelines.
 
---output selects table (default), json, or junit (for CI test-result reporters).
+--output selects table (default), json, junit (for CI test-result reporters),
+or the CI-native formats github, sarif and markdown, which report findings at
+the line of the config that produced them rather than as a log to read.
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
 
@@ -233,10 +254,8 @@ Samples are tested in parallel (--concurrency, default one worker per CPU) with
 progress on stderr (--quiet to silence it). The report is identical either way:
 results are collected by sample index, never by completion order.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch output {
-			case "table", "json", "junit":
-			default:
-				return fmt.Errorf("invalid --output value %q (want table, json, or junit)", output)
+			if err := checkOutputFormat(output, "table", "json", "junit", "github", "sarif", "markdown"); err != nil {
+				return err
 			}
 			switch failOn {
 			case failOnNone, failOnWarn, failOnLoss:
@@ -318,7 +337,7 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context); only used with --live")
 	cmd.Flags().StringSliceVar(&contexts, "contexts", nil, "Run --live against each of these kubeconfig contexts and aggregate the report; mutually exclusive with --context")
 	cmd.Flags().StringVar(&kubeconfigDir, "kubeconfig-dir", "", "Directory of kubeconfig files; --live runs against each file (current-context unless --contexts is also set)")
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|junit")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|junit|github|sarif|markdown")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write the full report to this file instead of stdout; a short summary still prints to stdout")
 	cmd.Flags().BoolVar(&skipIdentity, "skip-identity", false, "Skip trivial same-version passthrough checks")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Escalate warnings (e.g. rule-coverage gaps) to failures")
@@ -345,7 +364,7 @@ results are collected by sample index, never by completion order.`,
 	cmd.MarkFlagsMutuallyExclusive("kubeconfig", "kubeconfig-dir")
 	registerOfflineFlagCompletions(cmd)
 	registerKubeFlagCompletions(cmd)
-	registerOutputCompletions(cmd, "table", "json", "junit")
+	registerOutputCompletions(cmd, "table", "json", "junit", "github", "sarif", "markdown")
 	_ = cmd.RegisterFlagCompletionFunc("fail-on", cobra.FixedCompletions([]string{failOnNone, failOnWarn, failOnLoss}, cobra.ShellCompDirectiveNoFileComp))
 	if cmd.Flags().Lookup("contexts") != nil {
 		_ = cmd.RegisterFlagCompletionFunc("contexts", completeKubeContexts)
@@ -379,10 +398,8 @@ same spokes — "what would applying this claim?" rather than an error.
 Exits 0 when the two sides are equivalent and 1 when any delta is found, so it
 drops straight into a CI gate.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch output {
-			case "table", "json":
-			default:
-				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			if err := checkOutputFormat(output, "table", "json", "markdown"); err != nil {
+				return err
 			}
 			out, err := RunDiff(DiffOptions{
 				ConfigPaths: configPaths, XRDPath: xrdPath, CRDPath: crdPath,
@@ -391,10 +408,15 @@ drops straight into a CI gate.`,
 			if err != nil {
 				return err
 			}
-			if output == "table" {
+			switch output {
+			case "table":
 				out.WriteTable(cmd.OutOrStdout())
-			} else if err := writeJSON(cmd, out); err != nil {
-				return err
+			case "markdown":
+				out.WriteMarkdown(cmd.OutOrStdout())
+			default:
+				if err := writeJSON(cmd, out); err != nil {
+					return err
+				}
 			}
 			if out.HasDeltas {
 				exitCode = ExitTestFailure
@@ -440,6 +462,11 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 			err = writeJSONTo(&buf, fleet)
 		case "junit":
 			err = fleet.WriteJUnit(&buf)
+		case "github", "sarif", "markdown":
+			// A fleet run has no single config to annotate, so its
+			// findings are aggregated per cluster and rendered without
+			// line numbers rather than attributed to the wrong file.
+			err = writeFindingsTo(&buf, output, fleet.findings(), "convctl test (fleet)")
 		default:
 			fleet.WriteTable(&buf)
 		}
@@ -449,6 +476,8 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 			err = writeJSONTo(&buf, rep)
 		case "junit":
 			err = rep.WriteJUnit(&buf)
+		case "github", "sarif", "markdown":
+			err = writeFindingsTo(&buf, output, findingsFromReport(rep, SourceMapForConfig(rep.Meta.ConfigPath)), "convctl test: "+rep.Meta.Resource)
 		default:
 			rep.WriteTable(&buf)
 		}

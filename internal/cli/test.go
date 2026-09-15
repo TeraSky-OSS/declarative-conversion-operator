@@ -396,6 +396,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 	rep.Meta.ResourceKind = resourceKind
 	rep.Meta.Resource = resourceName
 	rep.Meta.Config = configName
+	rep.Meta.ConfigPath = opts.ConfigPath
 	rep.Meta.HubVersion = hubVersion
 	rep.Meta.ServedVersions = served
 	rep.Meta.GeneratedAt = nowRFC3339()

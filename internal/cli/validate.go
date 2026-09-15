@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	internalwebhook "github.com/terasky-oss/declarative-conversion-operator/internal/webhook"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
 // ValidateResult is the outcome of the `validate` subcommand: the same
@@ -31,6 +32,11 @@ type ValidateResult struct {
 	StructurallyValid bool     `json:"structurallyValid"`
 	SchemaValidated   bool     `json:"schemaValidated"`
 	Errors            []string `json:"errors,omitempty"`
+	// Analysis is the underlying report, kept so the CI output formats can
+	// attribute each diagnostic to the rule and line that produced it. Not
+	// serialized: the JSON shape of this result is a stable contract, and
+	// `analyze -o json` is where the full report already lives.
+	Analysis *engine.AnalyzeReport `json:"-"`
 }
 
 // RunValidate loads a config (and, if provided, its target XRD or CRD) and
@@ -85,6 +91,7 @@ func runValidateXRD(configPath, xrdPath string) (*ValidateResult, error) {
 		res.Errors = append(res.Errors, err.Error())
 		return res, nil
 	}
+	res.Analysis = &report
 	if report.HasErrors() {
 		res.Errors = append(res.Errors, "configuration is invalid against the XRD schema:"+summarizeSpokeErrors(report))
 		return res, nil
@@ -118,6 +125,7 @@ func runValidateCRD(configPath, crdPath string) (*ValidateResult, error) {
 		res.Errors = append(res.Errors, err.Error())
 		return res, nil
 	}
+	res.Analysis = &report
 	if report.HasErrors() {
 		res.Errors = append(res.Errors, "configuration is invalid against the CRD schema:"+summarizeSpokeErrors(report))
 		return res, nil

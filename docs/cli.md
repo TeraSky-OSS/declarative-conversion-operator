@@ -3,13 +3,13 @@
 `convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Most commands work identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch. `migrate-storage` is the exception: it is a live, mutating housekeeping command that takes cluster resource names (not files) and does not need a conversion config.
 
 ```console
-convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
-convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
-convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
+convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json|github|sarif|markdown]
+convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|github|sarif|markdown]
+convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [-o table|json|junit|github|sarif|markdown] [flags]
 convctl plan          --to v2 (--xrd xrd.yaml | --crd crd.yaml) [--config config.yaml] [-o table|json]
 convctl versions      --xrd xrd.yaml [--config config.yaml] [--check-unserve v1] [-o table|json]
 convctl compat        --base REV --head REV --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
-convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
+convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
 convctl diff          --config config.yaml --live [-o json|table]
 convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
 convctl suggest       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o yaml|json]
@@ -327,6 +327,65 @@ While more than one sample is in flight, a `tested N/M samples` progress line is
 convctl test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./samples/ \
   --output junit --output-file report.junit.xml
 ```
+
+### CI-native formats: `github`, `sarif`, `markdown`
+
+`table`, `json` and `junit` all put a finding somewhere a person has to go
+looking for it. These three put it on the line of the config that produced it.
+
+| Format | Renders | Use it for |
+|---|---|---|
+| `github` | GitHub workflow commands (`::error file=…,line=…::…`) on stdout, plus a markdown table appended to `$GITHUB_STEP_SUMMARY` when the runner sets it | annotations on the pull-request diff |
+| `sarif` | SARIF 2.1.0 | `github/codeql-action/upload-sarif` — findings land in code scanning, so they appear on the diff **and** in the Security tab, and can be triaged and suppressed like any other scanner's |
+| `markdown` | a deterministic table | a PR comment in any CI system |
+
+Available on `test`, `validate` and `analyze`; `diff` has `markdown` (its
+delta is a structured comparison, not a finding list).
+
+```console
+$ convctl analyze --xrd xrd.yaml --config config.yaml -o github
+::error file=config.yaml,line=13,col=7,title=Conversion config error::hub field "spec.size" is not covered by any rule and has no identical counterpart in the spoke schema
+```
+
+Locations come from a second, position-preserving parse of the config.
+`sigs.k8s.io/yaml` routes through `encoding/json` — which is what makes the
+strict typed decode possible and also what throws line numbers away — so the
+formats read positions separately and never decide whether a config is valid.
+
+A finding the tool cannot place precisely is still reported, against the file
+with no line, or against the config's document. Dropping it would hide
+whole-config errors, which are the most serious kind.
+
+#### Finding ids
+
+The `ruleId` in SARIF and the finding name in the tables are a compatibility
+surface: a suppression in code scanning is keyed on the id, so renaming one
+silently un-suppresses everything somebody dismissed. Ids are added, never
+renamed.
+
+| Id | Meaning |
+|---|---|
+| `convctl/unacknowledged-loss` | a round trip lost a field no rule declares lossy |
+| `convctl/acknowledged-loss` | a declared, deliberate loss — reported at note severity, never a failure |
+| `convctl/conversion-error` | a conversion failed outright |
+| `convctl/schema-violation` | the converted object violates the destination schema (`--validate-output`) |
+| `convctl/uncovered-field` | a schema field no rule claims |
+| `convctl/rule-never-exercised` | a declared rule no sample reached |
+| `convctl/golden-drift` | the committed corpus and the current output disagree |
+| `convctl/config-error`, `convctl/config-warning` | a diagnostic with no more specific id |
+| `convctl/required-field-*` | required-field analysis — the engine's own codes, lower-kebab |
+
+```yaml
+- run: convctl test --xrd xrd.yaml --config config.yaml --samples ./samples/ -o sarif > convctl.sarif
+  continue-on-error: true
+- uses: github/codeql-action/upload-sarif@v4
+  with:
+    sarif_file: convctl.sarif
+```
+
+`continue-on-error` on the first step is deliberate: the upload should happen
+whether or not the run failed, or a red build hides the findings explaining
+why it is red.
 
 ### Exit codes
 

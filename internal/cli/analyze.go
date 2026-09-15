@@ -41,6 +41,10 @@ type AnalyzeOutput struct {
 	// not be determined.
 	// +optional
 	Scope *ScopeView `json:"scope,omitempty"`
+	// Analysis is the underlying report, kept so the CI output formats can
+	// attribute each diagnostic to the rule and line that produced it. Not
+	// serialized: the views above are the stable JSON contract.
+	Analysis *engine.AnalyzeReport `json:"-"`
 }
 
 // ScopeView reports a resolved Crossplane XRD scope and how much the
@@ -121,7 +125,7 @@ func runAnalyzeCRDCmd(crdPath, configPath string) (*AnalyzeOutput, error) {
 }
 
 func buildAnalyzeOutput(resourceKind, resourceName, configName, hubVersion string, report engine.AnalyzeReport) *AnalyzeOutput {
-	out := &AnalyzeOutput{ResourceKind: resourceKind, Resource: resourceName, Config: configName, HubVersion: hubVersion, Lossless: report.OverallLossless()}
+	out := &AnalyzeOutput{ResourceKind: resourceKind, Resource: resourceName, Config: configName, HubVersion: hubVersion, Lossless: report.OverallLossless(), Analysis: &report}
 	for _, sr := range report.SpokeReports {
 		v := AnalyzeSpokeView{Version: sr.Version, LosslessHubToSpoke: sr.Lossless.HubToSpoke, LosslessSpokeToHub: sr.Lossless.SpokeToHub, RulesEvaluated: len(sr.RuleResults)}
 		for _, d := range sr.Errors {

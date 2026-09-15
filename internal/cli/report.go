@@ -134,9 +134,13 @@ type RuleCoverage struct {
 // by analyze/validate for JSON output.
 type Report struct {
 	Meta struct {
-		ResourceKind   string   `json:"resourceKind"` // "XRD" or "CRD"
-		Resource       string   `json:"resource"`
-		Config         string   `json:"config"`
+		ResourceKind string `json:"resourceKind"` // "XRD" or "CRD"
+		Resource     string `json:"resource"`
+		Config       string `json:"config"`
+		// ConfigPath is the file the config was read from, as typed. The
+		// CI output formats report findings against it, and metadata.name
+		// is not a path anyone can open.
+		ConfigPath     string   `json:"configPath,omitempty"`
 		HubVersion     string   `json:"hubVersion"`
 		ServedVersions []string `json:"servedVersions"`
 		GeneratedAt    string   `json:"generatedAt,omitempty"`

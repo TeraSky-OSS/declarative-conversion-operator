@@ -204,3 +204,31 @@ func (f FleetReport) WriteSummaryLine(w io.Writer) {
 	}
 	_, _ = fmt.Fprintf(w, "FLEET: %d clusters, %d failed\n", len(f.Clusters), failed)
 }
+
+// findings aggregates a fleet run into the shape the CI formats render,
+// prefixing each message with the cluster it came from.
+//
+// A cluster that could not be reached is itself a finding, not an absence:
+// the failure mode this guards against is a fleet check that quietly
+// covered four of five clusters and reported green.
+func (f *FleetReport) findings() []Finding {
+	var out []Finding
+	for _, c := range f.Clusters {
+		if c.Error != "" {
+			out = append(out, Finding{
+				RuleID: FindingConversionError, Severity: SeverityFindingError,
+				Message: fmt.Sprintf("cluster %s could not be tested: %s", c.Label, c.Error),
+			})
+			continue
+		}
+		if c.Report == nil {
+			continue
+		}
+		for _, fd := range findingsFromReport(c.Report, SourceMapForConfig(c.Report.Meta.ConfigPath)) {
+			fd.Message = "cluster " + c.Label + ": " + fd.Message
+			out = append(out, fd)
+		}
+	}
+	sortFindings(out)
+	return out
+}
