@@ -284,12 +284,13 @@
   "definitions": {
     "positiveDurationOrEmpty": {
       "type": "string",
-      "description": "A Go duration with a non-zero magnitude, or the empty string. Written without a lookahead because the validator's regex engine has none: either the integer part contains a non-zero digit, or the fractional part does.",
-      "pattern": "^$|^([0-9]*[1-9][0-9]*(\\.[0-9]+)?|[0-9]*\\.[0-9]*[1-9][0-9]*)(ns|us|ms|s|m|h)$"
+      "description": "A Go duration whose total is non-zero, optionally compound such as 1m30s or 2h45m: time.ParseDuration accepts a sequence of number-unit elements, so a pattern allowing only one would reject a legal value at install. Written without a lookahead because the validator's regex engine has none \u2014 any number of zero elements may precede one element of non-zero magnitude, followed by anything. The empty string is also accepted and means \"use the binary's own default\".",
+      "pattern": "^$|^(0+(\\.0+)?(ns|us|ms|s|m|h))*(([0-9]*[1-9][0-9]*(\\.[0-9]+)?|[0-9]*\\.[0-9]*[1-9][0-9]*)(ns|us|ms|s|m|h))([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*$"
     },
     "positiveDuration": {
       "type": "string",
-      "pattern": "^([0-9]*[1-9][0-9]*(\\.[0-9]+)?|[0-9]*\\.[0-9]*[1-9][0-9]*)(ns|us|ms|s|m|h)$"
+      "description": "A Go duration whose total is non-zero, optionally compound such as 1m30s or 2h45m: time.ParseDuration accepts a sequence of number-unit elements, so a pattern allowing only one would reject a legal value at install. Written without a lookahead because the validator's regex engine has none \u2014 any number of zero elements may precede one element of non-zero magnitude, followed by anything.",
+      "pattern": "^(0+(\\.0+)?(ns|us|ms|s|m|h))*(([0-9]*[1-9][0-9]*(\\.[0-9]+)?|[0-9]*\\.[0-9]*[1-9][0-9]*)(ns|us|ms|s|m|h))([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*$"
     },
     "imageComponent": {
       "type": "object",

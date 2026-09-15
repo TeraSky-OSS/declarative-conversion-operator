@@ -267,6 +267,23 @@ jobs:
             fi
             echo "rejected: $bad"
           done
+          # The other direction: values that are legal for the binaries must
+          # still render. A pattern tightened to reject bad input is easy to
+          # tighten past good input -- time.ParseDuration takes compound
+          # durations, so the schema has to.
+          for good in \
+            conversionWebhookServer.requestTimeout=2h45m \
+            conversionWebhookServer.requestTimeout=1m30s \
+            conversionWebhookServer.maxRequestBytes=67108864 \
+            metrics.prometheusRule.propagationLagFor=1m30s
+          do
+            if ! helm template declarative-conversion-operator charts/declarative-conversion-operator \
+              --namespace declarative-conversion-system --set "$good" >/dev/null; then
+              echo "FAIL: '$good' was rejected; values.schema.json is too strict" >&2
+              exit 1
+            fi
+            echo "accepted: $good"
+          done
 
       - name: CRD upgrade helper prints chart CRDs
         run: |

@@ -121,3 +121,14 @@ tests:
           value:
             - --max-request-bytes=67108864
             - --request-timeout=45s
+
+  # time.ParseDuration accepts a sequence of elements, so the schema has to
+  # as well -- a pattern allowing only one number-unit pair rejected a legal
+  # value before the chart ever rendered it.
+  - it: renders a compound duration unchanged
+    set:
+      conversionWebhookServer.requestTimeout: 2h45m
+    asserts:
+      - contains:
+          path: spec.extraArgs
+          content: --request-timeout=2h45m
