@@ -9,10 +9,11 @@
 # BASE_REF (default: main) and the current working tree — installed in turn
 # into the same loaded cluster, so the only variable is the code.
 #
-# The number reported is process_resident_memory_bytes scraped from each
-# process's own /metrics endpoint after its caches have synced. RSS rather
-# than go_memstats_heap_inuse_bytes because RSS is what a memory limit is
-# enforced against, and it is the number an operator has to size.
+# The number reported is workingSetBytes from the kubelet Summary API, taken
+# after each process's caches have synced. Working set rather than Go heap
+# stats because it is what a container memory limit and the OOM killer are
+# evaluated against, and it is obtainable identically for both images without
+# either of them having to expose anything.
 #
 # Usage:
 #   hack/measure-cache-memory.sh [--secrets N] [--crds N] [--keep]

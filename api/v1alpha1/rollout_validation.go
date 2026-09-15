@@ -18,8 +18,11 @@ package v1alpha1
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // Rollout defaults, mirrored from the kubebuilder markers on RolloutSpec
@@ -73,19 +76,105 @@ func ValidateWebhookServerRollout(rollout *RolloutSpec, extraArgs []string) erro
 
 	need := time.Duration(preStop)*time.Second + shutdown
 	have := time.Duration(grace) * time.Second
-	if need > have {
+	// Strictly greater, not >=. At equality the drain deadline and the
+	// kubelet's SIGKILL deadline expire at the same instant, so whether an
+	// in-flight response makes it out is a race rather than a guarantee.
+	if need >= have {
 		return fmt.Errorf(
-			"rollout.terminationGracePeriodSeconds (%ds) is too short: a terminating replica sleeps %ds in its preStop hook and then drains for up to %s, so it needs at least %s. "+
+			"rollout.terminationGracePeriodSeconds (%ds) is too short: a terminating replica sleeps %ds in its preStop hook and then drains for up to %s, so it needs strictly more than %s. "+
 				"As written, the kubelet sends SIGKILL while a ConversionReview is still being answered, and the apiserver reports that as a failed write. "+
 				"Raise terminationGracePeriodSeconds, or lower rollout.preStopSleepSeconds or --shutdown-timeout",
 			grace, preStop, shutdown, need)
 	}
+
+	return validateRolloutStrategy(rollout)
+}
+
+// validateRolloutStrategy checks the two IntOrString fields the CRD cannot.
+//
+// The schema accepts any integer or string for an IntOrString, so a direct
+// client can persist -1 or "banana". Both reach
+// Deployment.spec.strategy.rollingUpdate verbatim, where the apiserver
+// rejects them — and the failure surfaces as a Deployment that will not
+// apply, attributed to the controller rather than to the value that caused
+// it. maxUnavailable and maxSurge both zero is the same class of problem:
+// individually legal, together a strategy Kubernetes refuses and a rollout
+// that can never make progress.
+func validateRolloutStrategy(rollout *RolloutSpec) error {
+	if rollout == nil {
+		return nil
+	}
+	if err := validateIntOrPercent(rollout.MaxUnavailable, "rollout.maxUnavailable"); err != nil {
+		return err
+	}
+	if err := validateIntOrPercent(rollout.MaxSurge, "rollout.maxSurge"); err != nil {
+		return err
+	}
+
+	// Defaults are 0 and 1, so only an explicit pair can be zero/zero.
+	unavailableZero := rollout.MaxUnavailable == nil || isZeroIntOrPercent(*rollout.MaxUnavailable)
+	surgeZero := rollout.MaxSurge != nil && isZeroIntOrPercent(*rollout.MaxSurge)
+	if unavailableZero && surgeZero {
+		return fmt.Errorf(
+			"rollout.maxUnavailable and rollout.maxSurge are both zero: Kubernetes rejects that RollingUpdate strategy, "+
+				"because it permits neither taking a replica out of service nor adding one, so the rollout can never progress. "+
+				"maxUnavailable defaults to 0, so leave maxSurge at its default of 1 or raise one of them (got maxUnavailable=%s, maxSurge=%s)",
+			intOrPercentString(rollout.MaxUnavailable, "0"), intOrPercentString(rollout.MaxSurge, "1"))
+	}
 	return nil
 }
 
-// shutdownTimeoutFromArgs finds --shutdown-timeout in extraArgs, in either
-// the `--flag=value` or `--flag value` form.
+func validateIntOrPercent(v *intstr.IntOrString, field string) error {
+	if v == nil {
+		return nil
+	}
+	switch v.Type {
+	case intstr.Int:
+		if v.IntValue() < 0 {
+			return fmt.Errorf("%s must not be negative, got %d", field, v.IntValue())
+		}
+	case intstr.String:
+		raw := v.StrVal
+		if !strings.HasSuffix(raw, "%") {
+			return fmt.Errorf("%s must be an integer or a percentage such as \"25%%\", got %q", field, raw)
+		}
+		n, err := strconv.Atoi(strings.TrimSuffix(raw, "%"))
+		if err != nil {
+			return fmt.Errorf("%s is not a valid percentage: %q", field, raw)
+		}
+		if n < 0 {
+			return fmt.Errorf("%s must not be a negative percentage, got %q", field, raw)
+		}
+	}
+	return nil
+}
+
+func isZeroIntOrPercent(v intstr.IntOrString) bool {
+	if v.Type == intstr.Int {
+		return v.IntValue() == 0
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(v.StrVal, "%"))
+	return err == nil && n == 0
+}
+
+func intOrPercentString(v *intstr.IntOrString, whenUnset string) string {
+	if v == nil {
+		return whenUnset + " (default)"
+	}
+	return v.String()
+}
+
+// shutdownTimeoutFromArgs finds the EFFECTIVE --shutdown-timeout in
+// extraArgs, in either the `--flag=value` or `--flag value` form.
+//
+// Effective means the last occurrence, not the first: Go's flag package
+// processes every occurrence and keeps the last, which is the same reason
+// ValidateWebhookServerExtraArgs rejects duplicates of managed flags. A
+// validator that stopped at the first would approve
+// `--shutdown-timeout=10s --shutdown-timeout=120s` against the 10s the server
+// is not going to use.
 func shutdownTimeoutFromArgs(args []string) (time.Duration, error) {
+	effective := DefaultWebhookServerShutdownTimeout
 	for i := 0; i < len(args); i++ {
 		name, ok := longFlagName(args[i])
 		if !ok {
@@ -110,7 +199,10 @@ func shutdownTimeoutFromArgs(args []string) (time.Duration, error) {
 		if d <= 0 {
 			return 0, fmt.Errorf("extraArgs: --shutdown-timeout must be positive, got %q", raw)
 		}
-		return d, nil
+		effective = d
+		if !strings.Contains(args[i], "=") && i+1 < len(args) {
+			i++
+		}
 	}
-	return DefaultWebhookServerShutdownTimeout, nil
+	return effective, nil
 }

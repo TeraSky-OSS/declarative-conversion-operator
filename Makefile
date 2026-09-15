@@ -148,10 +148,11 @@ HELM_UNITTEST_VERSION ?= 1.0.2
 
 .PHONY: helm-unittest-plugin
 helm-unittest-plugin: ## Install the helm-unittest plugin at the pinned version if it is not already present.
-	@if helm plugin list 2>/dev/null | grep -q '^unittest'; then \
-		echo "Using the installed helm-unittest plugin"; \
+	@if helm plugin list 2>/dev/null | awk '$$1=="unittest"{print $$2}' | grep -qx '$(HELM_UNITTEST_VERSION)'; then \
+		echo "Using helm-unittest $(HELM_UNITTEST_VERSION)"; \
 	else \
 		echo "Installing helm-unittest $(HELM_UNITTEST_VERSION)"; \
+		helm plugin uninstall unittest >/dev/null 2>&1 || true; \
 		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION); \
 	fi
 

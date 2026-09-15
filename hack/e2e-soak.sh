@@ -39,6 +39,8 @@ OBJECTS=8
 RESULT_JSON="${RESULT_JSON:-/tmp/e2e-soak-result.json}"
 PROXY_PID=""
 CLIENT_PID=""
+STOP_FILE="$(mktemp "${TMPDIR:-/tmp}/e2e-soak-stop.XXXXXX")"
+rm -f "${STOP_FILE}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -53,6 +55,7 @@ soak_cleanup() {
   local code=$?
   [ -n "${CLIENT_PID}" ] && kill "${CLIENT_PID}" >/dev/null 2>&1 || true
   [ -n "${PROXY_PID}" ] && kill "${PROXY_PID}" >/dev/null 2>&1 || true
+  rm -f "${STOP_FILE}"
   (exit "${code}")
   e2e_cleanup
 }
@@ -127,9 +130,18 @@ if [ "${presoak_bad}" != "0" ]; then
 fi
 log "Self-check passed"
 
-log "Driving ${DURATION}s of reads and writes while restarting the webhook-server ${RESTARTS} times"
+log "Driving reads and writes while restarting the webhook-server ${RESTARTS} times"
+# The driver's lifetime is tied to the rollouts finishing, not to a guessed
+# number of seconds. Sizing it as a fixed budget was wrong: `gap` accounts
+# only for the sleeps, while each `rollout status` wait also consumes it, so a
+# slow rollout pushed the later restarts past the driver's exit -- and a soak
+# that is not driving traffic during a rollout proves nothing about it while
+# still reporting a pass. --duration is now only a backstop against a rollout
+# that hangs forever.
+MAX_DURATION=$(( DURATION * 4 ))
 python3 "${REPO_ROOT}/hack/e2e-soak-client.py" \
-  --base "http://127.0.0.1:${PROXY_PORT}" --duration "${DURATION}" \
+  --base "http://127.0.0.1:${PROXY_PORT}" --duration "${MAX_DURATION}" \
+  --stop-file "${STOP_FILE}" \
   --names "${names}" --out "${RESULT_JSON}" &
 CLIENT_PID=$!
 
@@ -137,12 +149,26 @@ dep="$(kubectl -n "${NAMESPACE}" get deploy -l app.kubernetes.io/name=declarativ
 gap=$(( DURATION / (RESTARTS + 1) ))
 for i in $(seq 1 "${RESTARTS}"); do
   sleep "${gap}"
+  if ! kill -0 "${CLIENT_PID}" 2>/dev/null; then
+    echo "FAIL: the traffic driver exited before rollout ${i}/${RESTARTS}; the remaining rollouts would have been unobserved"
+    exit 1
+  fi
   log "Rollout ${i}/${RESTARTS} of deployment/${dep}"
   kubectl -n "${NAMESPACE}" rollout restart "deployment/${dep}"
   kubectl -n "${NAMESPACE}" rollout status "deployment/${dep}" --timeout=300s
 done
 
-log "Waiting for the traffic driver to finish"
+# Keep driving briefly after the last rollout: the Endpoints of the final new
+# pods settle after `rollout status` returns, and that tail is exactly where a
+# missing preStop hook shows up.
+sleep "${gap}"
+if ! kill -0 "${CLIENT_PID}" 2>/dev/null; then
+  echo "FAIL: the traffic driver exited before the final rollout had settled"
+  exit 1
+fi
+
+log "Rollouts complete; asking the traffic driver to stop"
+touch "${STOP_FILE}"
 wait "${CLIENT_PID}"
 CLIENT_PID=""
 
@@ -157,6 +183,13 @@ ok = True
 
 # A soak that did not actually generate traffic would report zero of
 # everything and look like a pass.
+# A driver that stopped because it hit its backstop rather than because the
+# rollouts finished means a rollout hung; the traffic numbers below would then
+# describe a run that never completed.
+if d.get("stopped_by") == "duration":
+    print("FAIL: the traffic driver hit its maximum duration instead of being stopped after the rollouts; a rollout did not complete")
+    ok = False
+
 if d["reads"] < 100 or d["writes"] < 100:
     print(f"FAIL: too little traffic to prove anything: {d['reads']} reads, {d['writes']} writes")
     ok = False

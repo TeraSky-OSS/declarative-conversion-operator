@@ -9,9 +9,16 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  {{- /*
+    get only. The manager reads one key out of one Secret per
+    ConversionWebhookServer through an uncached client and never lists or
+    watches them, so list/watch would be dormant privilege over every Secret
+    in the cluster -- and granting them back would also re-enable the
+    cluster-wide Secret informer that was deliberately removed.
+  */}}
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]

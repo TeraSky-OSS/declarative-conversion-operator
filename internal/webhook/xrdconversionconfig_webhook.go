@@ -126,17 +126,13 @@ func (v *XRDConversionConfigValidator) validate(ctx context.Context, cfg *terask
 }
 
 func summarizeErrors(report engine.AnalyzeReport) string {
-	msg := ""
-	var msgSb126 strings.Builder
+	var msg strings.Builder
 	for _, sr := range report.SpokeReports {
-		var msgSb126 strings.Builder
 		for _, e := range sr.Errors {
-			fmt.Fprintf(&msgSb126, "[spoke %s] %s; ", sr.Version, e.Message)
+			fmt.Fprintf(&msg, "[spoke %s] %s; ", sr.Version, e.Message)
 		}
-		msgSb126.WriteString(msgSb126.String())
 	}
-	msg += msgSb126.String()
-	return msg
+	return msg.String()
 }
 
 // ValidateStructure catches shape problems the CRD's OpenAPI schema can't

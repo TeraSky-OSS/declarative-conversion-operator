@@ -19,10 +19,13 @@ package v1alpha1
 import (
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func i32(v int32) *int32 { return &v }
-func i64(v int64) *int64 { return &v }
+func i32(v int32) *int32                           { return &v }
+func i64(v int64) *int64                           { return &v }
+func ios(v intstr.IntOrString) *intstr.IntOrString { return &v }
 
 func TestValidateWebhookServerRollout(t *testing.T) {
 	cases := []struct {
@@ -50,7 +53,7 @@ func TestValidateWebhookServerRollout(t *testing.T) {
 		{
 			name:    "shortening the grace period alone",
 			rollout: &RolloutSpec{TerminationGracePeriodSeconds: i64(20)},
-			wantErr: "needs at least 35s",
+			wantErr: "needs strictly more than 35s",
 		},
 		{
 			// The validator has to read the flag, not assume the default,
@@ -58,7 +61,7 @@ func TestValidateWebhookServerRollout(t *testing.T) {
 			name:      "a longer drain via extraArgs",
 			rollout:   nil,
 			extraArgs: []string{"--shutdown-timeout=120s"},
-			wantErr:   "needs at least 2m5s",
+			wantErr:   "needs strictly more than 2m5s",
 		},
 		{
 			name:      "a longer drain with a matching grace period",
@@ -83,7 +86,65 @@ func TestValidateWebhookServerRollout(t *testing.T) {
 		},
 		{
 			name:    "preStop disabled leaves only the drain",
+			rollout: &RolloutSpec{PreStopSleepSeconds: i32(0), TerminationGracePeriodSeconds: i64(31)},
+		},
+		{
+			// At equality the drain deadline and the kubelet's SIGKILL
+			// deadline expire together, so delivery of the final response
+			// is a race. Rejected on purpose.
+			name:    "exactly equal is not enough",
 			rollout: &RolloutSpec{PreStopSleepSeconds: i32(0), TerminationGracePeriodSeconds: i64(30)},
+			wantErr: "strictly more than 30s",
+		},
+		{
+			// Go's flag package keeps the LAST occurrence, so validating
+			// the first approves a value the server will not use.
+			name:      "the last --shutdown-timeout wins",
+			extraArgs: []string{"--shutdown-timeout=10s", "--shutdown-timeout=120s"},
+			wantErr:   "strictly more than 2m5s",
+		},
+		{
+			name:      "the last --shutdown-timeout wins, space-separated",
+			rollout:   &RolloutSpec{TerminationGracePeriodSeconds: i64(200)},
+			extraArgs: []string{"--shutdown-timeout", "120s", "--shutdown-timeout", "20s"},
+		},
+		{
+			name:    "maxUnavailable and maxSurge both zero cannot progress",
+			rollout: &RolloutSpec{MaxSurge: ios(intstr.FromInt32(0))},
+			wantErr: "both zero",
+		},
+		{
+			name:    "an explicit zero/zero pair",
+			rollout: &RolloutSpec{MaxUnavailable: ios(intstr.FromInt32(0)), MaxSurge: ios(intstr.FromInt32(0))},
+			wantErr: "both zero",
+		},
+		{
+			name:    "zero percent counts as zero",
+			rollout: &RolloutSpec{MaxSurge: ios(intstr.FromString("0%"))},
+			wantErr: "both zero",
+		},
+		{
+			name:    "the shipped defaults are not zero/zero",
+			rollout: &RolloutSpec{},
+		},
+		{
+			name:    "a negative maxSurge",
+			rollout: &RolloutSpec{MaxSurge: ios(intstr.FromInt32(-1))},
+			wantErr: "must not be negative",
+		},
+		{
+			name:    "a maxUnavailable that is neither an integer nor a percentage",
+			rollout: &RolloutSpec{MaxUnavailable: ios(intstr.FromString("banana"))},
+			wantErr: "integer or a percentage",
+		},
+		{
+			name:    "a negative percentage",
+			rollout: &RolloutSpec{MaxSurge: ios(intstr.FromString("-10%"))},
+			wantErr: "negative percentage",
+		},
+		{
+			name:    "a valid percentage pair",
+			rollout: &RolloutSpec{MaxUnavailable: ios(intstr.FromString("25%")), MaxSurge: ios(intstr.FromString("50%"))},
 		},
 	}
 	for _, tc := range cases {

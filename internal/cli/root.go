@@ -420,8 +420,14 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 		// and rule set of a cluster's conversion configuration, and the
 		// person who asked for it is the only one who asked for it. Widen
 		// it deliberately with umask or chmod if a CI job needs to read it.
+		// O_TRUNC+Chmod rather than a bare WriteFile: WriteFile only
+		// applies its mode when it creates the file, so re-running against
+		// an existing world-readable report would leave it world-readable.
 		if err := os.WriteFile(outputFile, buf.Bytes(), 0o600); err != nil {
 			return fmt.Errorf("writing report to %s: %w", outputFile, err)
+		}
+		if err := os.Chmod(outputFile, 0o600); err != nil {
+			return fmt.Errorf("restricting permissions on %s: %w", outputFile, err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "output written to file %s\n", outputFile)
 		if fleet != nil {

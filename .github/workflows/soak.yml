@@ -36,6 +36,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # These jobs go on to run downloaded code (govulncheck, CodeQL
+          # autobuild, kind, helm plugins). checkout persists the job token
+          # in .git/config by default, where that code can read it.
+          persist-credentials: false
 
       - name: Install kind
         run: |
@@ -57,11 +62,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The dispatch inputs are interpolated into a shell, so they are
+      # validated as decimals first rather than trusted. workflow_dispatch
+      # needs write access, so this is not a privilege boundary — it is to
+      # keep a typo from becoming a confusing shell error.
       - name: Run the soak
+        env:
+          SOAK_DURATION: ${{ github.event.inputs.duration || '480' }}
+          SOAK_RESTARTS: ${{ github.event.inputs.restarts || '4' }}
         run: |
-          ./hack/e2e-soak.sh \
-            --duration "${{ github.event.inputs.duration || '480' }}" \
-            --restarts "${{ github.event.inputs.restarts || '4' }}"
+          case "$SOAK_DURATION" in ''|*[!0-9]*) echo "duration must be a positive integer, got '$SOAK_DURATION'" >&2; exit 1 ;; esac
+          case "$SOAK_RESTARTS" in ''|*[!0-9]*) echo "restarts must be a positive integer, got '$SOAK_RESTARTS'" >&2; exit 1 ;; esac
+          ./hack/e2e-soak.sh --duration "$SOAK_DURATION" --restarts "$SOAK_RESTARTS"
 
       # Published whether the soak passed or failed: a pass is the evidence
       # that the rollout mitigations still work, and a failure is useless

@@ -59,10 +59,18 @@ edit a recoverable non-event rather than an outage.
 > Check first, then label:
 >
 > ```console
-> # Which targets are configured, and which of them carry the label?
+> # Which targets are configured?
 > kubectl get xrdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetXRD.name}{"\n"}{end}'
+> kubectl get crdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetCRD.name}{"\n"}{end}'
+>
+> # Which of them carry the label? Anything in the first list and not the
+> # second becomes unservable.
 > kubectl get compositeresourcedefinition -l <your-selector> -o name
+> kubectl get customresourcedefinition -l <your-selector> -o name
 > ```
+>
+> Native CRD targets are affected exactly as XRD targets are — the selector
+> scopes both schema informers.
 >
 > Installs that leave `cacheSelector` unset — the default — are unaffected.
 

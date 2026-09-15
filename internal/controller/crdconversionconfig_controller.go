@@ -71,7 +71,11 @@ type CRDConversionConfigReconciler struct {
 // +kubebuilder:rbac:groups=terasky.com,resources=crdconversionconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// Secrets are read one key at a time through an uncached client (see
+// internal/controller/cacheopts.go), never listed or watched, so get is the
+// only verb the manager needs. Restoring list/watch here would also restore
+// the cluster-wide Secret informer this operator deliberately does not run.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *CRDConversionConfigReconciler) Reconcile(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {

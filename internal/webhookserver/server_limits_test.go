@@ -18,6 +18,7 @@ package webhookserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,9 +168,12 @@ func TestHandleConvert_UnderTheLimitIsUntouched(t *testing.T) {
 }
 
 func TestHandleConvert_RequestDeadlineIsHonoured(t *testing.T) {
-	// A deadline that has already passed by the time the loop runs: the
-	// point is that the loop checks at all, not how fast a conversion is.
-	s := &Server{Registry: NewRegistry(), Metrics: newTestMetrics(), RequestTimeout: time.Nanosecond}
+	// The point is that the loop checks the deadline at all, not how fast a
+	// conversion is. An already-cancelled request context makes that
+	// deterministic: the timeout context is created inside handleConvert, so
+	// a one-nanosecond timer would be racing the first object and could lose,
+	// passing the test for the wrong reason. Cancellation is inherited.
+	s := &Server{Registry: NewRegistry(), Metrics: newTestMetrics()}
 	s.Registry.Set("xfoos.example.org", &CompiledEntry{
 		Router: &engine.Router{Hub: "v2", Plans: map[string]*engine.Plan{
 			"v1": {HubVersion: "v2", SpokeVersion: "v1"},
@@ -177,9 +181,10 @@ func TestHandleConvert_RequestDeadlineIsHonoured(t *testing.T) {
 	})
 
 	body := oversizeReview("uid-slow", 16)
-	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body)).WithContext(ctx)
 	rec := httptest.NewRecorder()
-	time.Sleep(time.Millisecond)
 	s.handleConvert(rec, req)
 
 	var got extv1.ConversionReview

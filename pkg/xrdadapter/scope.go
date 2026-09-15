@@ -206,12 +206,12 @@ func joinSignals(s []string) string {
 	case 1:
 		return s[0]
 	default:
-		out := s[0]
-		var outSb209 strings.Builder
+		var out strings.Builder
+		out.WriteString(s[0])
 		for _, x := range s[1 : len(s)-1] {
-			outSb209.WriteString(", " + x)
+			out.WriteString(", " + x)
 		}
-		out += outSb209.String()
-		return out + " and " + s[len(s)-1]
+		out.WriteString(" and " + s[len(s)-1])
+		return out.String()
 	}
 }

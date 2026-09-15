@@ -98,6 +98,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--webhook-server-name is required")
 		os.Exit(1)
 	}
+	// The Server treats a negative limit as "no cap", which is only ever
+	// right in a test. Reached through the flag it would silently remove the
+	// body limit from a process on the apiserver's write path, so the flag
+	// refuses it rather than quietly obeying.
+	if maxRequestBytes <= 0 {
+		fmt.Fprintf(os.Stderr, "--max-request-bytes must be positive, got %d\n", maxRequestBytes)
+		os.Exit(1)
+	}
+	if requestTimeout <= 0 {
+		fmt.Fprintf(os.Stderr, "--request-timeout must be positive, got %s\n", requestTimeout)
+		os.Exit(1)
+	}
+	if shutdownTimeout <= 0 {
+		fmt.Fprintf(os.Stderr, "--shutdown-timeout must be positive, got %s\n", shutdownTimeout)
+		os.Exit(1)
+	}
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -110,17 +110,13 @@ func servedVersions(versions []engine.VersionSchema) []string {
 }
 
 func summarizeSpokeErrors(report engine.AnalyzeReport) string {
-	msg := ""
-	var msgSb114 strings.Builder
+	var msg strings.Builder
 	for _, sr := range report.SpokeReports {
-		var msgSb114 strings.Builder
 		for _, e := range sr.Errors {
-			fmt.Fprintf(&msgSb114, "\n  [spoke %s] %s", sr.Version, e.Message)
+			fmt.Fprintf(&msg, "\n  [spoke %s] %s", sr.Version, e.Message)
 		}
-		msgSb114.WriteString(msgSb114.String())
 	}
-	msg += msgSb114.String()
-	return msg
+	return msg.String()
 }
 
 func xrdName(xrd *unstructured.Unstructured) string {

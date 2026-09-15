@@ -402,6 +402,26 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// One last check before claiming success. The loop guard runs *before*
+	// each object, so the final object's own conversion is unbounded by it —
+	// and reporting success for work that finished after the apiserver
+	// stopped waiting is worse than reporting the timeout.
+	//
+	// This does not bound a single pathological object: engine.Convert's ops
+	// take no context, so a very large forEach still runs to completion
+	// before anything here is reached. The body limit caps how large that can
+	// be. Full enforcement needs ctx plumbed through every Op — see
+	// docs/limitations.md.
+	if err := ctx.Err(); err != nil {
+		s.writeReview(w, review.Request.UID, nil, fmt.Sprintf(
+			"conversion exceeded the %s per-request budget; raise --request-timeout or send smaller batches",
+			s.requestTimeout()))
+		s.observe(xrdName, direction, "timeout", start)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return
+	}
+
 	s.writeReview(w, review.Request.UID, converted, "")
 	s.observe(xrdName, direction, "success", start)
 }

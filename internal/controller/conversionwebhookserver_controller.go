@@ -98,7 +98,11 @@ type ConversionWebhookServerReconciler struct {
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// Secrets are read one key at a time through an uncached client (see
+// internal/controller/cacheopts.go), never listed or watched, so get is the
+// only verb the manager needs. Restoring list/watch here would also restore
+// the cluster-wide Secret informer this operator deliberately does not run.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *ConversionWebhookServerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {
 	var server teraskyv1alpha1.ConversionWebhookServer

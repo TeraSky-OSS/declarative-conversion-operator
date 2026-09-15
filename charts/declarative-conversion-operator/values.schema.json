@@ -187,8 +187,22 @@
           "properties": {
             "preStopSleepSeconds": { "type": ["integer", "null"], "minimum": 0, "maximum": 300 },
             "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 1 },
-            "maxUnavailable": { "type": ["integer", "string", "null"] },
-            "maxSurge": { "type": ["integer", "string", "null"] },
+            "maxUnavailable": {
+              "description": "A non-negative integer or a percentage such as \"25%\". Anything else is rejected by the apiserver when the Deployment is applied, which is far from where it was set.",
+              "oneOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "string", "pattern": "^(100|[0-9]{1,2})%$" },
+                { "type": "null" }
+              ]
+            },
+            "maxSurge": {
+              "description": "A non-negative integer or a percentage such as \"25%\".",
+              "oneOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "string", "pattern": "^([0-9]+)%$" },
+                { "type": "null" }
+              ]
+            },
             "defaultTopologySpread": { "type": ["boolean", "null"] }
           }
         },

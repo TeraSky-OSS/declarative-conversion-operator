@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -50,7 +51,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True, help="kubectl proxy base URL")
     ap.add_argument("--namespace", default="default")
-    ap.add_argument("--duration", type=float, required=True, help="seconds")
+    ap.add_argument("--duration", type=float, required=True,
+                    help="seconds; an upper bound, not a target. --stop-file is the normal way to end the run.")
+    ap.add_argument("--stop-file", default="",
+                    help="Exit once this path exists. The harness creates it after the last rollout has completed, so the driver is guaranteed to be alive across every rollout rather than for a guessed number of seconds.")
     ap.add_argument("--names", required=True, help="comma-separated resource names")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -63,6 +67,7 @@ def main() -> int:
         "read_failures": 0, "write_failures": 0,
         "mismatches": 0,
         "conflicts": 0,
+        "stopped_by": "",
         "samples": [],
     }
 
@@ -72,7 +77,13 @@ def main() -> int:
 
     deadline = time.time() + args.duration
     round_no = 0
-    while time.time() < deadline:
+
+    def should_stop() -> bool:
+        if time.time() >= deadline:
+            return True
+        return bool(args.stop_file) and os.path.exists(args.stop_file)
+
+    while not should_stop():
         round_no += 1
         for name in names:
             # READ at the non-storage version: the apiserver stores v2 and
@@ -111,6 +122,8 @@ def main() -> int:
                 if got != want:
                     stats["mismatches"] += 1
                     note("write-mismatch", f"{name}: storageSize={got!r} after write, want {want!r}")
+
+    stats["stopped_by"] = "stop-file" if (args.stop_file and os.path.exists(args.stop_file)) else "duration"
 
     with open(args.out, "w") as f:
         json.dump(stats, f, indent=2)
