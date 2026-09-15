@@ -263,6 +263,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Publishing to the tap and bucket repositories needs a token that
+          # can write to them, which GITHUB_TOKEN cannot. Unset is fine and
+          # deliberate: the Homebrew and Scoop steps skip themselves rather
+          # than failing the release, so the binaries, packages and images
+          # still ship.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
 
       - name: Attest CLI artifact build provenance
         uses: actions/attest-build-provenance@v4

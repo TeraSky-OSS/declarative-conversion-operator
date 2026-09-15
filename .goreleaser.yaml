@@ -15,7 +15,12 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      # commit and date go in too: "convctl says this conversion is lossy"
+      # is unactionable in a bug report without knowing which convctl.
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
 
 archives:
   - id: convctl
@@ -26,6 +31,62 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+
+# Linux packages, attached to the release. Installing a kubectl-adjacent
+# tool by downloading a tarball is not how the ecosystem works.
+nfpms:
+  - id: convctl
+    ids: [convctl]
+    package_name: convctl
+    vendor: TeraSky
+    homepage: https://terasky-oss.github.io/declarative-conversion-operator/
+    maintainer: TeraSky OSS <oss@terasky.com>
+    description: |-
+      CLI for the declarative conversion operator: validate, analyze and test
+      Crossplane XRD and CRD conversion configs offline or against a cluster.
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+
+# Homebrew. GoReleaser deprecated `brews:` in favour of casks, which are
+# macOS-only — so Linuxbrew users install from the deb/rpm above or the
+# archive, which is the trade the deprecation forces.
+homebrew_casks:
+  - name: convctl
+    ids: [convctl]
+    repository:
+      owner: terasky-oss
+      name: homebrew-tap
+      # index rather than .Env.X: the dotted form errors when the variable
+      # is unset, which would fail a release because a tap repository does
+      # not exist yet. Unset means skip, below.
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+      branch: main
+    homepage: https://terasky-oss.github.io/declarative-conversion-operator/
+    description: CLI for the declarative conversion operator
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    # An unsigned binary downloaded by a cask is quarantined by Gatekeeper,
+    # and the failure ("convctl is damaged") reads like a corrupt download
+    # rather than a policy. The archive's checksum is already verified by
+    # Homebrew itself.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/convctl"]
+          end
+
+scoops:
+  - name: convctl
+    ids: [convctl]
+    repository:
+      owner: terasky-oss
+      name: scoop-bucket
+      token: '{{ index .Env "SCOOP_BUCKET_TOKEN" }}'
+    homepage: https://terasky-oss.github.io/declarative-conversion-operator/
+    description: CLI for the declarative conversion operator
+    license: Apache-2.0
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'
 
 checksum:
   name_template: "checksums.txt"

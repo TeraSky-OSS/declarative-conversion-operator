@@ -157,6 +157,45 @@ examples (`examples/gitops/flux`, `examples/gitops/argo`). Keep
 `driftPolicy: KeepServingStale` on GitOps-managed configs — `FailClosed`
 drops conversions while the schema and config reconcile independently.
 
+## Installing `convctl`
+
+| Method | Command | Platforms |
+|---|---|---|
+| Homebrew | `brew install terasky-oss/tap/convctl` | macOS (casks are macOS-only; on Linuxbrew use the package or archive) |
+| Scoop | `scoop bucket add terasky-oss https://github.com/terasky-oss/scoop-bucket` then `scoop install convctl` | Windows |
+| deb | `sudo dpkg -i convctl_<version>_linux_amd64.deb` | Debian, Ubuntu |
+| rpm | `sudo rpm -i convctl_<version>_linux_amd64.rpm` | RHEL, Fedora, SUSE |
+| Archive | download `declarative-conversion-operator-cli_<version>_<os>_<arch>.tar.gz` from the [releases page](https://github.com/TeraSky-OSS/declarative-conversion-operator/releases) | all |
+| Container | see [below](#the-convctl-container-image) | linux/amd64, linux/arm64 |
+| Source | `go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest` | all |
+
+Every archive's checksum is covered by the cosign-signed `checksums.txt`; see
+the signed-artifact section of any release for the verification commands.
+
+### `convctl version`
+
+```console
+$ convctl version
+v0.5.0 (a1b2c3d4e5f6) linux/amd64 go1.26.6
+
+$ convctl version -o json
+{
+  "version": "v0.5.0",
+  "commit": "a1b2c3d4e5f6...",
+  "date": "2026-09-15T20:06:15Z",
+  "goVersion": "go1.26.6",
+  "platform": "linux/amd64"
+}
+```
+
+That is what belongs in a bug report: *"convctl says this conversion is
+lossy"* is unactionable without knowing which convctl.
+
+A `go install` build has no release ldflags, and reports the module version
+and VCS stamps the Go toolchain embeds rather than `dev` — a version nobody
+can map to a commit is the same as no version. A build from a dirty working
+tree says so, with a `-dirty` suffix on the commit.
+
 ## The `convctl` container image
 
 For pipelines that would rather pin a digest than download a binary — Tekton,

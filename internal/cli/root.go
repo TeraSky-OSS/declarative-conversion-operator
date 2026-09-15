@@ -74,14 +74,33 @@ cluster. Every command works against either resource type:
 var exitCode = ExitOK
 
 func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
+	var output string
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the convctl version",
+		Long: `Print the version, and with -o json the commit, build date, Go version and
+platform as well.
+
+"convctl says this conversion is lossy" is unactionable without knowing which
+convctl, so the JSON form is what belongs in a bug report. A binary built with
+go install reports its module version and VCS stamps rather than "dev": those
+are embedded by the toolchain, and a version nobody can map to a commit is the
+same as no version.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), Version)
+			if err := checkOutputFormat(output, "table", "json"); err != nil {
+				return err
+			}
+			info := versionInfo()
+			if output == "json" {
+				return writeJSON(cmd, info)
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), info.String())
 			return err
 		},
 	}
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	registerOutputCompletions(cmd, "table", "json")
+	return cmd
 }
 
 // Version is set at build time via -ldflags; defaults to "dev" for local
