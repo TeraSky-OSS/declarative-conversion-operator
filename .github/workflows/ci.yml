@@ -247,14 +247,26 @@ jobs:
             --namespace declarative-conversion-system \
             -f hack/testdata/helm-install-ux-values.yaml >/dev/null
 
-      - name: values.schema.json rejects a typo
+      - name: values.schema.json rejects what the binaries would refuse
         run: |
-          if helm template declarative-conversion-operator charts/declarative-conversion-operator \
-            --namespace declarative-conversion-system \
-            --set conversionWebhookServer.replicaCount2=3 >/dev/null 2>&1; then
-            echo "FAIL: a misspelled values key was accepted; the schema is not being enforced" >&2
-            exit 1
-          fi
+          # Each of these would otherwise reach a container flag and be
+          # rejected at startup, i.e. arrive as a crash loop rather than as an
+          # error naming the value.
+          for bad in \
+            conversionWebhookServer.replicaCount2=3 \
+            conversionWebhookServer.maxRequestBytes=banana \
+            conversionWebhookServer.maxRequestBytes=0 \
+            conversionWebhookServer.requestTimeout=0s \
+            conversionWebhookServer.rollout.maxSurge=-1 \
+            metrics.serviceMonitor.interval=0s
+          do
+            if helm template declarative-conversion-operator charts/declarative-conversion-operator \
+              --namespace declarative-conversion-system --set "$bad" >/dev/null 2>&1; then
+              echo "FAIL: '$bad' was accepted; values.schema.json is not being enforced" >&2
+              exit 1
+            fi
+            echo "rejected: $bad"
+          done
 
       - name: CRD upgrade helper prints chart CRDs
         run: |

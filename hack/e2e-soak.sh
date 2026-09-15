@@ -51,9 +51,33 @@ while [ $# -gt 0 ]; do
     --duration) DURATION="$2"; shift 2 ;;
     --restarts) RESTARTS="$2"; shift 2 ;;
     --objects) OBJECTS="$2"; shift 2 ;;
+    --rollout-timeout) ROLLOUT_TIMEOUT="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# Validate before anything reaches arithmetic expansion or seq. The workflow
+# guards its dispatch inputs, but `make test-e2e-soak` and a direct run call
+# this script straight, so the guard has to live here as well as there.
+# --restarts -1 is the sharp edge: RESTARTS + 1 is then zero and the gap
+# computation below divides by it.
+require_positive_int() {
+  local name="$1" value="$2"
+  case "${value}" in
+    ''|*[!0-9]*)
+      echo "FAIL: ${name} must be a positive integer, got '${value}'" >&2
+      exit 2
+      ;;
+  esac
+  if [ "${value}" -le 0 ]; then
+    echo "FAIL: ${name} must be greater than zero, got '${value}'" >&2
+    exit 2
+  fi
+}
+require_positive_int --duration "${DURATION}"
+require_positive_int --restarts "${RESTARTS}"
+require_positive_int --objects "${OBJECTS}"
+require_positive_int --rollout-timeout "${ROLLOUT_TIMEOUT}"
 
 soak_cleanup() {
   local code=$?

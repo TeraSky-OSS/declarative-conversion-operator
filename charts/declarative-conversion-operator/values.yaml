@@ -160,12 +160,15 @@ conversionWebhookServer:
   # A larger body is answered with a ConversionReview failure naming this
   # limit, rather than being buffered. Raise it only if legitimate batches
   # are being rejected — this is what stops one client from exhausting the
-  # process on the apiserver's write path. Empty string uses the binary's
-  # own default (32 MiB).
+  # process on the apiserver's write path. A positive integer, or the empty
+  # string to use the binary's own default (32 MiB). Zero, negative and
+  # non-numeric values are rejected at install: the webhook-server refuses
+  # them at startup, and a crash loop is a poor way to learn that.
   maxRequestBytes: ""
   # Maximum time one ConversionReview may occupy a worker. Must stay below
   # the write timeout (35s) so the failure is delivered rather than
-  # truncated. Empty string uses the binary's own default (30s).
+  # truncated. A positive Go duration, or the empty string to use the
+  # binary's own default (30s). Zero durations are rejected at install.
   requestTimeout: ""
   extraArgs: []
   extraEnv: []

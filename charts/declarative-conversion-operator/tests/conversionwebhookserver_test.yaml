@@ -105,3 +105,19 @@ tests:
           value: sha256:0000000000000000000000000000000000000000000000000000000000000000
       - isNull:
           path: spec.image.tag
+
+  # values.schema.json is what keeps these from reaching the binary: the
+  # webhook-server refuses a zero or negative limit at startup, so a value the
+  # schema let through would arrive as a crash loop rather than as an error
+  # naming the value. The rejections themselves are exercised by
+  # `helm template` in CI, since helm-unittest renders after validation.
+  - it: renders the limits the binary accepts
+    set:
+      conversionWebhookServer.maxRequestBytes: 67108864
+      conversionWebhookServer.requestTimeout: 45s
+    asserts:
+      - equal:
+          path: spec.extraArgs
+          value:
+            - --max-request-bytes=67108864
+            - --request-timeout=45s

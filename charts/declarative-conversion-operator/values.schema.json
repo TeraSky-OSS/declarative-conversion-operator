@@ -144,13 +144,16 @@
         "namespace": { "type": "string" },
         "replicaCount": { "type": "integer", "minimum": 0 },
         "maxRequestBytes": {
-          "type": ["integer", "string"],
-          "description": "Bytes. Empty string takes the binary's own default (32 MiB)."
+          "description": "Bytes, as a positive integer. The empty string takes the binary's own default (32 MiB). A non-numeric string would be rendered into --max-request-bytes as 0, which the webhook-server refuses at startup — so it is rejected here, where the error names the value instead of arriving as a crash loop.",
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string", "const": "" }
+          ]
         },
         "requestTimeout": {
           "type": "string",
-          "description": "A Go duration such as 30s. Empty string takes the binary's own default.",
-          "pattern": "^$|^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$"
+          "description": "A positive Go duration such as 30s. The empty string takes the binary's own default. Zero durations are rejected: the webhook-server refuses them at startup, and a crash loop is a poor way to learn that.",
+          "$ref": "#/definitions/positiveDurationOrEmpty"
         },
         "extraArgs": { "type": "array", "items": { "type": "string" } },
         "extraEnv": { "type": "array", "items": { "type": "object" } },
@@ -233,7 +236,7 @@
           "additionalProperties": false,
           "properties": {
             "enabled": { "type": "boolean" },
-            "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" },
+            "interval": { "$ref": "#/definitions/positiveDuration" },
             "labels": { "type": "object", "additionalProperties": { "type": "string" } }
           }
         },
@@ -243,7 +246,7 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "labels": { "type": "object", "additionalProperties": { "type": "string" } },
-            "propagationLagFor": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" }
+            "propagationLagFor": { "$ref": "#/definitions/positiveDuration" }
           }
         }
       }
@@ -279,6 +282,15 @@
   },
 
   "definitions": {
+    "positiveDurationOrEmpty": {
+      "type": "string",
+      "description": "A Go duration with a non-zero magnitude, or the empty string. Written without a lookahead because the validator's regex engine has none: either the integer part contains a non-zero digit, or the fractional part does.",
+      "pattern": "^$|^([0-9]*[1-9][0-9]*(\\.[0-9]+)?|[0-9]*\\.[0-9]*[1-9][0-9]*)(ns|us|ms|s|m|h)$"
+    },
+    "positiveDuration": {
+      "type": "string",
+      "pattern": "^([0-9]*[1-9][0-9]*(\\.[0-9]+)?|[0-9]*\\.[0-9]*[1-9][0-9]*)(ns|us|ms|s|m|h)$"
+    },
     "imageComponent": {
       "type": "object",
       "additionalProperties": false,
@@ -324,8 +336,8 @@
       "additionalProperties": false,
       "properties": {
         "issuerRef": { "$ref": "#/definitions/issuerRef" },
-        "duration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
-        "renewBefore": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "duration": { "$ref": "#/definitions/positiveDuration" },
+        "renewBefore": { "$ref": "#/definitions/positiveDuration" },
         "dnsNames": { "type": "array", "items": { "type": "string" } }
       }
     }
