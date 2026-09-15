@@ -333,10 +333,17 @@ func (r *Report) junitSuite() junitTestSuite {
 	// with nothing saying which, is the exact false confidence the cap
 	// exists to make explicit.
 	if r.Meta.Sampling != nil {
+		// Not "equal to what we tested" when the walk stopped at the cap:
+		// the total was never counted, and a number there would be read as
+		// one.
+		population := strconv.Itoa(r.Meta.Sampling.Population)
+		if r.Meta.Sampling.Truncated {
+			population = "unknown"
+		}
 		suite.Props = &junitProperties{Properties: []junitProperty{
 			{Name: "sampled", Value: "true"},
 			{Name: "sampleStrategy", Value: r.Meta.Sampling.Strategy},
-			{Name: "samplePopulation", Value: strconv.Itoa(r.Meta.Sampling.Population)},
+			{Name: "samplePopulation", Value: population},
 			{Name: "sampleTested", Value: strconv.Itoa(r.Meta.Sampling.Tested)},
 		}}
 	}

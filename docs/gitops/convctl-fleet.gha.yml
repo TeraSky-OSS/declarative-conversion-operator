@@ -43,6 +43,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # Once per job. The Actions below consume convctl from PATH rather
+      # than each installing their own.
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
+
       # The delta, as a sticky comment per cluster. Exit 1 (deltas found) is
       # a review artifact and does not fail the job; exit 2 (cannot reach the
       # cluster) does.
@@ -79,6 +83,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
       - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-fleet@v1
         with:
           config: apis/widgets/conversion.yaml

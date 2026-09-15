@@ -85,8 +85,13 @@ type SamplingReport struct {
 	// Cap is the requested maximum.
 	Cap int `json:"cap"`
 	// Population is how many objects exist, counted while paginating even
-	// when most were never held.
-	Population int `json:"population"`
+	// when most were never held. Zero when the walk stopped early and the
+	// population was therefore never counted -- see Truncated.
+	Population int `json:"population,omitempty"`
+	// Truncated records that listing stopped at the cap, so the population
+	// is unknown rather than equal to what was tested. Only the first
+	// strategy can produce this.
+	Truncated bool `json:"truncated,omitempty"`
 	// Tested is how many were actually sampled.
 	Tested int `json:"tested"`
 	// Seed is present for the random strategy, so the run is repeatable.
@@ -101,6 +106,14 @@ func (s *SamplingReport) String() string {
 	if s.Strategy == SampleRandom {
 		seed = fmt.Sprintf(", seed %d", s.Seed)
 	}
+	if s.Truncated {
+		// The population is genuinely unknown: listing stopped at the cap,
+		// which is what makes the first strategy the cheap one. Printing a
+		// population equal to the sample would claim the run was
+		// exhaustive, which is the one thing this line exists to deny.
+		return fmt.Sprintf("SAMPLED: the first %d live object(s), strategy %s%s — listing stopped at the cap, so the total is unknown and this run did NOT cover every object",
+			s.Tested, s.Strategy, seed)
+	}
 	return fmt.Sprintf("SAMPLED: %d of %d live object(s), strategy %s%s — this run did NOT cover every object",
 		s.Tested, s.Population, s.Strategy, seed)
 }
@@ -112,7 +125,10 @@ type sampler struct {
 	rnd  *rand.Rand
 
 	seen int
-	kept []Sample
+	// stoppedEarly records that listing was cut short at the cap, so seen
+	// is a floor on the population rather than the population.
+	stoppedEarly bool
+	kept         []Sample
 	// order holds each kept sample's creation timestamp for SampleNewest,
 	// parallel to kept.
 	order []string
@@ -135,7 +151,11 @@ func newSampler(opts SamplingOptions) *sampler {
 // stop: the other two need to see the whole population to be what they
 // claim.
 func (s *sampler) full() bool {
-	return s.opts.enabled() && s.opts.strategy() == SampleFirst && len(s.kept) >= s.opts.MaxSamples
+	if s.opts.enabled() && s.opts.strategy() == SampleFirst && len(s.kept) >= s.opts.MaxSamples {
+		s.stoppedEarly = true
+		return true
+	}
+	return false
 }
 
 // add offers one object to the sample.
@@ -211,14 +231,22 @@ func (s *sampler) result() ([]Sample, *SamplingReport) {
 		}
 		kept = sorted
 	}
-	if !s.opts.enabled() || s.seen <= len(kept) {
+	// Stopping early is itself sampling, even though seen == kept: the
+	// listing never reached the end, so "we tested everything" is exactly
+	// what cannot be concluded. Reporting nothing here would have made the
+	// cheapest strategy the one that silently claims to be exhaustive.
+	if !s.opts.enabled() || (s.seen <= len(kept) && !s.stoppedEarly) {
 		return kept, nil
 	}
-	return kept, &SamplingReport{
-		Strategy:   s.opts.strategy(),
-		Cap:        s.opts.MaxSamples,
-		Population: s.seen,
-		Tested:     len(kept),
-		Seed:       s.opts.Seed,
+	rep := &SamplingReport{
+		Strategy:  s.opts.strategy(),
+		Cap:       s.opts.MaxSamples,
+		Tested:    len(kept),
+		Seed:      s.opts.Seed,
+		Truncated: s.stoppedEarly,
 	}
+	if !s.stoppedEarly {
+		rep.Population = s.seen
+	}
+	return kept, rep
 }

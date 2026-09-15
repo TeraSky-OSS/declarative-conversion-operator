@@ -33,13 +33,29 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install crossplane CLI
+      # A pinned release, with its checksum verified. Piping install.sh from
+      # `main` into a shell executes whatever that branch holds at the
+      # moment the job runs, which makes the gate unreproducible and trusts
+      # a mutable reference with the runner's privileges.
+      - name: Install the crossplane CLI
+        env:
+          CROSSPLANE_VERSION: v2.0.2
         run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh | sh
+          set -euo pipefail
+          url="https://releases.crossplane.io/stable/${CROSSPLANE_VERSION}/bin/linux_amd64/crank"
+          curl -fsSL -o crossplane "$url"
+          curl -fsSL -o crossplane.sha256 "${url}.sha256"
+          echo "$(cat crossplane.sha256)  crossplane" | sha256sum -c -
+          chmod +x crossplane
           sudo mv crossplane /usr/local/bin/
 
-      - name: Install convctl
-        run: go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest
+      # setup-convctl installs a pinned release and verifies the cosign
+      # signature on its checksums. `go install ...@latest` does neither: it
+      # resolves to whatever is newest at the moment the job runs, and
+      # nothing checks what it got.
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
+        with:
+          version: v0.5.0
 
       - name: Build the package
         run: crossplane xpkg build --package-root=./apis --package-file=platform.xpkg

@@ -240,3 +240,50 @@ func TestRunLint_PairsATreeAgainstAPackage(t *testing.T) {
 		t.Errorf("schema should name the package, not a temporary path: %q", rep.Results[0].Schema)
 	}
 }
+
+// A package is a file pulled from a registry or handed over by a third
+// party, so the names inside it are untrusted. An XRD called ../../evil must
+// not decide where this process writes.
+func TestStagePackageXRDs_CannotEscapeTheStagingDirectory(t *testing.T) {
+	pkg, err := ReadPackage(testPackage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rename the XRDs to hostile values, keeping everything else real.
+	pkg.XRDs[0].SetName("../../../../tmp/convctl-escape")
+	pkg.XRDs[1].SetName("../../../../tmp/convctl-escape")
+
+	staged, cleanup, err := stagePackageXRDsFrom(pkg, "hostile.xpkg")
+	if err != nil {
+		t.Fatalf("staging: %v", err)
+	}
+	defer cleanup()
+
+	if len(staged) != 2 {
+		t.Fatalf("staged %d files, want both XRDs kept distinct despite the same name", len(staged))
+	}
+	seen := map[string]bool{}
+	for _, d := range staged {
+		abs, err := filepath.Abs(d.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(abs, "/tmp/convctl-escape") {
+			t.Errorf("staged file escaped to %s", abs)
+		}
+		if !strings.Contains(abs, "convctl-package-") {
+			t.Errorf("staged file %s is outside the staging directory", abs)
+		}
+		if seen[abs] {
+			t.Errorf("two XRDs staged to the same path %s, so one overwrote the other", abs)
+		}
+		seen[abs] = true
+		if _, err := os.Stat(d.path); err != nil {
+			t.Errorf("staged file is not readable: %v", err)
+		}
+	}
+	if _, err := os.Stat("/tmp/convctl-escape.yaml"); err == nil {
+		t.Error("a file was written outside the staging directory")
+		_ = os.Remove("/tmp/convctl-escape.yaml")
+	}
+}

@@ -3,6 +3,8 @@
 Runs `convctl test` and puts the result where a reviewer will see it.
 
 ```yaml
+# convctl comes from setup-convctl, once per job.
+- uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
 - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-test@v1
   with:
     config: apis/widgets/conversion.yaml
@@ -43,3 +45,14 @@ Behaviour: `fail-on`, `strict`, `validate-output`, `concurrency`, `version`,
 `kubeconfig` is written with `umask 077` **before** the file is created rather
 than `chmod`-ed afterwards — between creation and chmod the file is briefly
 world-readable — and is never echoed.
+
+## Requires `setup-convctl`
+
+This Action consumes `convctl` from `PATH` and does not install it. Run
+[`setup-convctl`](../setup-convctl) first — once per job, however many of
+these Actions follow.
+
+That is not an ergonomic preference. A composite action cannot reference a
+local action by path once published: `./…` resolves against the **consumer's**
+workspace, so a nested setup step would work in this repository's own tests
+and fail for everyone else.

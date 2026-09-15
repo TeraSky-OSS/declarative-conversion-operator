@@ -242,3 +242,88 @@ func TestReport_TableSaysARunWasSampled(t *testing.T) {
 		t.Errorf("table does not report the sampling:\n%s", sb.String())
 	}
 }
+
+// The cheapest strategy stops listing at the cap, so seen == kept — and a
+// report keyed only on that comparison said nothing, which meant the one
+// strategy that cannot know the population was the one that silently
+// claimed to have covered it.
+func TestSampler_FirstReportsSamplingEvenThoughItStoppedEarly(t *testing.T) {
+	s := newSampler(SamplingOptions{MaxSamples: 5, Strategy: SampleFirst})
+	for i := 0; i < 100; i++ {
+		if s.full() {
+			break
+		}
+		s.add(Sample{File: fmt.Sprintf("o%d", i)}, nil)
+	}
+	kept, rep := s.result()
+	if len(kept) != 5 {
+		t.Fatalf("kept %d, want the cap of 5", len(kept))
+	}
+	if rep == nil {
+		t.Fatal("stopping early reported no sampling at all, so the run reads as exhaustive")
+	}
+	if !rep.Truncated {
+		t.Error("the report does not record that listing stopped early")
+	}
+	if rep.Population != 0 {
+		t.Errorf("Population = %d; it was never counted and must not be implied", rep.Population)
+	}
+	msg := rep.String()
+	if !strings.Contains(msg, "total is unknown") || !strings.Contains(msg, "did NOT cover every object") {
+		t.Errorf("the line does not say the total is unknown: %s", msg)
+	}
+	if strings.Contains(msg, "5 of 5") {
+		t.Errorf("the line implies the population equals the sample: %s", msg)
+	}
+}
+
+// And the JUnit properties must not imply it either.
+func TestReport_JUnitSaysThePopulationIsUnknownWhenTruncated(t *testing.T) {
+	rep := &Report{}
+	rep.Meta.Sampling = &SamplingReport{Strategy: SampleFirst, Cap: 5, Tested: 5, Truncated: true}
+	got := map[string]string{}
+	for _, p := range rep.junitSuite().Props.Properties {
+		got[p.Name] = p.Value
+	}
+	if got["samplePopulation"] != "unknown" {
+		t.Errorf("samplePopulation = %q, want unknown", got["samplePopulation"])
+	}
+}
+
+// A population that genuinely fit under the cap still reports nothing.
+func TestSampler_FirstUnderTheCapIsNotSampling(t *testing.T) {
+	s := newSampler(SamplingOptions{MaxSamples: 50, Strategy: SampleFirst})
+	feed(s, 10)
+	if _, rep := s.result(); rep != nil {
+		t.Errorf("a population that fit was reported as sampled: %+v", rep)
+	}
+}
+
+// RunTest is exported, so the cobra command is not the only way in. Invalid
+// sampling options that reach the sampler do the opposite of what they say:
+// a negative cap disables the bound and paginates everything into memory,
+// and an unknown strategy keeps nothing and then fails for having no
+// samples.
+func TestRunTest_ValidatesSamplingOptions(t *testing.T) {
+	base := TestOptions{
+		XRDPath: "testdata/full/xrd.yaml", ConfigPath: "testdata/full/config.yaml",
+		SamplesDir: "testdata/full/samples", Quiet: true,
+	}
+
+	bad := base
+	bad.Sampling = SamplingOptions{MaxSamples: -1}
+	if _, err := RunTest(bad); err == nil {
+		t.Error("a negative cap was accepted, which disables the bound entirely")
+	}
+
+	bad = base
+	bad.Sampling = SamplingOptions{MaxSamples: 10, Strategy: "newestish"}
+	if _, err := RunTest(bad); err == nil {
+		t.Error("an unknown strategy was accepted")
+	}
+
+	// A fixture run with no sampling options is unaffected.
+	if _, err := RunTest(base); err != nil {
+		t.Errorf("an ordinary run was rejected: %v", err)
+	}
+}

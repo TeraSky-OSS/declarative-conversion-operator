@@ -245,11 +245,19 @@ runs:
         EXT: ${{ steps.resolve.outputs.ext }}
         BIN: ${{ steps.resolve.outputs.bin }}
         DIR: ${{ steps.resolve.outputs.dir }}
+        VERIFY: ${{ inputs.verify }}
       run: |
         set -euo pipefail
         cd "$DIR"
 
-        if [ ! -f "$BIN" ]; then
+        # With verification on, the binary is always re-extracted from the
+        # archive that was just verified. Keeping an existing $BIN would
+        # trust a file nothing checked: the checksum covers the archive, and
+        # a cache entry can hold an intact archive beside an altered binary.
+        # That is the shape of the attack the verification exists to stop,
+        # and skipping extraction would walk straight past it.
+        if [ "$VERIFY" = "true" ] || [ ! -f "$BIN" ]; then
+          rm -f "$BIN"
           if [ "$EXT" = "zip" ]; then
             unzip -o "$ARCHIVE" >/dev/null
           else

@@ -312,6 +312,13 @@ func stagePackageXRDs(ref string) ([]discovered, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	return stagePackageXRDsFrom(pkg, ref)
+}
+
+// stagePackageXRDsFrom is stagePackageXRDs with the package already read,
+// so the staging rules can be tested against hostile contents without
+// building a hostile package.
+func stagePackageXRDsFrom(pkg *PackageContents, ref string) ([]discovered, func(), error) {
 	if len(pkg.XRDs) == 0 {
 		return nil, nil, fmt.Errorf("%s ships no XRDs to check configs against", ref)
 	}
@@ -321,13 +328,19 @@ func stagePackageXRDs(ref string) ([]discovered, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	var out []discovered
-	for _, x := range pkg.XRDs {
+	for i, x := range pkg.XRDs {
 		data, merr := sigsyaml.Marshal(x.Object)
 		if merr != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("%s: re-encoding %s: %w", ref, xrdName(x), merr)
 		}
-		path := filepath.Join(dir, xrdName(x)+".yaml")
+		// The name comes out of a package pulled from a registry or handed
+		// over by a third party, so it is untrusted: an XRD called
+		// ../../evil would otherwise have filepath.Join resolve outside the
+		// temporary directory and write wherever the invoking user can. The
+		// index keeps two XRDs of the same name from overwriting each
+		// other, which the base name alone would not.
+		path := filepath.Join(dir, fmt.Sprintf("%02d-%s.yaml", i, filepath.Base(xrdName(x))))
 		if werr := os.WriteFile(path, data, 0o600); werr != nil {
 			cleanup()
 			return nil, nil, werr

@@ -4,6 +4,8 @@ Runs `convctl test --live` against every cluster in a fleet and aggregates
 the result into one JUnit report, with one `<testsuite>` per cluster.
 
 ```yaml
+# convctl comes from setup-convctl, once per job.
+- uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
 - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-fleet@v1
   with:
     config: apis/widgets/conversion.yaml
@@ -33,3 +35,14 @@ set up, but a clearer failure surface and parallel execution. Use
 ## Outputs
 
 `exit-code`, `report-path`, `clusters`, `failed-clusters`.
+
+## Requires `setup-convctl`
+
+This Action consumes `convctl` from `PATH` and does not install it. Run
+[`setup-convctl`](../setup-convctl) first — once per job, however many of
+these Actions follow.
+
+That is not an ergonomic preference. A composite action cannot reference a
+local action by path once published: `./…` resolves against the **consumer's**
+workspace, so a nested setup step would work in this repository's own tests
+and fail for everyone else.

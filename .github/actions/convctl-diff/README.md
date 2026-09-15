@@ -10,6 +10,8 @@ permissions:
   pull-requests: write
 
 steps:
+  # convctl comes from setup-convctl, once per job.
+  - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
   - uses: terasky-oss/declarative-conversion-operator/.github/actions/convctl-diff@v1
     with:
       config: apis/widgets/conversion.yaml
@@ -46,3 +48,14 @@ A `pull_request` event from a fork has a read-only token. The Action emits a
 check a contributor cannot fix teaches them to ignore red checks.
 
 Needs `pull-requests: write` to comment.
+
+## Requires `setup-convctl`
+
+This Action consumes `convctl` from `PATH` and does not install it. Run
+[`setup-convctl`](../setup-convctl) first — once per job, however many of
+these Actions follow.
+
+That is not an ergonomic preference. A composite action cannot reference a
+local action by path once published: `./…` resolves against the **consumer's**
+workspace, so a nested setup step would work in this repository's own tests
+and fail for everyone else.

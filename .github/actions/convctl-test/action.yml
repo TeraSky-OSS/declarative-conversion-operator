@@ -67,16 +67,6 @@ inputs:
     description: Parallel workers.
     required: false
     default: ""
-  version:
-    description: convctl release tag to install.
-    required: false
-    default: latest
-  binary:
-    description: >-
-      Path to a convctl that already exists, used instead of downloading one.
-      See setup-convctl.
-    required: false
-    default: ""
   upload-artifact:
     description: Upload the JUnit report as a workflow artifact.
     required: false
@@ -112,11 +102,22 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up convctl
-      uses: ./.github/actions/setup-convctl
-      with:
-        version: ${{ inputs.version }}
-        binary: ${{ inputs.binary }}
+    # convctl is not installed here. A composite action cannot reference a
+    # local action by path once it is published: `./…` resolves against the
+    # CONSUMER's workspace, not this repository, so a nested setup step
+    # works in these tests and fails for everyone else. Run setup-convctl
+    # first — which also means installing once per job rather than once per
+    # Action.
+    - name: Check convctl is on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v convctl >/dev/null 2>&1; then
+          echo "::error::convctl is not on PATH. Run the setup-convctl Action before this one:" >&2
+          echo "  - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1" >&2
+          exit 1
+        fi
+        convctl version
 
     - name: Write kubeconfig
       if: inputs.kubeconfig != ''

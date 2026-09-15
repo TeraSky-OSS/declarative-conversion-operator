@@ -249,3 +249,26 @@ func TestSetupConvctl_HandlesEveryRunnerPlatform(t *testing.T) {
 		t.Error("an unknown OS or architecture is not rejected")
 	}
 }
+
+// The checksum covers the archive, not the extracted binary — so a cache
+// entry holding an intact archive beside an altered binary would be used as
+// it stands if extraction were skipped because the binary was already
+// there. That is precisely the attack the verification exists to stop.
+func TestSetupConvctl_ReExtractsWhenVerifying(t *testing.T) {
+	def := loadActions(t)["setup-convctl"]
+	var extract string
+	for _, s := range def.Runs.Steps {
+		if s.ID == "install" {
+			extract = s.Run
+		}
+	}
+	if extract == "" {
+		t.Fatal("no install step")
+	}
+	if !strings.Contains(extract, `if [ "$VERIFY" = "true" ] || [ ! -f "$BIN" ]`) {
+		t.Error("extraction is skipped when the binary already exists, so an unverified binary can be used")
+	}
+	if !strings.Contains(extract, "rm -f \"$BIN\"") {
+		t.Error("the existing binary is not removed before extraction")
+	}
+}

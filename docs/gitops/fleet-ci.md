@@ -175,9 +175,12 @@ jobs:
         run: |
           git fetch --depth=1 origin \
             "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-      - name: Install convctl
-        run: |
-          go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest
+      # A pinned release with its signature verified, rather than
+      # `go install ...@latest`, which resolves to whatever is newest when
+      # the job runs and checks nothing about what it got.
+      - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1
+        with:
+          version: v0.5.0
       - run: |
           convctl compat \
             --base "origin/${{ github.base_ref }}" --head HEAD \

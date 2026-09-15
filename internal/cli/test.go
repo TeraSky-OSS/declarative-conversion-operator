@@ -176,6 +176,15 @@ func RunTest(opts TestOptions) (*Report, error) {
 	if opts.Fuzz > 0 && opts.FuzzSeed == 0 {
 		opts.FuzzSeed = time.Now().UnixNano()
 	}
+	// Validated here rather than only in the cobra command: RunTest is
+	// exported, and a caller that bypasses the flag parsing would otherwise
+	// reach the sampler with options it rejects — a negative cap disables
+	// the bound entirely and paginates the whole population into memory,
+	// and an unknown strategy keeps nothing and then fails the run for
+	// having no samples.
+	if err := ValidateSamplingOptions(opts.Sampling); err != nil {
+		return nil, err
+	}
 	kind, err := PeekConfigKind(opts.ConfigPath)
 	if err != nil {
 		return nil, err

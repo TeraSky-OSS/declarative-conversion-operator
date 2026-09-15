@@ -68,16 +68,13 @@ homebrew_casks:
     homepage: https://terasky-oss.github.io/declarative-conversion-operator/
     description: CLI for the declarative conversion operator
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
-    # An unsigned binary downloaded by a cask is quarantined by Gatekeeper,
-    # and the failure ("convctl is damaged") reads like a corrupt download
-    # rather than a policy. The archive's checksum is already verified by
-    # Homebrew itself.
-    hooks:
-      post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/convctl"]
-          end
+    # No quarantine-stripping hook. Removing com.apple.quarantine would
+    # turn Gatekeeper off for this binary, and a checksum is not a
+    # substitute for code signing and notarization: it proves the file is
+    # the one the release published, not that anybody vouched for what it
+    # does. macOS will warn on first run until these artifacts are notarized,
+    # which is the honest state of affairs rather than one papered over
+    # during install.
 
 scoops:
   - name: convctl

@@ -207,12 +207,13 @@ jobs:
       # the last release. Otherwise every fixture here would be limited to
       # features that already shipped — which is the opposite of what a pull
       # request needs to prove.
-      - name: Build the convctl under test
-        id: build
+      # On PATH, exactly as setup-convctl would leave it — the Actions
+      # under test consume convctl from PATH rather than installing it.
+      - name: Build the convctl under test and put it on PATH
         run: |
           set -euo pipefail
           go build -o "$RUNNER_TEMP/convctl" ./cmd/convctl
-          echo "binary=$RUNNER_TEMP/convctl" >> "$GITHUB_OUTPUT"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       # A clean fixture passes and still produces a report.
       - name: Clean fixture
@@ -223,7 +224,6 @@ jobs:
           xrd: internal/cli/testdata/full/xrd.yaml
           samples: internal/cli/testdata/full/samples
           artifact-name: actions-test-clean
-          binary: ${{ steps.build.outputs.binary }}
 
       # Outputs go through env rather than being interpolated into the
       # script: an output the Action never set would otherwise expand to
@@ -305,7 +305,6 @@ jobs:
           samples: internal/cli/testdata/validate-output/samples
           validate-output: "true"
           artifact-name: actions-test-failing
-          binary: ${{ steps.build.outputs.binary }}
 
       - name: Assert it failed, and reported why
         shell: bash
@@ -332,7 +331,6 @@ jobs:
           samples: internal/cli/testdata/full/samples
           annotate: "false"
           upload-artifact: "false"
-          binary: ${{ steps.build.outputs.binary }}
 
       - name: It still ran
         shell: bash
@@ -356,12 +354,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build the convctl under test
-        id: build
+      # On PATH, exactly as setup-convctl would leave it — the Actions
+      # under test consume convctl from PATH rather than installing it.
+      - name: Build the convctl under test and put it on PATH
         run: |
           set -euo pipefail
           go build -o "$RUNNER_TEMP/convctl" ./cmd/convctl
-          echo "binary=$RUNNER_TEMP/convctl" >> "$GITHUB_OUTPUT"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       # comment:false — this job proves the rendering and the exit-code
       # semantics; commenting needs a pull request and a writable token.
@@ -374,7 +373,6 @@ jobs:
             examples/crossplane-xr-multiversion/mistakes/02-missing-rename.yaml
           xrd: examples/crossplane-xr-multiversion/03-promote-v2/xrd.yaml
           comment: "false"
-          binary: ${{ steps.build.outputs.binary }}
 
       - name: A delta was found and did not fail the job
         shell: bash
@@ -404,7 +402,6 @@ jobs:
             examples/field-rename/xrdconversionconfig.yaml
           xrd: examples/field-rename/xrd.yaml
           comment: "false"
-          binary: ${{ steps.build.outputs.binary }}
 
       - name: And say so rather than rendering nothing
         shell: bash

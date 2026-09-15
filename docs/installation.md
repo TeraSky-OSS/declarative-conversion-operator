@@ -167,7 +167,7 @@ drops conversions while the schema and config reconcile independently.
 | rpm | `sudo rpm -i convctl_<version>_linux_amd64.rpm` | RHEL, Fedora, SUSE |
 | Archive | download `declarative-conversion-operator-cli_<version>_<os>_<arch>.tar.gz` from the [releases page](https://github.com/TeraSky-OSS/declarative-conversion-operator/releases) | all |
 | Container | see [below](#the-convctl-container-image) | linux/amd64, linux/arm64 |
-| Source | `go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest` | all |
+| Source | `go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest` | all — note that `@latest` resolves at install time and nothing verifies the result; prefer a release artifact in CI |
 
 Every archive's checksum is covered by the cosign-signed `checksums.txt`; see
 the signed-artifact section of any release for the verification commands.

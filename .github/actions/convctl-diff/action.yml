@@ -46,16 +46,6 @@ inputs:
       error (exit 2) always fails.
     required: false
     default: "false"
-  version:
-    description: convctl release tag to install.
-    required: false
-    default: latest
-  binary:
-    description: >-
-      Path to a convctl that already exists, used instead of downloading one.
-      See setup-convctl.
-    required: false
-    default: ""
   token:
     description: Token used to upsert the comment.
     required: false
@@ -75,11 +65,22 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up convctl
-      uses: ./.github/actions/setup-convctl
-      with:
-        version: ${{ inputs.version }}
-        binary: ${{ inputs.binary }}
+    # convctl is not installed here. A composite action cannot reference a
+    # local action by path once it is published: `./…` resolves against the
+    # CONSUMER's workspace, not this repository, so a nested setup step
+    # works in these tests and fails for everyone else. Run setup-convctl
+    # first — which also means installing once per job rather than once per
+    # Action.
+    - name: Check convctl is on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v convctl >/dev/null 2>&1; then
+          echo "::error::convctl is not on PATH. Run the setup-convctl Action before this one:" >&2
+          echo "  - uses: terasky-oss/declarative-conversion-operator/.github/actions/setup-convctl@v1" >&2
+          exit 1
+        fi
+        convctl version
 
     - name: Write kubeconfig
       if: inputs.kubeconfig != ''
@@ -172,7 +173,11 @@ runs:
           exit 0
         fi
 
-        marker="<!-- convctl-diff:$TAG -->"
+        # Collapse the tag onto one line: it defaults to the config input,
+        # which is multiline when two configs are being compared, and a
+        # marker containing a newline would never match itself.
+        tag="$(tr '\n' '_' <<< "$TAG" | sed 's/_$//')"
+        marker="<!-- convctl-diff:$tag -->"
         body="$RUNNER_TEMP/convctl-diff-comment.md"
         {
           echo "$marker"
@@ -181,8 +186,16 @@ runs:
 
         # Find this tag's comment and edit it, so repeated runs update one
         # comment rather than appending a new one each push.
+        #
+        # The marker goes to jq as data, not spliced into the filter. The
+        # default tag is the config input, which is multiline for the
+        # two-config form — and a newline inside a jq string literal is a
+        # syntax error, so the lookup would fail and every run would post a
+        # new comment. A quote or backslash in an explicit tag does the
+        # same.
         existing="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-          --jq "[.[] | select(.body | contains(\"$marker\"))] | .[0].id // empty")"
+          | jq -r --arg marker "$marker" \
+              '[.[] | select(.body | contains($marker))] | .[0].id // empty')"
 
         if [ -n "$existing" ]; then
           gh api --method PATCH "repos/$REPO/issues/comments/$existing" \
