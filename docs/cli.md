@@ -26,6 +26,19 @@ convctl crossplane status <xrd-name> [-o table|json]
 
 Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations. Around all of it, `plan` sequences the migration, `versions` answers whether an old version can be retired yet, and `compat` gates config edits in review.
 
+## Running it in a container
+
+```console
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/terasky-oss/declarative-conversion-convctl:v0.5.0 \
+  lint ./platform/
+```
+
+Published on every release for `linux/amd64` and `linux/arm64`, signed and
+attested like the operator images. It is distroless and has no shell, so run
+one `convctl` invocation per step rather than chaining — see
+[Installation: the `convctl` container image](installation.md#the-convctl-container-image).
+
 ## `convctl validate`
 
 Runs the same static checks the admission webhook performs, offline.

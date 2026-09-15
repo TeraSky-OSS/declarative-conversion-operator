@@ -22,6 +22,7 @@ env:
   # matrix.image below.
   MANAGER_IMAGE: ghcr.io/terasky-oss/declarative-conversion-operator
   WEBHOOK_SERVER_IMAGE: ghcr.io/terasky-oss/declarative-conversion-webhook-server
+  CONVCTL_IMAGE: ghcr.io/terasky-oss/declarative-conversion-convctl
   CHART_REPO: ghcr.io/terasky-oss/charts
 
 jobs:
@@ -46,6 +47,12 @@ jobs:
             image: ghcr.io/terasky-oss/declarative-conversion-operator
           - component: webhook-server
             image: ghcr.io/terasky-oss/declarative-conversion-webhook-server
+          # The CLI ships as an image too, for pipelines that would rather
+          # pin a digest than download a binary: Tekton, Argo Workflows,
+          # GitLab's image:, a GitHub container: job. Same Dockerfile, same
+          # distroless base, same signing and attestations.
+          - component: convctl
+            image: ghcr.io/terasky-oss/declarative-conversion-convctl
     steps:
       - name: Checkout
         uses: actions/checkout@v7

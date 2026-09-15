@@ -156,3 +156,38 @@ For Flux or Argo, use the [GitOps operator sync](gitops/operator-sync.md)
 examples (`examples/gitops/flux`, `examples/gitops/argo`). Keep
 `driftPolicy: KeepServingStale` on GitOps-managed configs — `FailClosed`
 drops conversions while the schema and config reconcile independently.
+
+## The `convctl` container image
+
+For pipelines that would rather pin a digest than download a binary — Tekton,
+Argo Workflows, GitLab's `image:`, a GitHub `container:` job — the CLI is
+published alongside the two operator images:
+
+```console
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/terasky-oss/declarative-conversion-convctl:v0.5.0 \
+  test --xrd xrd.yaml --config xrdconversionconfig.yaml --samples ./samples/
+```
+
+`linux/amd64` and `linux/arm64`, cosign-signed with build-provenance and SBOM
+attestations exactly like the other two — the digest is listed in each
+release's signed-artifact table, and the same `cosign verify` invocation
+applies.
+
+### Base image: distroless, and what that costs you
+
+The CLI image uses the same `gcr.io/distroless/static:nonroot` base as the
+operator, deliberately:
+
+- **`--live` works.** The base includes `/etc/ssl/certs/ca-certificates.crt`,
+  so TLS to an HTTPS apiserver verifies. (Checked, not assumed.)
+- **There is no shell.** `ENTRYPOINT` is the binary, so
+  `docker run <image> test …` reads naturally — but you cannot chain commands
+  inside the container, and `sh -c` is not available. In a CI system that
+  expects to run a script in the container, either run one `convctl`
+  invocation per step, or use the released binary with
+  the released binary on a normal runner image.
+
+A shell-bearing variant was considered and not published: two images means
+two bases to patch, and the operator's base stays as it is regardless.
+
