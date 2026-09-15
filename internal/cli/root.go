@@ -108,7 +108,7 @@ same as no version.`,
 var Version = "dev"
 
 func newValidateCmd() *cobra.Command {
-	var configPath, xrdPath, crdPath, output string
+	var configPath, xrdPath, crdPath, output, packagePath, packageTarget string
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate a conversion config the same way the admission webhook does",
@@ -122,7 +122,7 @@ schemas.`,
 			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
 				return err
 			}
-			res, err := RunValidate(configPath, xrdPath, crdPath)
+			res, err := RunValidateFrom(configPath, xrdPath, crdPath, packagePath, packageTarget)
 			if err != nil {
 				return err
 			}
@@ -151,16 +151,22 @@ schemas.`,
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (optional; enables live schema validation against an XRDConversionConfig)")
 	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (optional; enables live schema validation against a CRDConversionConfig)")
+	cmd.Flags().StringVar(&packagePath, "package", "", "Read the target XRD from a Crossplane package instead of a file (a local .xpkg). The unit of API change for a platform shipped as a Configuration is a package version")
+	cmd.Flags().StringVar(&packageTarget, "target", "", "With --package, select one XRD by name when the package ships several")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	// --package is a schema source like --xrd, so it joins that group --
+	// not the sample group, where --live lives.
+	cmd.MarkFlagsMutuallyExclusive("xrd", "package")
+	cmd.MarkFlagsMutuallyExclusive("crd", "package")
 	registerOfflineFlagCompletions(cmd)
 	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
 
 func newAnalyzeCmd() *cobra.Command {
-	var xrdPath, crdPath, configPath, output string
+	var xrdPath, crdPath, configPath, output, packagePath, packageTarget string
 	cmd := &cobra.Command{
 		Use:   "analyze",
 		Short: "Report lossiness and rule coverage from schemas alone",
@@ -173,7 +179,7 @@ are lossy in which direction, and whether every schema field is covered.`,
 			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
 				return err
 			}
-			out, err := RunAnalyze(xrdPath, crdPath, configPath)
+			out, err := RunAnalyzeFrom(xrdPath, crdPath, configPath, packagePath, packageTarget)
 			if err != nil {
 				return err
 			}
@@ -196,11 +202,17 @@ are lossy in which direction, and whether every schema field is covered.`,
 	}
 	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to an XRD YAML file (required for an XRDConversionConfig)")
 	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to a CRD YAML file (required for a CRDConversionConfig)")
+	cmd.Flags().StringVar(&packagePath, "package", "", "Read the target XRD from a Crossplane package instead of a file (a local .xpkg). The unit of API change for a platform shipped as a Configuration is a package version")
+	cmd.Flags().StringVar(&packageTarget, "target", "", "With --package, select one XRD by name when the package ships several")
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to an XRDConversionConfig or CRDConversionConfig YAML file (required)")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	_ = cmd.MarkFlagRequired("config")
-	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsOneRequired("xrd", "crd", "package")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	// --package is a schema source like --xrd, so it joins that group --
+	// not the sample group, where --live lives.
+	cmd.MarkFlagsMutuallyExclusive("xrd", "package")
+	cmd.MarkFlagsMutuallyExclusive("crd", "package")
 	registerOfflineFlagCompletions(cmd)
 	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
@@ -209,6 +221,7 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
+		packagePath, packageTarget                                           string
 		recordDir, goldenDir, recordFailures                                 string
 		fuzzN                                                                int
 		fuzzSeed                                                             int64
@@ -306,6 +319,7 @@ results are collected by sample index, never by completion order.`,
 			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
+				PackagePath: packagePath, PackageTarget: packageTarget,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
@@ -373,6 +387,8 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
+	cmd.Flags().StringVar(&packagePath, "package", "", "Read the target XRD from a Crossplane package instead of a file (a local .xpkg). The unit of API change for a platform shipped as a Configuration is a package version")
+	cmd.Flags().StringVar(&packageTarget, "target", "", "With --package, select one XRD by name when the package ships several")
 	cmd.Flags().IntVar(&maxSamples, "max-samples", 0, "With --live, cap how many objects are tested (default: every object). The report says so when a run was sampled")
 	cmd.Flags().StringVar(&sampleStrategy, "sample-strategy", "", "With --max-samples: first (cheapest), random (uniform, reproducible with --seed), or newest (default: first)")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "With --live, narrow to one namespace. Only namespaced object classes are affected; a cluster-scoped composite cannot be narrowed")
@@ -385,8 +401,12 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringVar(&goldenDir, "golden", "", "Replay a corpus recorded by --record and fail on any difference, reporting which fields changed. Mutually exclusive with --record")
 	cmd.Flags().BoolVar(&validateOutput, "validate-output", false, "Validate every converted object against the destination version's OpenAPI schema, using the apiserver's own validator. A violation is an error, not a loss. Off by default this release; the default is planned to flip")
 	_ = cmd.MarkFlagRequired("config")
-	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsOneRequired("xrd", "crd", "package")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	// --package is a schema source like --xrd, so it joins that group --
+	// not the sample group, where --live lives.
+	cmd.MarkFlagsMutuallyExclusive("xrd", "package")
+	cmd.MarkFlagsMutuallyExclusive("crd", "package")
 	// --fuzz is a third source of samples, and composes with --samples:
 	// generated objects test the boundaries, fixtures test the cases
 	// somebody deliberately wrote down.
@@ -854,6 +874,7 @@ func newLintCmd() *cobra.Command {
 		schemaDirs, exclude []string
 		output, failOn      string
 		concurrency         int
+		packageRef          string
 	)
 	cmd := &cobra.Command{
 		Use:   "lint [path...]",
@@ -894,6 +915,7 @@ the --fail-on threshold, 2 usage error.`,
 			}
 			rep, err := RunLint(LintOptions{
 				Paths: args, SchemaDirs: schemaDirs, Exclude: exclude, Concurrency: concurrency,
+				PackageRef: packageRef,
 			})
 			if err != nil {
 				return err
@@ -915,6 +937,7 @@ the --fail-on threshold, 2 usage error.`,
 		},
 	}
 	cmd.Flags().StringSliceVar(&schemaDirs, "schema-dir", nil, "Additional directories to search for XRDs and CRDs (repeatable)")
+	cmd.Flags().StringVar(&packageRef, "package", "", "Pair every config in the tree against the XRDs a Crossplane package ships (a local .xpkg), rather than against schema files")
 	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "Glob patterns to skip, matched against the path and its base name (repeatable)")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
 	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Failure threshold: none|warn|loss")

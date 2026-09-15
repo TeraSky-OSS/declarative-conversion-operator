@@ -3,10 +3,10 @@
 `convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Most commands work identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch. `migrate-storage` is the exception: it is a live, mutating housekeeping command that takes cluster resource names (not files) and does not need a conversion config.
 
 ```console
-convctl lint          [path...] [--schema-dir dir] [--exclude glob] [-o table|json|github|sarif|markdown]
-convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json|github|sarif|markdown]
-convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|github|sarif|markdown]
-convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [-o table|json|junit|github|sarif|markdown] [flags]
+convctl lint          [path...] [--schema-dir dir] [--package platform.xpkg] [--exclude glob] [-o table|json|github|sarif|markdown]
+convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml | --package p.xpkg] [-o table|json|github|sarif|markdown]
+convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml | --package p.xpkg) [-o table|json|github|sarif|markdown]
+convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml | --package p.xpkg) (--samples ./samples/ | --live) [-o table|json|junit|github|sarif|markdown] [flags]
 convctl plan          --to v2 (--xrd xrd.yaml | --crd crd.yaml) [--config config.yaml] [-o table|json]
 convctl versions      --xrd xrd.yaml [--config config.yaml] [--check-unserve v1] [-o table|json]
 convctl compat        --base REV --head REV --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
@@ -25,6 +25,66 @@ convctl crossplane status <xrd-name> [-o table|json]
 `plan` is the one to start from if you are mid-migration and unsure what comes next: it prints the ordered, gated path from the target's current state to the version you name, and marks the one step that is safe to do now.
 
 Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations. Around all of it, `plan` sequences the migration, `versions` answers whether an old version can be retired yet, and `compat` gates config edits in review.
+
+## Schema sources
+
+Every command that needs a schema takes one of these, interchangeably:
+
+| Source | Flag | Answers |
+|---|---|---|
+| A file | `--xrd xrd.yaml` / `--crd crd.yaml` | "does my config hold against this schema?" |
+| A Crossplane package | `--package ./platform.xpkg` | "does it hold against the XRDs I am about to publish?" — no registry, no cluster |
+| The cluster | `--live` (a **sample** source, not a schema source) | — |
+
+`--package` slots in exactly where `--xrd` does rather than being a new verb,
+so `validate`, `analyze`, `test` and `lint` all take it.
+
+### Why a package is its own source
+
+For a platform shipped as a Crossplane `Configuration`, **the unit of API
+change is a package version** — not a git commit, and not the live cluster.
+The team whose XRDs most need conversion testing is otherwise the team least
+able to run it.
+
+```console
+# Does my config hold against the XRDs I am about to publish?
+convctl test --package ./platform.xpkg --config config.yaml --samples ./samples/
+
+# The one that matters most: the version about to be rolled out, against the
+# objects already in the cluster that will receive it.
+convctl test --package ./platform.xpkg --config config.yaml --live
+
+# A whole package against a whole config tree — the Configuration repo's gate.
+convctl lint ./configs/ --package ./platform.xpkg
+```
+
+`--package` is a schema source and `--live` is a sample source, so they
+compose: *"if I bump this Configuration, do my 4,000 existing composites still
+convert?"* is the question platform teams have before an upgrade, and nothing
+else answers it.
+
+`--target <xrd-name>` selects one XRD when a package ships several. Omitting
+it is an error naming the candidates rather than a guess — picking the first
+would make the answer depend on the order the package was built in.
+
+### What is implemented
+
+Only the **local `.xpkg`** form. An xpkg is an OCI image saved as a tarball,
+so reading it needs nothing but the standard library — and it is the tightest
+loop, before anything is published anywhere.
+
+Registry references (`ghcr.io/org/platform:v1.4.0`) and cluster references
+(`configuration/<name>`, `configurationrevision/<name>`) are recognised and
+rejected with the command that gets you a local file:
+
+```console
+$ convctl analyze --package ghcr.io/org/platform:v1.4.0 --config config.yaml
+error: reading a package from a registry (ghcr.io/org/platform:v1.4.0) is not implemented yet;
+`crossplane xpkg pull ghcr.io/org/platform:v1.4.0 -o package.xpkg` and pass the file
+```
+
+Adding them means a registry client (`go-containerregistry`), which the
+offline path does not need and should not carry.
 
 ## Running it in a container
 

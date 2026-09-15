@@ -27,6 +27,8 @@ import (
 	"sync"
 	"text/tabwriter"
 
+	sigsyaml "sigs.k8s.io/yaml"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -42,6 +44,11 @@ type LintOptions struct {
 	Exclude []string
 	// Concurrency bounds the parallel analysis. Zero means one per CPU.
 	Concurrency int
+	// PackageRef pairs every config in the tree against the XRDs a
+	// Crossplane package ships, rather than against schema files. A whole
+	// package against a whole config tree, one command, is the
+	// Configuration repository's CI gate.
+	PackageRef string
 }
 
 // LintPairResult is one config and the schema it was paired with.
@@ -85,6 +92,10 @@ type discovered struct {
 	name string
 	// configName is metadata.name for a config.
 	configName string
+	// display overrides path in the report. A schema staged out of a
+	// package lives in a temporary directory, and printing that path tells
+	// the reader nothing about where the schema came from.
+	display string
 }
 
 // RunLint walks the given trees and checks every conversion config it finds
@@ -106,6 +117,23 @@ func RunLint(opts LintOptions) (*LintReport, error) {
 			return nil, err
 		}
 		found = append(found, items...)
+	}
+
+	// Schemas from the package, when one was named. They are written to a
+	// temporary directory rather than held as objects because every
+	// downstream check reads a path, and a package is read once here
+	// rather than once per config.
+	var cleanup func()
+	if opts.PackageRef != "" {
+		pkgSchemas, done, err := stagePackageXRDs(opts.PackageRef)
+		if err != nil {
+			return nil, err
+		}
+		cleanup = done
+		found = append(found, pkgSchemas...)
+	}
+	if cleanup != nil {
+		defer cleanup()
 	}
 
 	// Schemas first, so a config can be paired as soon as it is seen. A
@@ -238,6 +266,9 @@ func lintOne(c discovered, schemas map[string]discovered, byTarget map[string][]
 		return res
 	}
 	res.Schema = schema.path
+	if schema.display != "" {
+		res.Schema = schema.display
+	}
 
 	var out *ValidateResult
 	var err error
@@ -268,6 +299,42 @@ func lintOne(c discovered, schemas map[string]discovered, byTarget map[string][]
 		}
 	}
 	return res
+}
+
+// stagePackageXRDs writes a package's XRDs to a temporary directory and
+// returns them as discovered schemas.
+//
+// Reading the package once and staging it keeps the pairing logic identical
+// to the file case: every config in the tree is checked against the XRDs the
+// package declares, which is the Configuration repository's gate.
+func stagePackageXRDs(ref string) ([]discovered, func(), error) {
+	pkg, err := ReadPackage(ref)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(pkg.XRDs) == 0 {
+		return nil, nil, fmt.Errorf("%s ships no XRDs to check configs against", ref)
+	}
+	dir, err := os.MkdirTemp("", "convctl-package-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	var out []discovered
+	for _, x := range pkg.XRDs {
+		data, merr := sigsyaml.Marshal(x.Object)
+		if merr != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("%s: re-encoding %s: %w", ref, xrdName(x), merr)
+		}
+		path := filepath.Join(dir, xrdName(x)+".yaml")
+		if werr := os.WriteFile(path, data, 0o600); werr != nil {
+			cleanup()
+			return nil, nil, werr
+		}
+		out = append(out, discovered{path: path, kind: "XRD", name: xrdName(x), display: ref + " (" + xrdName(x) + ")"})
+	}
+	return out, cleanup, nil
 }
 
 // discoverIn walks one tree, recognising conversion configs and schemas by

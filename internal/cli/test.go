@@ -33,11 +33,18 @@ import (
 
 // TestOptions configures RunTest.
 type TestOptions struct {
-	XRDPath      string
-	CRDPath      string
-	ConfigPath   string
-	SamplesDir   string
-	SkipIdentity bool
+	XRDPath string
+	// PackagePath is a Crossplane package to read the XRD from instead of
+	// a file: the unit of API change for a platform shipped as a
+	// Configuration is a package version, not a commit and not the live
+	// cluster.
+	PackagePath string
+	// PackageTarget selects one XRD when the package ships several.
+	PackageTarget string
+	CRDPath       string
+	ConfigPath    string
+	SamplesDir    string
+	SkipIdentity  bool
 	// RestrictVersionPairs, if non-empty, limits testing to exactly these
 	// "from:to" pairs (both directions still need listing explicitly).
 	RestrictVersionPairs []string
@@ -193,8 +200,8 @@ func RunTest(opts TestOptions) (*Report, error) {
 		}
 		return runTestCRD(opts)
 	default: // "XRDConversionConfig"
-		if opts.XRDPath == "" {
-			return nil, fmt.Errorf("%s is an XRDConversionConfig; pass its target schema with --xrd, not --crd", opts.ConfigPath)
+		if opts.XRDPath == "" && opts.PackagePath == "" {
+			return nil, fmt.Errorf("%s is an XRDConversionConfig; pass its target schema with --xrd or --package, not --crd", opts.ConfigPath)
 		}
 		return runTestXRD(opts)
 	}
@@ -203,7 +210,7 @@ func RunTest(opts TestOptions) (*Report, error) {
 func runTestXRD(opts TestOptions) (*Report, error) {
 	start := time.Now()
 
-	xrd, err := LoadXRD(opts.XRDPath)
+	xrd, err := XRDFromSource(opts.XRDPath, opts.PackagePath, opts.PackageTarget)
 	if err != nil {
 		return nil, err
 	}
