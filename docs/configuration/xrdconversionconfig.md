@@ -72,6 +72,37 @@ A CRD conversion webhook receives the entire stored object, `status` included, r
     spokePath: status.state
 ```
 
+## Names you cannot use: the fields Crossplane injects
+
+Crossplane builds the generated CRD by copying your authored properties in **first**, then copying its own machinery properties **over the top** (`xcrd.genCrdVersion`, then `ForCompositeResource`). So if your `openAPIV3Schema` declares a name from that machinery set, your declaration is silently replaced in the CRD the apiserver actually enforces — while `pkg/engine`, which reads the *authored* schema, would go on compiling rules against a subtree that never exists at runtime.
+
+`Analyze` rejects both halves of that: declaring one of these names is an error (`AuthoredFieldShadowedByPlatform`), and so is pointing a rule at one (`RuleTargetsInjectedPath`). You will see them from `convctl validate`, `convctl analyze`, and the admission webhook alike.
+
+Which names are reserved depends on the XRD's **scope**:
+
+| Path | `Namespaced` | `Cluster` | `LegacyCluster` |
+|---|---|---|---|
+| `spec.crossplane` (whole subtree) | reserved | reserved | — |
+| `spec.compositionRef` / `compositionSelector` / `compositionRevisionRef` / `compositionRevisionSelector` / `compositionUpdatePolicy` | — | — | reserved |
+| `spec.resourceRefs` | — | — | reserved |
+| `spec.resourceRef`, `spec.compositeDeletePolicy` | — | — | reserved (claim CRD) |
+| `spec.claimRef`, `spec.writeConnectionSecretToRef` | — | — | reserved |
+| `status.conditions` | reserved | reserved | reserved |
+| `status.connectionDetails`, `status.claimConditionTypes` | — | — | reserved |
+
+There is **no `status.crossplane`** in any scope.
+
+Two consequences worth spelling out:
+
+- **A `LegacyCluster` XRD may legitimately declare its own `spec.crossplane`**, because Crossplane does not inject one there. The check is scope-aware precisely so this is not a false error.
+- **A `LegacyCluster` XRD's claim CRD shares the authored schema**, so the claim's own machinery names (`spec.resourceRef`, `spec.compositeDeletePolicy`) are reserved on that XRD too, even though the composite CRD does not use them.
+
+You never need a rule for any of these: the engine passes every field Crossplane injects through untouched in both directions, because passthrough works key-by-key against your authored schema and these names are not in it. See [Limitations](../limitations.md).
+
+### When the scope cannot be determined
+
+`convctl analyze --xrd ./xrd.yaml` against a manifest that omits `spec.scope` cannot know which set applies — the apiserver defaults the field differently at `apiextensions.crossplane.io/v1` and `/v2`, so it depends on which version you apply it at. In that case both diagnostics are emitted as **warnings** against the union of every scope's set, with a message saying so, rather than as errors that might be wrong. `convctl` prints the detected scope and its confidence at the top of every report. **Declare `spec.scope` explicitly** and the question never arises.
+
 ## Status
 
 ```yaml

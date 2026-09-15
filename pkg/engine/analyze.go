@@ -49,6 +49,15 @@ func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
 		return AnalyzeReport{}, fmt.Errorf("analyze: hub version %q must be the storage/referenceable version", in.HubVersion)
 	}
 
+	// An adapter opts into the platform-collision checks by implementing
+	// PlatformAwareSource; one that does not (pkg/crdadapter — nothing
+	// rewrites a plain native CRD's schema) gets the zero value, which
+	// makes every check below a no-op.
+	var injected PlatformInjectedPaths
+	if pa, ok := in.Source.(PlatformAwareSource); ok {
+		injected = pa.PlatformInjectedPaths()
+	}
+
 	report := AnalyzeReport{ResourceGeneration: in.Source.Describe().Generation}
 
 	for _, rs := range in.Spokes {
@@ -70,6 +79,16 @@ func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
 
 		rs.HubVersion = in.HubVersion
 		h2s, s2h, results, diags, verdict := resolveAndBuildOps(rs.Rules, hub.Schema, spoke.Schema, effectivePolicy(rs.UnmappedFieldPolicy), 0)
+
+		// A field the platform overwrites, or a rule pointed at one, is
+		// guaranteed not to do what its author thinks — so it is checked
+		// here rather than inside any one strategy resolver, against both
+		// versions in the pair and against every rule's resolved paths.
+		platformDiags := injected.checkAuthoredShadowing(hub.Schema, hub.Name, "hub")
+		platformDiags = append(platformDiags, injected.checkAuthoredShadowing(spoke.Schema, spoke.Name, "spoke")...)
+		platformDiags = append(platformDiags, injected.checkRuleTargets(results)...)
+		sortDiagnostics(platformDiags)
+		diags = append(diags, platformDiags...)
 
 		sr := SpokeReport{
 			Version:     rs.SpokeVersion,

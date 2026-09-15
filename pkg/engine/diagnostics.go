@@ -38,7 +38,11 @@ const (
 
 // Diagnostic is one issue found while analyzing or compiling a RuleSet.
 type Diagnostic struct {
-	Severity  Severity
+	Severity Severity
+	// Code is a stable machine-readable identifier for diagnostics that
+	// callers need to branch on rather than pattern-match a message.
+	// Empty for diagnostics nobody has needed to distinguish yet.
+	Code      string
 	Message   string
 	RuleIndex int    // -1 if not associated with a specific rule
 	FieldPath string // empty if not associated with a specific field
