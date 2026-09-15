@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -57,6 +58,7 @@ cluster. Every command works against either resource type:
 		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
+		newCompatCmd(), newVersionsCmd(), newPlanCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -169,7 +171,10 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		skipIdentity, strict, live, quiet, verifyPropagation                 bool
+		recordDir, goldenDir, recordFailures                                 string
+		fuzzN                                                                int
+		fuzzSeed                                                             int64
+		skipIdentity, strict, live, quiet, verifyPropagation, validateOutput bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext, kubeconfigDir                               string
 		contexts                                                             []string
@@ -208,6 +213,18 @@ cluster will actually use them. Until Crossplane re-renders the generated CRD,
 reads at a non-storage version come back relabelled but UNCONVERTED, with HTTP
 200 and no error anywhere.
 
+--validate-output additionally validates every converted object against the
+destination version's own OpenAPI schema, using the same structural-schema
+validator the apiserver uses. Without it a conversion that drops a required
+field, produces an out-of-enum value or overflows a maxLength is reported as
+PASS and then rejected in production, with an error naming the object rather
+than the rule that produced it. A violation counts as an error, so it fails at
+the default --fail-on threshold.
+
+It is off by default only so that upgrading does not turn existing green
+pipelines red without warning; the default is planned to flip in a later
+release. Turn it on now in new pipelines.
+
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
@@ -232,6 +249,15 @@ results are collected by sample index, never by completion order.`,
 			if verifyPropagation && !live {
 				return errors.New("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
 			}
+			if fuzzN < 0 {
+				return fmt.Errorf("--fuzz must not be negative, got %d", fuzzN)
+			}
+			if recordFailures != "" && fuzzN == 0 {
+				return errors.New("--record-failures requires --fuzz: it exists to promote generated failures into the fixture corpus")
+			}
+			if recordDir != "" && goldenDir != "" {
+				return errors.New("--record and --golden are mutually exclusive: recording while comparing would compare a corpus against itself")
+			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
@@ -239,6 +265,12 @@ results are collected by sample index, never by completion order.`,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
 				VerifyPropagation: verifyPropagation,
+				ValidateOutput:    validateOutput,
+				RecordDir:         recordDir,
+				GoldenDir:         goldenDir,
+				Fuzz:              fuzzN,
+				FuzzSeed:          fuzzSeed,
+				RecordFailuresDir: recordFailures,
 			}
 			targets, err := resolveLiveTargets(opts)
 			if err != nil {
@@ -295,10 +327,19 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
+	cmd.Flags().IntVar(&fuzzN, "fuzz", 0, "Generate N schema-valid objects from the hub version's own schema and test them too. Biased toward the boundaries fixtures miss: empty arrays, absent optionals, length and range limits, first and last enum members")
+	cmd.Flags().Int64Var(&fuzzSeed, "seed", 0, "Seed for --fuzz. Zero picks one and prints it, so a CI failure is replayable; pass a fixed seed in a gating job to keep it deterministic")
+	cmd.Flags().StringVar(&recordFailures, "record-failures", "", "With --fuzz, write objects that failed conversion into this directory as ordinary samples, so a discovered case can be promoted into the permanent fixture corpus")
+	cmd.Flags().StringVar(&recordDir, "record", "", "Write the conversion result for every sample on every path into a golden corpus at this directory, plus a manifest recording the plan hash, schema hash and convctl version")
+	cmd.Flags().StringVar(&goldenDir, "golden", "", "Replay a corpus recorded by --record and fail on any difference, reporting which fields changed. Mutually exclusive with --record")
+	cmd.Flags().BoolVar(&validateOutput, "validate-output", false, "Validate every converted object against the destination version's OpenAPI schema, using the apiserver's own validator. A violation is an error, not a loss. Off by default this release; the default is planned to flip")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
-	cmd.MarkFlagsOneRequired("samples", "live")
+	// --fuzz is a third source of samples, and composes with --samples:
+	// generated objects test the boundaries, fixtures test the cases
+	// somebody deliberately wrote down.
+	cmd.MarkFlagsOneRequired("samples", "live", "fuzz")
 	cmd.MarkFlagsMutuallyExclusive("samples", "live")
 	cmd.MarkFlagsMutuallyExclusive("context", "contexts")
 	cmd.MarkFlagsMutuallyExclusive("kubeconfig", "kubeconfig-dir")
@@ -447,6 +488,13 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 }
 
 func decideExitCode(rep *Report, failOn string, strict bool) int {
+	// Golden drift is checked before --fail-on none, deliberately. The
+	// threshold grades conversion quality; a corpus mismatch says the
+	// output changed, which is a fact rather than a judgement, and a gate
+	// that --fail-on none could switch off would not be a gate.
+	if rep.Golden != nil && rep.Golden.driftFatal() {
+		return ExitTestFailure
+	}
 	if failOn == failOnNone {
 		return ExitOK
 	}
@@ -474,4 +522,268 @@ func writeJSONTo(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func newCompatCmd() *cobra.Command {
+	var (
+		base, head, configPath, xrdPath, crdPath, output string
+		allow                                            []string
+	)
+	cmd := &cobra.Command{
+		Use:   "compat",
+		Short: "Compare a conversion config and its schema at two revisions, and classify the delta",
+		Long: `Compare the schema and conversion config at two git revisions and classify
+every difference by severity, so a branch-protection rule can require:
+"you may not merge a change that breaks an existing conversion without
+acknowledging it."
+
+CLASS                 SEVERITY  MEANING
+LosslessToLossy       breaking  a direction that used to round-trip no longer does
+CoverageLost          breaking  a field that had a rule no longer has one
+ServedVersionRemoved  breaking  a version dropped while objects may still be stored at it
+RuleRemoved           breaking  a rule deleted without a replacement claiming its paths
+HubChanged            breaking  the hub moved (legitimate, but must be deliberate)
+StrategyChanged       review    same paths, different strategy
+MappingChanged        review    same paths and strategies, wired to each other differently
+CoverageGained        safe      a field is newly covered
+NewVersion            safe      a version is newly served
+
+--allow <class> acknowledges a class deliberately, so a real hub promotion
+passes the gate with an explicit flag rather than by disabling the check.
+The output names which acknowledgements were used.
+
+Revisions are read with "git show <ref>:<path>" rather than requiring a
+checkout, so this works in a shallow CI clone (fetch-depth: 2).
+
+Exit codes: 0 no unacknowledged breaking changes, 1 breaking changes found,
+2 usage or resolution error.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json", "markdown":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table, json, or markdown)", output)
+			}
+			for _, a := range allow {
+				if !knownCompatClass(a) {
+					return fmt.Errorf("unknown --allow class %q", a)
+				}
+			}
+			rep, err := RunCompat(CompatOptions{
+				Base: base, Head: head, ConfigPath: configPath,
+				XRDPath: xrdPath, CRDPath: crdPath, Allow: allow,
+			})
+			if err != nil {
+				return err
+			}
+			switch output {
+			case "json":
+				if err := writeJSON(cmd, rep); err != nil {
+					return err
+				}
+			case "markdown":
+				rep.WriteMarkdown(cmd.OutOrStdout())
+			default:
+				rep.WriteTable(cmd.OutOrStdout())
+			}
+			if rep.Breaking() {
+				exitCode = ExitTestFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&base, "base", "", "Base git revision (required)")
+	cmd.Flags().StringVar(&head, "head", "", "Head git revision (required)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to the conversion config, as it appears in the repository (required)")
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to the XRD, as it appears in the repository")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to the CRD, as it appears in the repository")
+	cmd.Flags().StringSliceVar(&allow, "allow", nil, "Acknowledge a breaking change class (repeatable)")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|markdown")
+	_ = cmd.MarkFlagRequired("base")
+	_ = cmd.MarkFlagRequired("head")
+	_ = cmd.MarkFlagRequired("config")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+func knownCompatClass(s string) bool {
+	switch s {
+	case ClassLosslessToLossy, ClassCoverageLost, ClassServedVersionRemove,
+		ClassRuleRemoved, ClassHubChanged, ClassStrategyChanged,
+		ClassMappingChanged, ClassCoverageGained, ClassNewVersion:
+		return true
+	}
+	return false
+}
+
+func newVersionsCmd() *cobra.Command {
+	var (
+		xrdPath, crdPath, configPath, output, checkUnserve string
+		kubeconfig, kubeContext                            string
+		maxSamples                                         int
+	)
+	cmd := &cobra.Command{
+		Use:   "versions",
+		Short: "Inventory a target's versions and answer whether one is safe to stop serving",
+		Long: `Answer "is it safe to drop this version yet?" in one table.
+
+Deciding that requires knowing four things that live in four different
+places: whether anything is still stored at the version, whether anything is
+still writing it, whether it is marked deprecated, and whether a spoke rule
+set exists for it.
+
+LAST WRITTEN AT is the column that usually decides. "Nothing is stored at v1"
+says the data has moved; it says nothing about the controller that still PUTs
+v1 objects every reconcile and starts failing the moment the version stops
+being served. Each object's managedFields records the apiVersion its writers
+used, so the answer is already in the cluster — aggregated here by manager,
+so the output says who.
+
+A claim-offering XRD generates two CRDs and objects are counted across both.
+
+--check-unserve <version> turns the command into a gate on stopping to SERVE
+a version -- not on removing its version block, which is a later step with
+its own compatibility check. It exits non-zero with the reasons when that
+version is still stored, still written, still the hub, or could not be read
+at all.
+
+LIVE OBJECTS is inventory, not evidence about one version, and is not a
+blocker: the apiserver converts on read, so a list at any served version
+returns every object, and the count is identical on every served row.
+
+Read-only. The object walk paginates and is bounded by --max-samples; a count
+shown as "N+" means the bound was hit and the answer is incomplete, and "N?"
+means the objects could not be listed at all.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			}
+			rep, err := RunVersions(cmd.Context(), VersionsOptions{
+				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath,
+				Kubeconfig: kubeconfig, KubeContext: kubeContext,
+				MaxSamples: maxSamples, CheckUnserve: checkUnserve,
+			})
+			if err != nil {
+				return err
+			}
+			if output == "json" {
+				if err := writeJSON(cmd, rep); err != nil {
+					return err
+				}
+			} else {
+				rep.WriteTable(cmd.OutOrStdout())
+			}
+
+			if checkUnserve != "" {
+				blockers := rep.UnserveBlockers(checkUnserve)
+				out := cmd.OutOrStdout()
+				if len(blockers) == 0 {
+					_, _ = fmt.Fprintf(out, "\n%s is safe to stop serving.\n", checkUnserve)
+					return nil
+				}
+				_, _ = fmt.Fprintf(out, "\n%s is NOT safe to stop serving:\n", checkUnserve)
+				for _, b := range blockers {
+					_, _ = fmt.Fprintf(out, "  - %s\n", b)
+				}
+				exitCode = ExitTestFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to the XRD")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to the CRD")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to the conversion config, to populate the SPOKE RULES column")
+	cmd.Flags().StringVar(&checkUnserve, "check-unserve", "", "Exit non-zero, with reasons, if this version is not yet safe to stop serving")
+	cmd.Flags().IntVar(&maxSamples, "max-samples", 0, "Bound the object walk (default 5000). A count shown as N+ means the bound was hit")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file")
+	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+func newPlanCmd() *cobra.Command {
+	var (
+		xrdPath, crdPath, configPath, to, output string
+		packageManaged, assumeVerified           bool
+	)
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Print the ordered, gated path from where a target is to where you want it",
+		Long: `A safe version migration is an ordered sequence: add a version, wire the
+spoke, verify, promote the hub, retarget Compositions, migrate storage, prune
+stored versions, stop serving, drop the block. Each step has a gate that must
+hold before the next one is safe.
+
+That sequence exists today only as prose spread across three documents and
+six example directories. plan determines where the target actually is and
+prints the path from there, with each step carrying:
+
+  run      the exact command
+  gate     the condition that must hold before the next step is safe
+  verify   the command that proves it
+  status   done / ready / blocked, and what is blocking
+
+Steps already satisfied are marked done rather than reprinted as work, and
+only the first outstanding step is offered: presenting five ready steps at
+once is how they get done out of order.
+
+Package-managed targets are ordered differently. For an XRD shipped in a
+Configuration the conversion config must be applied BEFORE the package
+upgrade lands, or the new version is served for a while with no conversion at
+all — reads then return stored objects relabelled but unconverted, with HTTP
+200 and no error. Detected from the XRD's ownerReferences, or forced with
+--package-managed.
+
+Retiring a version -- un-serving it, dropping its block -- is the one
+irreversible part of the sequence, and whether it is safe rests on the steps
+this command cannot check from files. Those steps are never offered until you
+pass --assume-verified, which is you saying you ran their verify commands.
+
+Read-only: it prints, you run the steps.
+
+Exit codes: 0 a plan was produced, 1 the target state is unreachable,
+2 usage error.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			}
+			rep, err := RunPlan(PlanOptions{
+				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath,
+				To: to, PackageManaged: packageManaged, AssumeVerified: assumeVerified,
+			})
+			if err != nil {
+				// An unreachable target state is a result, not a usage
+				// error: the command worked, the answer is "you cannot get
+				// there from here".
+				if strings.Contains(err.Error(), "is not declared on") {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "error:", err)
+					exitCode = ExitTestFailure
+					return nil
+				}
+				return err
+			}
+			if output == "json" {
+				return writeJSON(cmd, rep)
+			}
+			rep.WriteTable(cmd.OutOrStdout())
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to the XRD")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to the CRD")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to the conversion config, so wired-up steps are marked done")
+	cmd.Flags().StringVar(&to, "to", "", "The version to make the hub (required)")
+	cmd.Flags().BoolVar(&packageManaged, "package-managed", false, "Force the package-managed ordering (normally detected from ownerReferences)")
+	cmd.Flags().BoolVar(&assumeVerified, "assume-verified", false, "Assert that the steps needing a cluster (Composition retarget, storage migration, storedVersions prune) have been confirmed with their verify commands, so the retirement steps can be planned")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	_ = cmd.MarkFlagRequired("to")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
 }

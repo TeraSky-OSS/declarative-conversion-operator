@@ -103,3 +103,45 @@ CONTEXTS="kind-fleet-a kind-fleet-b" \
 - [Upgrade runbook](../operations/upgrade-runbook.md)
 - XRD lifecycle GitOps demo (Flux/Argo + in-cluster `convctl test --live`):
   [`examples/crossplane-xr-multiversion/gitops/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops)
+
+## Branch protection: refusing a breaking conversion change
+
+`convctl compat` classifies the delta between two revisions, so a required
+status check can refuse a change that breaks an existing conversion:
+
+```yaml
+name: Conversion compatibility
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # compat resolves both revisions with `git show`, so it needs the
+          # base commit but not the history.
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Fetch the base branch
+        # checkout fetches only the ref that triggered the run, so
+        # origin/<base> does not exist yet. The explicit refspec is what
+        # creates the remote-tracking ref --base names; one commit is enough.
+        run: |
+          git fetch --depth=1 origin \
+            "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      - name: Install convctl
+        run: |
+          go install github.com/terasky-oss/declarative-conversion-operator/cmd/convctl@latest
+      - run: |
+          convctl compat \
+            --base "origin/${{ github.base_ref }}" --head HEAD \
+            --config config.yaml --xrd xrd.yaml
+```
+
+Exit 1 on a breaking change, 0 once it is acknowledged with `--allow <class>`.
+Acknowledging is per class, so allowing a deliberate hub promotion does not
+also allow a dropped rule. See [the class table](../cli.md#convctl-compat).

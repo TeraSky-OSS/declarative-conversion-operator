@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +65,46 @@ type TestOptions struct {
 	// Quiet suppresses the progress line written to stderr.
 	Quiet bool
 
+	// ValidateOutput additionally validates every converted object against
+	// the destination version's own schema, using the apiextensions
+	// structural-schema validator. Without it, a conversion that drops a
+	// required field or produces an out-of-enum value is reported as PASS
+	// and then rejected by the apiserver in production, with an error that
+	// names the object rather than the rule that produced it.
+	//
+	// Off by default: turning it on would make existing green pipelines
+	// red on first upgrade. The default flips in a later release.
+	ValidateOutput bool
+
+	// Fuzz generates N schema-valid objects from the hub version's own
+	// schema and runs them through every conversion path, alongside (or
+	// instead of) SamplesDir.
+	//
+	// Fixtures test the cases the author thought of; they reliably miss the
+	// empty array, the absent optional, the maxLength boundary and the enum
+	// value nobody uses, which is where conversion rules break. Generation
+	// is biased toward exactly those.
+	Fuzz int
+	// FuzzSeed makes a run reproducible. Zero means "pick one and print
+	// it", so a CI failure is replayable locally.
+	FuzzSeed int64
+	// RecordFailuresDir writes objects that failed conversion as ordinary
+	// sample files, so a discovered case can be promoted into the permanent
+	// fixture corpus. That promotion path is what makes fuzzing pay off
+	// over time rather than being a one-off.
+	RecordFailuresDir string
+
+	// RecordDir writes the conversion result for every sample on every
+	// path into a golden corpus, and GoldenDir replays one. A committed
+	// corpus turns the next rule change into a reviewable diff: "this
+	// changes the output for these three objects, in these fields", which
+	// a YAML diff of the rules plus a green check cannot show.
+	//
+	// Mutually exclusive: recording while comparing would compare a corpus
+	// against itself.
+	RecordDir string
+	GoldenDir string
+
 	// VerifyPropagation additionally checks, against the same cluster,
 	// that every CRD Crossplane generates from the target XRD actually
 	// carries the conversion webhook the XRD points at. Samples passing
@@ -72,6 +113,16 @@ type TestOptions struct {
 	// CRDConversionConfig's target *is* the CRD, so there is nothing to
 	// propagate.
 	VerifyPropagation bool
+}
+
+// effectiveSeed returns the seed a fuzz run should use, choosing one when
+// the caller did not. The chosen seed is reported so a CI failure is
+// replayable locally — a fuzz failure nobody can reproduce is noise.
+func (o TestOptions) effectiveSeed() int64 {
+	if o.FuzzSeed != 0 {
+		return o.FuzzSeed
+	}
+	return time.Now().UnixNano()
 }
 
 // effectiveConcurrency clamps Concurrency to at least one worker, and to
@@ -106,6 +157,11 @@ func (o TestOptions) effectiveConcurrency(samples int) int {
 // Which of XRDPath/CRDPath applies is determined by the config's own
 // kind, not by which field the caller happened to set.
 func RunTest(opts TestOptions) (*Report, error) {
+	// Resolve the seed once, here, so the objects that were generated and
+	// the seed the report prints for reproducing them cannot disagree.
+	if opts.Fuzz > 0 && opts.FuzzSeed == 0 {
+		opts.FuzzSeed = time.Now().UnixNano()
+	}
 	kind, err := PeekConfigKind(opts.ConfigPath)
 	if err != nil {
 		return nil, err
@@ -179,7 +235,7 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		if len(samples) == 0 {
 			return nil, fmt.Errorf("no live objects of %s found at version %s", xrdName(xrd), cfg.Spec.HubVersion)
 		}
-	} else {
+	} else if opts.SamplesDir != "" {
 		samples, err = LoadSamples(opts.SamplesDir)
 		if err != nil {
 			return nil, err
@@ -204,11 +260,31 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	if report.HasErrors() {
 		return nil, fmt.Errorf("configuration is invalid against the XRD schema, cannot test conversions:%s", summarizeSpokeErrors(report))
 	}
+	// Generated after analysis, because generation needs the hub schema the
+	// analysis just read.
+	if opts.Fuzz > 0 {
+		group, kind, gvkErr := xrdGroupKind(xrd)
+		if gvkErr != nil {
+			return nil, gvkErr
+		}
+		fuzzed, ferr := generateFuzzSamples(versions, cfg.Spec.HubVersion, group, kind, opts.Fuzz, opts.effectiveSeed(), shapesFromRules(report))
+		if ferr != nil {
+			return nil, ferr
+		}
+		samples = append(samples, fuzzed...)
+	}
+	if len(samples) == 0 {
+		return nil, errors.New("nothing to test: pass --samples, --live, or --fuzz")
+	}
 	router, err := buildRouter(cfg, report)
 	if err != nil {
 		return nil, err
 	}
-	rep, err := runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	// The injected set is what --validate-output must ignore: Crossplane
+	// merges these into the generated CRD, so they are present on a real
+	// object and absent from the XRD's authored schema — the only schema
+	// this tool has.
+	rep, err := runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, xrdadapter.New(xrd).PlatformInjectedPaths().Paths, start)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +320,7 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 		if len(samples) == 0 {
 			return nil, fmt.Errorf("no live objects of %s found at version %s", crdName(crd), cfg.Spec.HubVersion)
 		}
-	} else {
+	} else if opts.SamplesDir != "" {
 		samples, err = LoadSamples(opts.SamplesDir)
 		if err != nil {
 			return nil, err
@@ -265,18 +341,47 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 	if report.HasErrors() {
 		return nil, fmt.Errorf("configuration is invalid against the CRD schema, cannot test conversions:%s", summarizeSpokeErrors(report))
 	}
+	if opts.Fuzz > 0 {
+		fuzzed, ferr := generateFuzzSamples(versions, cfg.Spec.HubVersion, crd.Spec.Group, crd.Spec.Names.Kind, opts.Fuzz, opts.effectiveSeed(), shapesFromRules(report))
+		if ferr != nil {
+			return nil, ferr
+		}
+		samples = append(samples, fuzzed...)
+	}
+	if len(samples) == 0 {
+		return nil, errors.New("nothing to test: pass --samples, --live, or --fuzz")
+	}
 	router, err := buildRouterCRD(cfg, report)
 	if err != nil {
 		return nil, err
 	}
-	return runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	// A native CRD's authored schema is the whole schema — nothing is
+	// injected behind the author's back — so there is nothing to strip.
+	return runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, nil, start)
 }
 
 // runTestCommon is runTestXRD/runTestCRD's shared tail: exercising every
 // sample across every configured-version pair is entirely independent of
 // whether the target is an XRD or a native CRD, once a Router and an
 // AnalyzeReport already exist.
-func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, start time.Time) (*Report, error) {
+func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, injected []engine.FieldPath, start time.Time) (*Report, error) {
+	seed := opts.FuzzSeed
+	var corp *corpus
+	switch {
+	case opts.RecordDir != "":
+		corp = newCorpus(opts.RecordDir, "record")
+	case opts.GoldenDir != "":
+		corp = newCorpus(opts.GoldenDir, "golden")
+	}
+
+	var validator *outputValidator
+	if opts.ValidateOutput {
+		var err error
+		validator, err = newOutputValidator(versions, injected)
+		if err != nil {
+			return nil, err
+		}
+	}
 	served := servedVersions(versions)
 	configured := configuredVersions(hubVersion, report, served)
 	targets := configured
@@ -317,7 +422,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets)
+				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets, validator, corp)
 
 				mu.Lock()
 				results[i] = sr
@@ -342,6 +447,15 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		_, _ = fmt.Fprintln(os.Stderr)
 	}
 
+	if opts.Fuzz > 0 {
+		rep.Meta.Fuzz = &FuzzMeta{Objects: opts.Fuzz, Seed: seed}
+	}
+	if opts.RecordFailuresDir != "" {
+		if err := recordFailingSamples(opts.RecordFailuresDir, samples, results); err != nil {
+			return nil, err
+		}
+	}
+
 	rep.Samples = results
 	rep.Summary.Samples = len(samples)
 	rep.Summary.SamplesByCRD = samplesByCRD(samples)
@@ -350,6 +464,25 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		for _, rr := range sr.RuleResults {
 			id := ruleID(sr.Version, rr)
 			rep.RuleCoverage = append(rep.RuleCoverage, RuleCoverage{RuleID: id, MatchedSamples: ruleUsage[id]})
+		}
+	}
+
+	if corp != nil {
+		if err := corp.finish(GoldenManifest{
+			ConvctlVersion: Version,
+			PlanHash:       hashPlan(report, hubVersion),
+			SchemaHash:     hashSchemas(versions),
+			Resource:       resourceName,
+			Config:         configName,
+			HubVersion:     hubVersion,
+		}); err != nil {
+			return nil, err
+		}
+		rep.Golden = &GoldenReport{
+			Dir:     corp.dir,
+			Mode:    corp.mode,
+			Written: corp.written,
+			Drifts:  corp.drifts,
 		}
 	}
 
@@ -372,7 +505,7 @@ type sampleCounts struct {
 // a sample stay sequential: they're cheap next to the coordination cost,
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
-func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string) (SampleResult, sampleCounts, map[string]int) {
+func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string, validator *outputValidator, corp *corpus) (SampleResult, sampleCounts, map[string]int) {
 	sr := SampleResult{File: s.File, AssertedVersion: s.Version, CRD: s.CRD, CRDRole: s.CRDRole}
 	var counts sampleCounts
 	usage := map[string]int{}
@@ -395,7 +528,7 @@ func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, l
 		if opts.SkipIdentity && target == s.Version {
 			continue
 		}
-		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage)
+		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage, validator, corp)
 		sr.Paths = append(sr.Paths, pr)
 		counts.pathsTested++
 		switch pr.Result {
@@ -504,7 +637,23 @@ func touchedSpokes(from, to, hub string) []string {
 	return out
 }
 
-func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, target string, ruleUsage map[string]int) PathResult {
+// withDestAPIVersion returns a shallow copy of converted carrying the
+// destination apiVersion, derived from the source object's own group.
+func withDestAPIVersion(converted, source map[string]any, to string) map[string]any {
+	av, _ := source["apiVersion"].(string)
+	i := strings.LastIndex(av, "/")
+	if i <= 0 {
+		return converted
+	}
+	out := make(map[string]any, len(converted)+1)
+	for k, v := range converted {
+		out[k] = v
+	}
+	out["apiVersion"] = av[:i] + "/" + to
+	return out
+}
+
+func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, target string, ruleUsage map[string]int, validator *outputValidator, corp *corpus) PathResult {
 	start := time.Now()
 	pr := PathResult{From: s.Version, To: target}
 
@@ -531,6 +680,40 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		return pr
 	}
 
+	// The corpus records the forward result — what this conversion
+	// actually produces — rather than the round-trip, which is the thing a
+	// reviewer needs to see change.
+	//
+	// Stamped with the destination apiVersion, on a copy: engine.Convert
+	// leaves apiVersion to its caller, so a golden without it could not
+	// tell a conversion to the wrong version from a correct one. The copy
+	// is what keeps that stamp out of the object the round-trip used.
+	corp.observe(s.File, s.Version, target, withDestAPIVersion(forward, s.Object, target))
+
+	// Validate the forward result against the destination version's own
+	// schema before looking at round-trip fidelity. A round-trip diff says
+	// the rules agree with each other; this says the apiserver will accept
+	// what they produced, which is a different question and the one that
+	// bites in production.
+	if validator.knows(target) {
+		spoke := target
+		direction := "toSpoke"
+		if target == hub {
+			spoke = s.Version
+			direction = "toHub"
+		}
+		for _, v := range attributeViolations(validator.validate(forward, target), report, spoke, direction) {
+			pr.Issues = append(pr.Issues, Issue{
+				Field:  v.Path,
+				From:   s.Version,
+				To:     target,
+				Type:   "schema-violation",
+				Detail: v.String(),
+				Sample: s.File,
+			})
+		}
+	}
+
 	spokes := touchedSpokes(s.Version, target, hub)
 	diffs := diffLeaves(s.Object, back)
 	unacknowledged := 0
@@ -550,7 +733,17 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		}
 	}
 
+	schemaViolations := 0
+	for _, is := range pr.Issues {
+		if is.Type == "schema-violation" {
+			schemaViolations++
+		}
+	}
 	switch {
+	// A violation outranks a loss: an object the apiserver rejects is not
+	// a lossy conversion, it is a failed one.
+	case schemaViolations > 0:
+		pr.Result = "error"
 	case unacknowledged > 0:
 		pr.Result = "fail"
 	case len(diffs) > 0:

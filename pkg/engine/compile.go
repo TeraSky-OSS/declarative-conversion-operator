@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -169,15 +170,18 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 		case ScalarToFieldsParams:
 			h2sOp, s2hOp, lossless, ruleDiags = resolveScalarToFields(idx, p, hub, spoke, claimedHub, claimedSpoke)
 			rr.HubPaths = []string{p.HubPath.String()}
-			for _, sp := range p.SpokeFields {
-				rr.SpokePaths = append(rr.SpokePaths, sp.String())
-			}
+			// SpokeFields is keyed by capture-group name, so ranging it
+			// yields a different order on every process. These paths are a
+			// report of what the rule touches and carry no order of their
+			// own, but callers diff and hash this report — a golden corpus
+			// manifest, and convctl compat comparing two revisions — so an
+			// unstable order shows up as a phantom change.
+			rr.SpokePaths = sortedPathStrings(p.SpokeFields)
 
 		case FieldsToScalarParams:
 			h2sOp, s2hOp, lossless, ruleDiags = resolveFieldsToScalar(idx, p, hub, spoke, claimedHub, claimedSpoke)
-			for _, hp := range p.HubFields {
-				rr.HubPaths = append(rr.HubPaths, hp.String())
-			}
+			// Sorted for the same reason as ScalarToFields above.
+			rr.HubPaths = sortedPathStrings(p.HubFields)
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
 		case ArrayToMapByKeyParams:
@@ -756,21 +760,15 @@ func resolveDelete(idx int, p DeleteParams, hub, spoke *extv1.JSONSchemaProps, c
 		claimed = claimedSpoke
 		side = "spoke"
 	}
-	node, err := lookupPath(root, p.Path)
-	if err != nil {
+	if _, err := lookupPath(root, p.Path); err != nil {
 		diags = append(diags, errorf(idx, "rule %d (Delete): %v", idx, err))
 	}
-	if node != nil {
-		parent := p.Path[:len(p.Path)-1]
-		parentNode, perr := lookupPath(root, parent)
-		if perr == nil && parentNode != nil {
-			for _, r := range parentNode.Required {
-				if r == lastSegment(p.Path) {
-					diags = append(diags, warnf(idx, "rule %d (Delete): %q is required on %s; converted objects on that side will fail apiserver validation unless the schema also declares a default", idx, p.Path, side))
-				}
-			}
-		}
-	}
+	// Deliberately no required-field warning here any more. Delete on a
+	// required field used to be the only place the engine consulted
+	// required-ness at all; analyzeRequiredFields now asks the same question
+	// for every strategy and in both directions, and answers it as an error
+	// with a specific verdict rather than a warning. Keeping this one too
+	// would report a single problem twice, at two severities.
 	if d := claim(claimed, p.Path, idx, side); d != nil {
 		diags = append(diags, *d)
 	}
@@ -1386,4 +1384,24 @@ func resolveCEL(idx int, p CELParams, hub, spoke *extv1.JSONSchemaProps, claimed
 		}
 	}
 	return h2s, s2h, LosslessVerdict{HubToSpoke: false, SpokeToHub: false}, diags
+}
+
+// sortedPathStrings renders a capture-group-keyed path map as a sorted
+// slice.
+//
+// The map's iteration order is randomized per process, and RuleResult is
+// serialized into `convctl analyze --output json`, hashed into a golden
+// corpus manifest, and diffed between two revisions by `convctl compat`. An
+// order that changes between identical runs turns each of those into a
+// false positive.
+func sortedPathStrings(m map[string]FieldPath) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for _, p := range m {
+		out = append(out, p.String())
+	}
+	sort.Strings(out)
+	return out
 }

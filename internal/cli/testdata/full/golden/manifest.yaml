@@ -1,0 +1,6 @@
+config: xwidgets-conversion
+convctlVersion: dev
+hubVersion: v3
+planHash: sha256:3tCTCOp7XqLJNcfpi49nkv4HvbQzLtOURLa-yCAJ7Ho
+resource: xwidgets.example.org
+schemaHash: sha256:c6pGPtrmYUt87711WbdYxYK3ju_trkOwggG4fM3QjiM

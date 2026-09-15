@@ -48,9 +48,19 @@ func LoadXRD(path string) (*unstructured.Unstructured, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	obj, err := parseXRDBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return obj, nil
+}
+
+// parseXRDBytes is LoadXRD without the file. `convctl compat` reads a
+// revision's content from `git show` and has no path to hand over.
+func parseXRDBytes(data []byte) (*unstructured.Unstructured, error) {
 	var m map[string]any
 	if err := sigsyaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+		return nil, err
 	}
 	return &unstructured.Unstructured{Object: m}, nil
 }
@@ -62,9 +72,18 @@ func LoadConfig(path string) (*teraskyv1alpha1.XRDConversionConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	cfg, err := parseXRDConfigBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// parseXRDConfigBytes is LoadConfig without the file; see parseXRDBytes.
+func parseXRDConfigBytes(data []byte) (*teraskyv1alpha1.XRDConversionConfig, error) {
 	var cfg teraskyv1alpha1.XRDConversionConfig
 	if err := sigsyaml.UnmarshalStrict(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+		return nil, err
 	}
 	return &cfg, nil
 }
@@ -81,9 +100,18 @@ func LoadCRD(path string) (*extv1.CustomResourceDefinition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	crd, err := parseCRDBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return crd, nil
+}
+
+// parseCRDBytes is LoadCRD without the file; see parseXRDBytes.
+func parseCRDBytes(data []byte) (*extv1.CustomResourceDefinition, error) {
 	var crd extv1.CustomResourceDefinition
 	if err := sigsyaml.Unmarshal(data, &crd); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+		return nil, err
 	}
 	return &crd, nil
 }
@@ -95,9 +123,18 @@ func LoadCRDConfig(path string) (*teraskyv1alpha1.CRDConversionConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	cfg, err := parseCRDConfigBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// parseCRDConfigBytes is LoadCRDConfig without the file; see parseXRDBytes.
+func parseCRDConfigBytes(data []byte) (*teraskyv1alpha1.CRDConversionConfig, error) {
 	var cfg teraskyv1alpha1.CRDConversionConfig
 	if err := sigsyaml.UnmarshalStrict(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+		return nil, err
 	}
 	return &cfg, nil
 }

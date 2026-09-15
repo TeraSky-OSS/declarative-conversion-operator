@@ -49,3 +49,33 @@ Every strategy page follows the same shape:
 5. **Example objects** at both versions, so you can see the exact before/after shape.
 
 All examples are self-contained and runnable through `convctl test` — see [Getting Started](../getting-started.md) and the [CLI Reference](../cli.md). For complete configs combining several strategies against a whole schema, see [Examples](../examples/index.md); for a single fixture exercising every strategy in this reference at once — with a rule-by-rule index of where each one lives — see [Kitchen sink](../examples/kitchen-sink.md).
+
+## Required fields
+
+A conversion that produces an object missing a `required` field is rejected
+by the apiserver — for the inputs that trigger it, and not for the others,
+which is the worst kind of bug to diagnose.
+
+The engine checks this at analysis time, in both directions independently,
+for every field the destination schema requires:
+
+| Verdict | Meaning | Severity |
+|---|---|---|
+| always | an unconditional rule writes it from a source that is itself required, or from `constant`/`defaultValue` | — |
+| never | nothing writes it, and no required source field of the same name carries it by passthrough | **error** (`RequiredFieldUnsatisfiable`) |
+| conditionally | the only rule writing it carries a `when` clause, or its source is itself optional | **error** (`RequiredFieldConditional`) |
+| unprovable | the writing rule is `cel`, `jsonPatch` or `scalarToFields`, whose output the engine cannot predict | warning (`RequiredFieldUnprovable`) |
+
+Two things deliberately do **not** report:
+
+- **A required field with a schema `default`.** The apiserver fills it in, so
+  no rule has to.
+- **A required field inside an object that may itself be absent.** `required`
+  is relative to the enclosing object: if the parent is missing, the child is
+  not expected. The check applies once something in the conversion writes
+  into that parent, because then the object exists in the output and its own
+  required fields apply.
+
+For the unprovable residue, use
+[`convctl test --validate-output`](../cli.md#validating-the-converted-output-validate-output)
+and `--fuzz`, which check the result rather than reasoning about the rules.

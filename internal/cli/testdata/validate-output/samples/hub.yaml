@@ -1,0 +1,11 @@
+apiVersion: validate.example.org/v2
+kind: XOutput
+metadata:
+  name: sample
+spec:
+  size: large
+  region: eu-west-1
+  # Neither value is constrained on the hub; both are rejected by v1's own
+  # schema, and only applying that schema to the converted object finds them.
+  tier: bronze
+  name: Not-A-Valid-Name

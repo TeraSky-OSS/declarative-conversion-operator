@@ -1,0 +1,61 @@
+# Every spoke field is covered by a rule and every required field is provably
+# satisfied, so both the coverage analysis and the required-field analysis
+# are happy. What neither can see is that the rules produce *values* v1's own
+# schema rejects: spec.tier is an enum and spec.name a pattern, and the hub
+# constrains neither. Value-domain violations are exactly the class that
+# needs the destination schema applied to the converted object.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xoutputs.validate.example.org
+spec:
+  scope: Namespaced
+  group: validate.example.org
+  names:
+    kind: XOutput
+    plural: xoutputs
+  versions:
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - region
+              properties:
+                size:
+                  type: string
+                tier:
+                  type: string
+                region:
+                  type: string
+                name:
+                  type: string
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - region
+              properties:
+                size:
+                  type: string
+                region:
+                  type: string
+                name:
+                  type: string
+                  pattern: "^[a-z][a-z0-9-]*$"
+                tier:
+                  type: string
+                  enum:
+                    - gold
+                    - silver

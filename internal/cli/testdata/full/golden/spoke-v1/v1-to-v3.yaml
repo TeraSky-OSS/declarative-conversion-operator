@@ -1,0 +1,52 @@
+apiVersion: example.org/v3
+kind: Widget
+metadata:
+  labels:
+    operator-tier: ops-bronze
+  name: sample-v1
+spec:
+  allowedCIDRsCSV: 10.1.0.0/16,10.2.0.0/16
+  contactEmail: sam@example.com
+  contactName: Sam Lee
+  cpuLimit: "1"
+  cpuRequest: "1"
+  description: Developer sandbox widget
+  diskSize: 10Gi
+  dnsServers:
+  - 10.0.0.53
+  endpoints:
+  - name: dev
+    url: https://dev.example.com
+  extraLabels:
+    app: sandbox
+    region: eu-central-1
+  legacyFlag: false
+  limitsByTier:
+    bronze:
+      limit: "10"
+    silver:
+      limit: "20"
+  memoryLimit: 2Gi
+  memoryMB: 2048
+  network:
+    cidr: 192.168.0.0/24
+  packed: 784
+  primaryRegion:
+    name: eu-central-1
+  priority: 1
+  replicaCount: 1
+  size: Small
+  storageGB: "64"
+  tags:
+    env: dev
+    team: core
+  tier: bronze
+  timeout: 30s
+  volumes:
+  - label: scratch
+    sizeGB: "10"
+  zones:
+  - name: eu-central-1a
+status:
+  observedGeneration: 1
+  phase: Pending

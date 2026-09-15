@@ -6,6 +6,9 @@
 convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
 convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
+convctl plan          --to v2 (--xrd xrd.yaml | --crd crd.yaml) [--config config.yaml] [-o table|json]
+convctl versions      --xrd xrd.yaml [--config config.yaml] [--check-unserve v1] [-o table|json]
+convctl compat        --base REV --head REV --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
 convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl diff          --config config.yaml --live [-o json|table]
 convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
@@ -18,7 +21,9 @@ convctl retarget      --xrd NAME --to v2 [--dry-run] [--canary N|N%] [flags]
 convctl crossplane status <xrd-name> [-o table|json]
 ```
 
-Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations.
+`plan` is the one to start from if you are mid-migration and unsure what comes next: it prints the ordered, gated path from the target's current state to the version you name, and marks the one step that is safe to do now.
+
+Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations. Around all of it, `plan` sequences the migration, `versions` answers whether an old version can be retired yet, and `compat` gates config edits in review.
 
 ## `convctl validate`
 
@@ -89,6 +94,223 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 
 Each sample's asserted starting version is inferred from its own `apiVersion` — no separate index file needed.
 
+### Property-based testing (`--fuzz`)
+
+Fixtures test the cases the config author thought of. They reliably miss the
+empty array, the absent optional object, the `maxLength` boundary, the enum
+value nobody uses, and the single-element map — which is exactly where
+conversion rules break.
+
+`--fuzz N` generates N schema-valid objects from the hub version's own schema
+and runs them through every conversion path:
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --fuzz 50 --seed 42
+FUZZ: 50 generated object(s), seed 42 — reproduce with --fuzz 50 --seed 42
+...
+fuzz-1  (conversion)  v3 → v2  error  jsonPatch: apply: move operation does not
+                                      apply: doc is missing from path:
+                                      /spec/legacyFlag: missing value
+```
+
+That example is not hypothetical: it is what `--fuzz` reports against this
+repository's own full-coverage fixture, which exercises all 29 strategies.
+Four classes come out of it. Three are the same shape — a rule that assumes
+an optional field is present — and the fourth is a schema that admits a
+lexical form its rule cannot represent:
+
+| What fails | Why |
+|---|---|
+| `jsonPatch: move ... doc is missing from path: /spec/legacyFlag` | `move` on a field the schema does not require |
+| `cel: no such key: spec` | an expression assuming `spec` exists, on an object where every property is optional |
+| `arrayToMapByKey: element 0 ... is missing key field "name"` | the key field is not `required` in the item schema |
+| `duration: "27us" is not a whole number of seconds` | the schema types the field as `string` and permits durations the rule cannot represent |
+
+Each one is a conversion that would fail on a real object the apiserver would
+have accepted. Fixtures had covered every strategy in that config and found
+none of them.
+
+Generation is **biased toward the boundaries** rather than toward typical
+values: empty and single-element arrays, arrays at `maxItems`, strings at
+`minLength` and `maxLength`, numbers at `minimum` and `maximum`, the first
+and last enum members, and absent optionals.
+
+`--seed` makes a run reproducible, and the seed is printed on every run so a
+CI failure is replayable locally. **Use a fixed seed in a gating job** so the
+job is deterministic; leave it off for exploratory runs.
+
+`--fuzz` composes with `--samples` (generated objects alongside the ones you
+wrote) and with `--validate-output`, which together are the strongest
+offline check available: generated inputs, and the destination schema applied
+to the result.
+
+#### Promoting a discovered failure
+
+`--record-failures <dir>` writes every object that failed conversion as an
+ordinary sample file. Move it into your fixtures and it is tested on every
+run by everyone, instead of depending on somebody re-rolling the same seed.
+That promotion path is what makes fuzzing pay off over time.
+
+#### What the generator will not invent
+
+A schema can say `type: string` while a rule expects a Kubernetes quantity, a
+Go duration, or a number. A random string there is schema-valid and certain
+to fail conversion — which reads as a conversion bug and is not one. So the
+generator reads the compiled rules and produces the right lexical shape for
+`quantity`, `duration`, `numericScale` and `typeCoerce` paths.
+
+For paths whose form it cannot construct — a `pattern` it cannot invert, a
+`cel` expression, a `jsonPatch`, a split/join template — it leaves the field
+**absent** rather than filling it with something guaranteed to be rejected.
+Absence is a legitimate input and a real boundary; a random string is
+neither.
+
+That works only while the field is optional. A **required** field it cannot
+construct would make every generated object violate the schema it was
+generated from, so `--fuzz` stops and says so, naming the field and whether
+the obstacle is the schema's pattern or a rule's lexical shape:
+
+```console
+cannot generate objects for v3: required field "spec.serial" cannot be filled — the schema
+constrains it with pattern "^SN-[0-9]{6}-[A-Z]{3}$", which the generator cannot invert, and it
+has neither a default nor an enum to fall back on. Give it one in the schema, or test that path
+with --samples instead of --fuzz
+```
+
+Generated arrays and strings are also capped at 256 elements or bytes
+regardless of what `minItems` / `maxLength` say, and a *minimum* above that
+cap makes the field unconstructible. A schema asking for a million-element
+array is not a fuzz case worth allocating.
+
+Every generated object is validated against the schema it was generated from
+before any conversion runs. A generator bug is reported as a generator bug,
+with the seed, rather than being allowed to masquerade as a conversion
+failure.
+
+Runs are capped at 10,000 objects: a fuzz count large enough to hang CI is a
+footgun, not a feature.
+
+### Golden-corpus testing (`--record` / `--golden`)
+
+When a conversion config changes, a reviewer sees a YAML diff of the rules
+and a green check. Neither shows **what the change does to real objects**,
+which is the only thing that matters.
+
+`--record` writes the conversion result for every sample on every path into a
+corpus you commit alongside the config:
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples --record ./golden
+GOLDEN CORPUS: recorded 6 conversion(s) into ./golden
+
+$ find golden -type f
+golden/manifest.yaml
+golden/hub-v3/v3-to-v1.yaml
+golden/hub-v3/v3-to-v2.yaml
+golden/spoke-v1/v1-to-v2.yaml
+...
+```
+
+One object per file, named `<sample>/<from>-to-<to>.yaml`, so a change shows
+up in exactly the files it affects. Output is byte-stable: keys are sorted,
+numbers are formatted deterministically, and nothing carries a timestamp — a
+re-record that reshuffled keys would bury the real change in noise.
+
+`--golden` replays it and fails on any difference:
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples --golden ./golden
+GOLDEN CORPUS: ./golden — 1 difference(s)
+  KIND     FILE                  DETAIL
+  changed  hub-v3/v3-to-v1.yaml  spec.cpuLimit
+```
+
+**The PR diff then *is* the behavioural change.** A rule edit that alters
+output shows the affected objects and fields, in review, before merge.
+
+Three failures, each with its own remedy, so they are never collapsed into
+"the corpus does not match":
+
+| Kind | Means | Remedy |
+|---|---|---|
+| `changed` | a converted value differs; the fields are named | confirm it is intended, then re-record |
+| `missing` | a conversion produced output with no golden | re-record, or add the sample to the corpus |
+| `orphaned` | a golden nothing produces any more | re-record if the path was dropped deliberately |
+
+The corpus carries a `manifest.yaml` recording the plan hash, schema hash and
+convctl version. A mismatch is a **loud warning, not a failure** — the corpus
+may legitimately predate a config edit, and the field diffs are the real
+evidence either way.
+
+Drift fails the run regardless of `--fail-on`. That threshold grades
+conversion quality; a corpus mismatch is a fact rather than a judgement, and
+a gate `--fail-on none` could switch off would not be a gate.
+
+`--record` and `--golden` are mutually exclusive.
+
+#### Recording from live objects
+
+`--live --record` builds the corpus from what is actually in the cluster —
+the highest-value form, because every future config change is then graded
+against real data with no cluster access and no secrets in CI.
+
+> [!WARNING]
+> A corpus recorded from live objects contains real field values, which may
+> include sensitive data. Review it before committing.
+
+### Validating the converted output (`--validate-output`)
+
+`convctl test` round-trips every sample and diffs the result. That proves the
+rules agree **with each other**. It says nothing about whether what they
+produced is an object the apiserver will accept — and those are different
+questions.
+
+Without this flag, a conversion that drops a `required` field, produces a
+value outside an `enum`, violates a `pattern`, or overflows a `maxLength` is
+reported as **PASS**, and is then rejected in production with an error that
+names the object rather than the rule that produced it.
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples
+          v2→v1  PASS    4  16   v1:rule[1]:FieldRename,v1:rule[2]:FieldRename
+
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples --validate-output
+          v2→v1  ERROR   4  136  v1:rule[1]:FieldRename,v1:rule[2]:FieldRename
+
+ISSUES (2)
+SAMPLE    FIELD        FROM → TO  TYPE              DETAIL
+hub.yaml  spec.region  v2 → v1    schema-violation  spec.region: Required value (required) [v1:rule[2]:FieldRename]
+hub.yaml  spec.tier    v2 → v1    schema-violation  spec.tier: Unsupported value: "bronze": supported values: "gold", "silver" (enum) [v1:rule[1]:FieldRename]
+```
+
+Each violation carries the JSON path, the constraint that failed, and — when
+exactly one rule claims that destination path — the rule that produced it.
+Attribution is best-effort: a violation no single rule claims is still
+reported, because one nobody can explain matters more, not less.
+
+Validation uses the apiserver's own structural-schema validator
+(`k8s.io/apiextensions-apiserver/pkg/apiserver/validation`), not a
+reimplementation, so the verdict matches what the cluster will do rather than
+approximating it.
+
+**A violation is an error, not a loss.** It counts in `Summary.Errors` and
+fails at the default `--fail-on loss` threshold — an object the apiserver
+rejects is a failed conversion, not a lossy one.
+
+**Crossplane's injected fields do not produce violations.** Crossplane merges
+`spec.crossplane` (and, for `LegacyCluster`, `spec.claimRef`,
+`spec.writeConnectionSecretToRef` and the rest) into the CRD it generates,
+but those properties are absent from the XRD's authored schema — the only
+schema this tool has. They are removed before validation, per the target's
+resolved scope, so a real Crossplane object reports only violations its
+author actually caused.
+
+> [!NOTE]
+> **Off by default in this release, on in a later one.** Turning it on now
+> would make existing green pipelines red on upgrade without warning. New
+> pipelines should set it; the default is planned to flip in a future
+> release, and the change will be called out in the release notes.
+
 ### Parallelism and progress
 
 Samples are tested in parallel, one worker per available CPU by default. This matters most for `--live`, where the sample set is every object of the target type in the cluster rather than a handful of fixtures. Set `--concurrency N` to pin the worker count (`--concurrency 1` to go fully sequential).
@@ -129,6 +351,334 @@ Here is every threshold against every outcome:
 **Acknowledged loss alone never fails, at any threshold.** `acknowledgeLossy: true` is the config author stating on the record that a field is expected to be dropped or rounded; re-litigating that decision on every CI run would just train people to pass `--fail-on none`. What the default threshold catches is loss that *nobody* declared.
 
 `--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
+
+## `convctl plan`
+
+The ordered, gated path from where a target actually is to where you want it.
+
+A safe version migration is a sequence — add the version, wire the spoke,
+verify, promote the hub, retarget Compositions, migrate storage, prune
+`storedVersions`, stop serving, drop the block — and every step has a
+condition that has to hold before the next one is safe. That sequence exists
+in this repository as prose spread across three documents and six example
+directories. `plan` reads the target's current state and prints the path from
+there, with each step carrying the command, the gate, and the command that
+proves the gate.
+
+```console
+$ convctl plan --xrd xrd.yaml --config config.yaml --to v2
+
+XRD: xwidgets.example.org
+Config: xwidgets-conversion
+Hub: v1 → v2
+
+  1. [DONE] Serve v2 on the XRD
+     run:     edit xwidgets.example.org: set spec.versions[name=v2].served: true (leave referenceable on v1 for now)
+     gate:    v2 is served and the apiserver accepts reads at it
+     verify:  kubectl get compositeresourcedefinition xwidgets.example.org -o jsonpath='{.spec.versions[?(@.name=="v2")].served}'
+
+  2. [DONE] Wire v2 into the conversion config
+     run:     convctl suggest --xrd <xrd.yaml> --hub v1 --spoke v2  # then apply the config
+     gate:    the config declares a rule set covering v2, and `convctl validate` is clean
+     verify:  convctl validate --xrd <xrd.yaml> --config <config.yaml>
+
+▶ 3. [READY] Promote v2 to the hub
+     run:      edit xwidgets.example.org: move referenceable: true from v1 to v2, and set spec.hubVersion: v2 in the config
+     gate:     conversion is verified against real objects AND the webhook has reached the generated CRD. Applied is not the same as converting: until Crossplane re-renders the generated CRD, reads at a non-storage version return stored objects relabelled but UNCONVERTED, with HTTP 200 and no error
+     verify:   convctl test --xrd <xrd.yaml> --config <config.yaml> --live --validate-output --verify-propagation --version-pair v1:v2
+     blocked:  the hub is still v1
+
+  4. [UNKNOWN] Retarget Compositions at the new hub
+     run:      convctl retarget --xrd xwidgets.example.org --to v2
+     gate:     every Composition's compositeTypeRef.apiVersion names v2, and every XR's compositionRef points at a retargeted Composition
+     verify:   convctl retarget --xrd xwidgets.example.org --to v2 --dry-run
+     blocked:  cannot be determined from files alone; confirm against the cluster with the verify command
+
+  ...
+
+  7. [BLOCKED] Stop serving v1
+     run:      edit xwidgets.example.org: set spec.versions[name=v1].served: false (mark it deprecated first, with a deprecationWarning)
+     gate:     v1 is not in status.storedVersions, no field manager is still writing it, and the object walk completed
+     verify:   convctl versions --xrd <xrd.yaml> --check-unserve v1
+     blocked:  step 3 (Promote v2 to the hub) has not been done yet
+
+NEXT: step 3 — Promote v2 to the hub
+```
+
+`plan` is read-only. It prints; you run the steps.
+
+### Why only one step is offered
+
+Steps already satisfied are marked `DONE` rather than reprinted as work, and
+exactly one outstanding step is ever marked `READY`. Everything after it is
+`BLOCKED`, naming the step that blocks it.
+
+That is deliberate. Presenting five satisfiable steps at once is how they get
+done out of order, and for this particular sequence, out of order means
+serving a version with no conversion behind it — which fails silently. The
+plan is a queue, not a checklist.
+
+### `UNKNOWN`, and why it is not `READY`
+
+Three steps on an XRD — retargeting Compositions, migrating storage, pruning
+`storedVersions` — have no answer in a manifest. (A native CRD has two: there
+are no Compositions to retarget.) Whether every stored object
+has been rewritten is a fact about the cluster.
+
+Those steps are marked `UNKNOWN` rather than guessed at. `UNKNOWN` is neither
+offered as the next step nor allowed to block the ones after it:
+
+- Calling it `READY` would claim the tool checked something it did not.
+- Calling it `BLOCKED` would stall every later step behind a gate that can
+  never close from files, hiding the rest of the plan on a late-stage target.
+
+Each one carries the `verify` command that answers it against a live cluster.
+When no `READY` step remains, `plan` says so and reports how many steps still
+need a cluster:
+
+```console
+Nothing outstanding that can be determined from files. 3 step(s) need a cluster to confirm — run their verify commands.
+```
+
+### Retirement waits for the cluster
+
+Un-serving a version, and dropping its block, are the only irreversible steps
+in the sequence — and whether either is safe rests entirely on the three
+`UNKNOWN` steps above. So they are never offered as the next thing to do on
+the strength of a manifest. They are printed, with their gates, marked
+`BLOCKED` on the steps that need confirming:
+
+```console
+  7. [BLOCKED] Stop serving v1
+     blocked:  step(s) 4, 5, 6 need a cluster to confirm and retiring a version is irreversible; run their verify commands, then re-run with --assume-verified
+```
+
+`--assume-verified` is you saying you ran those verify commands. It asserts
+the cluster-only gates and nothing else — three of them on an XRD, two on a
+native CRD — and every other step is still judged from the files.
+
+```console
+$ convctl plan --xrd xrd.yaml --config config.yaml --to v3 --assume-verified
+...
+NEXT: step 8 — Drop the v1 version block
+```
+
+### Package-managed XRDs are ordered differently
+
+For an XRD shipped inside a Crossplane Configuration, the conversion config
+must be applied **before** the package upgrade lands. That is the reverse of
+the hand-applied order, and getting it backwards leaves the new version served
+with no conversion at all — reads return stored objects relabelled but
+unconverted, `200 OK`, no error anywhere.
+
+`plan` detects this from the XRD's `ownerReferences` (a `ConfigurationRevision`
+owner) and reorders accordingly, or you can force it with `--package-managed`:
+
+```console
+$ convctl plan --xrd xrd.yaml --config config.yaml --to v2 --package-managed
+...
+PACKAGE-MANAGED: the conversion config must be applied BEFORE the package upgrade lands,
+                 or the new version is served with no conversion at all.
+```
+
+### Which versions get retirement steps
+
+A version gets "stop serving" and "drop the block" steps when it is the hub
+being replaced, when it is marked `deprecated`, or when it has already stopped
+being served.
+
+A served, undeprecated spoke gets neither. Keeping old versions readable is
+the entire point of a conversion webhook; retiring one is a separate decision,
+and you signal it by deprecating the version.
+
+### Native CRDs
+
+`--crd` plans the same sequence for a native CRD, where the hub is the
+`storage: true` version. There is no Composition-retargeting step, because
+nothing points a `compositeTypeRef` at a plain CRD.
+
+```console
+$ convctl plan --crd crd.yaml --config crdconversionconfig.yaml --to v2
+```
+
+### Output and exit codes
+
+`--output json` emits the whole plan — every step with its `run`, `gate`,
+`verify`, `status` and `blockedBy` — for a controller or a pipeline to consume.
+
+| Code | Meaning |
+|---|---|
+| 0 | a plan was produced |
+| 1 | the target state is unreachable (the version is not declared on the target) |
+| 2 | usage error |
+
+## `convctl versions`
+
+One table that answers *is it safe to stop serving this version yet?*
+
+(Stopping to serve it and removing its version block are two different
+steps — the second is irreversible for anything still stored at it, and
+[`convctl compat`](#convctl-compat) is the check for that one.)
+
+Deciding that requires four facts that live in four different places: is
+anything still stored at it, is anything still *writing* it, is it marked
+deprecated, and does a spoke rule set exist for it.
+
+```console
+$ convctl versions --xrd xrd.yaml --config config.yaml
+
+XRD: xwidgets.example.org	Config: widgets-conversion
+
+VERSION  SERVED  HUB  DEPRECATED  SPOKE RULES  LIVE OBJECTS  STORED  LAST WRITTEN AT
+v3       yes     yes  no          yes          412           yes     argocd @ 2026-06-01T09:14:02Z
+v2       yes     no   no          yes          0             no      -
+v1       yes     no   yes         yes          3             yes     legacy-reconciler @ 2026-05-30T22:10:44Z
+
+v1 is deprecated: use v3; v1 will stop being served in the next release
+```
+
+| Column | Source |
+|---|---|
+| `SERVED` | XRD `spec.versions[].served` |
+| `HUB` | `referenceable` / `storage` |
+| `DEPRECATED` | `deprecated` + `deprecationWarning` |
+| `SPOKE RULES` | whether the conversion config has a spoke entry |
+| `LIVE OBJECTS` | instance count, across **both** generated CRDs on a claim-offering XRD — see the note below on what it does *not* mean |
+| `LAST WRITTEN AT` | derived from each object's `managedFields[].apiVersion` |
+| `STORED` | whether the version appears in `status.storedVersions` |
+
+**`LIVE OBJECTS` is inventory, not evidence about that version.** The
+apiserver converts on read, so listing at any served version returns *every*
+object converted to it — the count is the same on every served row, and it is
+not the number of objects stored at that version. It is therefore **not** a
+blocker for `--check-unserve`: if it were, a single XR anywhere would block
+un-serving every spoke forever. `STORED` is what answers the storage
+question, and `LAST WRITTEN AT` answers who is still writing. Both are
+genuinely per version.
+
+**`LAST WRITTEN AT` is usually the one that decides.** "Nothing is stored at
+v1" says the data has moved; it says nothing about the controller that still
+PUTs v1 objects every reconcile and starts failing the moment the version
+stops being served. Each object's `managedFields` records the apiVersion its
+writers used, so the answer is already in the cluster — aggregated here by
+manager, so the output says *who*, not just *that*.
+
+Crossplane's own `deprecated` / `deprecationWarning` are per-version fields
+copied into the generated CRD by `xcrd.genCrdVersion`, and nothing in this
+project surfaced them until now.
+
+A count followed by `+` hit the sample bound (`--max-samples`); a count
+followed by `?` means the objects at that version **could not be listed** —
+RBAC, a timeout, anything that is not "the apiserver does not serve this
+version". The row then says so underneath, and `--check-unserve` treats it as
+a blocker. This is the one command where mistaking *"I could not look"* for
+*"there are none"* unserves a version the fleet is still reading.
+
+### As a gate on un-serving
+
+`--check-unserve` gates the `served: false` flip, not the removal of the
+version block. Passing it does not mean the version can be deleted.
+
+```console
+$ convctl versions --xrd xrd.yaml --check-unserve v1
+
+v1 is NOT safe to stop serving:
+  - it appears in status.storedVersions, so the apiserver believes objects are still persisted at it — run `convctl migrate-storage` first
+  - still actively written by: legacy-reconciler
+```
+
+Exits non-zero with the reasons, so it drops into a pipeline or into
+[`convctl plan`](#convctl-plan)'s gate for the un-serve step.
+
+Read-only throughout. The object walk paginates and is bounded by
+`--max-samples` (default 5000): asking whether a version is safe to drop
+should not be a way to take the apiserver down. A count shown as `N+` means
+the bound was hit, and an incomplete walk is itself reported as a blocker
+rather than being allowed to read as "nothing is there".
+
+## `convctl compat`
+
+A single command a branch-protection rule can require: *you may not merge a
+change that breaks an existing conversion without acknowledging it.*
+
+`convctl diff` compares two configs against one schema. `compat` compares
+**schema + config at two points in time** and classifies the delta by
+severity.
+
+```console
+$ convctl compat --base origin/main --head HEAD --config config.yaml --xrd xrd.yaml
+Compatibility: origin/main → HEAD (config.yaml)
+
+SEVERITY  CLASS          DETAIL
+breaking  CoverageLost   spoke v1: "spec.tier" had a rule and no longer does
+breaking  RuleRemoved    spoke v1: rule 1 (FieldRename) was removed and no replacement claims its paths
+
+RESULT: breaking changes found. Acknowledge a deliberate one with --allow <class>.
+```
+
+| Class | Severity | Meaning |
+|---|---|---|
+| `LosslessToLossy` | breaking | a direction that used to round-trip no longer does |
+| `CoverageLost` | breaking | a field that had a rule no longer has one |
+| `ServedVersionRemoved` | breaking | a version dropped while objects may still be stored at it |
+| `RuleRemoved` | breaking | a rule deleted without a replacement claiming its paths |
+| `HubChanged` | breaking | the hub moved — legitimate, but must be deliberate |
+| `StrategyChanged` | review | same paths, different strategy |
+| `MappingChanged` | review | same paths and strategies, wired to each other differently — two renames that swapped destinations change every object while leaving every aggregate identical |
+| `CoverageGained` | safe | a field is newly covered |
+| `NewVersion` | safe | a version is newly served |
+
+`--allow <class>` (repeatable) acknowledges a class **deliberately**, so a
+real hub promotion passes the gate with an explicit flag rather than by
+switching the check off. The output names which acknowledgements were used,
+and acknowledging one class does not acknowledge the others.
+
+Revisions are read with `git show <ref>:<path>`, so no checkout is needed and
+the gate works in a shallow CI clone (`fetch-depth: 2`). Paths are the ones
+you would type into any other `convctl` command — relative to your working
+directory, not to the repository root — so running `compat` from inside the
+directory that holds the config works the same as running it from the top.
+
+If either revision does not analyze cleanly, the report says so as a `NOTE`
+above the table. Those are not compatibility changes — an uncovered field or
+an unserved spoke is ordinary currency here, and several of them are exactly
+what the classes above describe — but *"No differences"* between two
+revisions that both fail `convctl validate` reads as a pass, so the
+comparison names the side it could not fully analyze.
+
+`--output markdown` is stable between runs on the same input — no timestamps,
+fixed ordering — so a sticky PR comment updates in place instead of producing
+a fresh diff on every CI run.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | no unacknowledged breaking changes |
+| 1 | breaking changes found |
+| 2 | usage, or a revision that could not be resolved |
+
+### As a required status check
+
+```yaml
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 2          # compat needs the base revision, not the history
+    persist-credentials: false
+# checkout fetches only the triggering ref, so origin/<base> does not exist
+# yet. This refspec is what creates it; one commit is enough.
+- run: |
+    git fetch --depth=1 origin \
+      "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+- run: |
+    convctl compat \
+      --base "origin/${{ github.base_ref }}" --head HEAD \
+      --config config.yaml --xrd xrd.yaml \
+      --output markdown | tee compat.md
+```
+
+Make that job a required check and a breaking conversion change cannot merge
+without somebody adding `--allow` and saying why in the PR.
 
 ## `convctl diff`
 

@@ -90,6 +90,18 @@ func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
 		sortDiagnostics(platformDiags)
 		diags = append(diags, platformDiags...)
 
+		// Can this rule set produce a valid object for every input? The
+		// engine tracked required-ness already but only ever used it for a
+		// warning on Delete; the general question went unasked, so a spoke
+		// requiring a field no rule can always produce failed at admission
+		// for some objects and not others. Checked in both directions,
+		// independently, because a rule set can be complete one way and
+		// not the other.
+		reqDiags := analyzeRequiredFields(spoke.Schema, hub.Schema, rs.Rules, results, "spoke")
+		reqDiags = append(reqDiags, analyzeRequiredFields(hub.Schema, spoke.Schema, rs.Rules, results, "hub")...)
+		sortDiagnostics(reqDiags)
+		diags = append(diags, reqDiags...)
+
 		sr := SpokeReport{
 			Version:     rs.SpokeVersion,
 			Lossless:    verdict,
