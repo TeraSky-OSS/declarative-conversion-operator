@@ -37,7 +37,7 @@ rules:
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
+    resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["terasky.com"]
     resources: ["conversionwebhookservers", "crdconversionconfigs", "xrdconversionconfigs"]

@@ -20,7 +20,7 @@ limitations under the License.
 // CRD conversion requests itself — that's cmd/webhook-server's job.
 //
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations;mutatingwebhookconfigurations,verbs=get;list;watch
 package main
 
 import (
@@ -41,6 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/controller"
@@ -64,6 +65,7 @@ func main() {
 		defaultImage         string
 		enableXRDSupport     bool
 		enableCRDSupport     bool
+		enableXRDGuard       bool
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -73,6 +75,9 @@ func main() {
 	flag.BoolVar(&enableXRDSupport, "enable-xrd-support", true, "Enable XRDConversionConfig support for Crossplane CompositeResourceDefinitions. "+
 		"Requires Crossplane to be installed; disable on clusters that don't have it, since watching a GVK whose CRD doesn't exist is fatal at startup.")
 	flag.BoolVar(&enableCRDSupport, "enable-crd-support", true, "Enable CRDConversionConfig support for plain native Kubernetes CustomResourceDefinitions.")
+	flag.BoolVar(&enableXRDGuard, "enable-xrd-conversion-guard", true, "Register a mutating admission webhook on compositeresourcedefinitions that re-injects spec.conversion into writes that would drop it. "+
+		"Exists because Crossplane's package establisher writes established objects with a full client.Update rather than a Server-Side Apply, stripping the field on every revision reconcile. "+
+		"Both upstream write paths carry a TODO to move to SSA; turn this off once a Crossplane version lands that no longer needs it. Requires --enable-xrd-support.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -179,6 +184,22 @@ func main() {
 		Complete(); err != nil {
 		logger.Error(err, "unable to create webhook", "webhook", "ConversionWebhookServer")
 		os.Exit(1)
+	}
+
+	// The conversion guard mutates Crossplane's own XRDs, so unlike the
+	// three validators above it is only registered when XRD support is on
+	// — there is nothing to guard otherwise, and on a cluster with no
+	// Crossplane the type does not exist at all.
+	switch {
+	case !enableXRDGuard:
+		logger.Info("XRD conversion guard disabled (--enable-xrd-conversion-guard=false); a package-managed XRD will lose its conversion stanza on every ConfigurationRevision reconcile until the operator re-applies")
+	case !enableXRDSupport:
+		logger.Info("XRD conversion guard not registered: it requires --enable-xrd-support")
+	default:
+		guard := &internalwebhook.XRDConversionGuard{Client: mgr.GetClient()}
+		guard.InjectDecoder(admission.NewDecoder(mgr.GetScheme()))
+		mgr.GetWebhookServer().Register(internalwebhook.GuardPath, &webhook.Admission{Handler: guard})
+		logger.Info("XRD conversion guard registered", "path", internalwebhook.GuardPath)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

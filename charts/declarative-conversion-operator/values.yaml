@@ -50,6 +50,30 @@ features:
   # supported; "2.x only" is about the control plane, not claims.
   crossplane:
     enabled: true
+    # A mutating admission webhook on compositeresourcedefinitions that
+    # re-injects spec.conversion into any write that would drop it.
+    #
+    # It exists because Crossplane's package establisher writes established
+    # objects with a full client.Update from the package contents rather
+    # than a Server-Side Apply, and re-runs on every ConfigurationRevision
+    # reconcile — which the default one-hour --sync guarantees. So an XRD
+    # shipped in a Configuration loses spec.conversion roughly hourly. The
+    # operator re-applies within seconds, but during that window the
+    # generated CRD is back on strategy: None and the apiserver serves
+    # stored objects relabelled but UNCONVERTED, with HTTP 200 and no
+    # error.
+    #
+    # failurePolicy is Ignore, always: a guard that could block XRD writes
+    # would make package installs depend on this operator's availability.
+    # Fail open, and let the controller re-apply as the backstop — normal
+    # operation has no window, degraded operation is exactly the behaviour
+    # without the guard.
+    #
+    # Both upstream write paths carry a TODO to move to Server-Side Apply.
+    # Once a Crossplane version lands that no longer needs this, turn it
+    # off; nothing else changes.
+    conversionGuard:
+      enabled: true
   # Native CRD conversion support (CRDConversionConfig) watches a core
   # Kubernetes type that's always present, so this carries no equivalent
   # startup risk — disable only if you simply don't want the feature

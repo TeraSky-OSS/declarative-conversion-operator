@@ -4,7 +4,7 @@
 
 There are two entirely separate admission-webhook surfaces in this project, and they're easy to mix up:
 
-1. **This operator's own admission webhook.** Validates `XRDConversionConfig`, `CRDConversionConfig`, and `ConversionWebhookServer` objects themselves at `kubectl apply` time (e.g. rejecting a config with an unacknowledged lossy rule, or a second `ConversionWebhookServer` marked `default`). Served by the `manager` binary. Completely standard kubebuilder scaffolding, since these three CRDs are themselves single-version.
+1. **This operator's own admission webhook.** Validates `XRDConversionConfig`, `CRDConversionConfig`, and `ConversionWebhookServer` objects themselves at `kubectl apply` time (e.g. rejecting a config with an unacknowledged lossy rule, or a second `ConversionWebhookServer` marked `default`). Served by the `manager` binary. Completely standard kubebuilder scaffolding, since these three CRDs are themselves single-version. The same surface also serves the [XRD conversion guard](#the-xrd-conversion-guard) — a mutating webhook on Crossplane's own XRDs, sharing the same certificate and Service.
 2. **The CRD conversion webhook.** Served per-target-resource by `ConversionWebhookServer` instances (the `webhook-server` binary), dynamically wired onto each target XRD or native CRD at runtime by the corresponding controller. This is the thing that actually converts your composite resources or custom resources between versions.
 
 ## End-to-end flow
@@ -22,6 +22,31 @@ flowchart LR
 ```
 
 The controller never patches the XRD until *all* of validation, XRD health, and webhook-server health pass — see [XRDConversionConfig: ordering](configuration/xrdconversionconfig.md#ordering-nothing-touches-the-xrd-until-every-gate-passes) for the exact gate sequence.
+
+## The XRD conversion guard
+
+An XRD shipped inside a Crossplane `Configuration` package **loses its conversion webhook on a recurring basis**, and the operator's re-apply is a race it usually — but not always — wins.
+
+**The mechanism.** Crossplane's package establisher ends in a full `client.Update` from the package contents, under an upstream comment reading `// This should be a server side apply?`. Its `merge` step preserves nothing for XRDs. A `client.Update` is a *replace*: it is not merge-aware and it ignores Server-Side Apply field ownership, so `spec.conversion` and this operator's two annotations are removed outright. `Establish` runs on **every** revision reconcile, with no diff check and no early return for a healthy revision — and the manager's `SyncPeriod` is Crossplane's `--sync` flag, which defaults to **one hour**. A `Lock` change (any package installed, upgraded or removed anywhere on the cluster) or a Crossplane restart does the same thing off-schedule.
+
+**Why it matters more than it sounds.** With `spec.conversion` gone, Crossplane re-renders the generated CRD without it and the CRD falls back to `strategy: None`. The apiserver then serves a stored object at a different version by **relabelling `apiVersion` and returning the original field layout**. Clients get wrong data with HTTP 200, and writes during the window persist the wrong shape. Nothing errors. The operator watches XRDs, so it re-applies within seconds — the exposure is a race of seconds, roughly hourly, per package-managed XRD. That is small, and it is exactly the profile of a bug nobody can reproduce.
+
+**Why patching the generated CRD instead does not work.** The instinct is to patch the CRD rather than the XRD, on the theory that Crossplane only owns the XRD. Crossplane's definition controller applies the rendered CRD through `resource.NewAPIUpdatingApplicator` (itself under a `TODO(negz): Use server-side apply instead`), whose `Apply` is a `Get` followed by a full `client.Update` — on a controller that reconciles on *every* XRD change rather than hourly. Both write paths are non-SSA full replaces. There is no object in the chain where field ownership survives.
+
+**So the guard corrects the write instead.** A **mutating admission webhook on `compositeresourcedefinitions`** (CREATE and UPDATE) re-injects `spec.conversion` and the two annotations into any write whose result would drop them. The field is restored inside the same request, so there is no interval during which the generated CRD lacks conversion — compare the un-guarded behaviour, where correctness depends on winning a race after the fact. Nothing outside this operator changes: the Configuration package, the `ConfigurationRevision`, and Crossplane itself are untouched, the establisher's `Update` succeeds, and it never re-reads the object to compare.
+
+The decisions that make it safe to run in front of every XRD write on the cluster:
+
+- **`failurePolicy: Ignore`, not configurable.** A guard that can block XRD writes would make package installs depend on this operator's availability — unacceptable for something meant to be purely additive. Fail open, with the controller's re-apply as the backstop: normal operation has no window, degraded operation is exactly the behaviour without the guard.
+- **Scoped by the field index, not by an `objectSelector`.** The tempting selector — a label the operator sets — is self-defeating: that label is wiped by the very `Update` being guarded against, so it would switch the guard off in exactly the case it exists for. The guard matches every XRD write and returns early on a miss against the existing XRD-name field index. XRDs are few and rarely written, and the handler is an in-memory lookup with no API call.
+- **Only ever adds.** Nothing but `spec.conversion` and the two annotations is read, compared, or written, so a package's own changes to every other field go through as written.
+- **Never hijacks somebody else's webhook.** An incoming `spec.conversion` pointing at a webhook this operator does not manage — identified by the `conversion.terasky.com/managed-by` annotation — is left completely alone.
+- **Only restores what the controller already applied.** The config has to be in the state that earned an apply: `Applied=True`, `status.lastAppliedPlanHash` set, coordinates resolved, not being deleted. Injecting for a config that has not passed its own gates would route live admission traffic at a webhook server the operator has never confirmed is serving it.
+- **No fight loop.** The package manager's `Update` succeeds and it never re-reads to compare, and the `ConfigurationRevision` controller does not watch the objects it establishes — it watches only `ConfigurationRevision`, `Lock` and `ImageConfig`.
+
+**It is a bridge, not a fixture.** Both upstream write paths carry a TODO to move to Server-Side Apply. The day either one does, this operator's SSA field ownership holds on its own and the guard becomes a no-op. It is behind `--enable-xrd-conversion-guard` (chart: `features.crossplane.conversionGuard.enabled`, default on) so it can be retired without a code change; disabling it restores exactly the pre-guard behaviour.
+
+Whether or not the guard is enabled, the `PackageManaged` condition and the `dco_manager_conversion_reverts_total` metric make the hazard visible — see [Observability](observability.md).
 
 ## `pkg/engine`: the reusable, Crossplane-agnostic core
 
