@@ -206,14 +206,18 @@ func shouldRestoreConversion(xrd *unstructured.Unstructured, cfg *teraskyv1alpha
 	svcName, _, _ := unstructured.NestedString(xrd.Object, "spec", "conversion", "webhook", "clientConfig", "service", "name")
 	svcNS, _, _ := unstructured.NestedString(xrd.Object, "spec", "conversion", "webhook", "clientConfig", "service", "namespace")
 	path, _, _ := unstructured.NestedString(xrd.Object, "spec", "conversion", "webhook", "clientConfig", "service", "path")
-	if svcName == want.name && svcNS == want.namespace && path == cfg.Status.WebhookPath &&
+	port, _, _ := unstructured.NestedInt64(xrd.Object, "spec", "conversion", "webhook", "clientConfig", "service", "port")
+	if svcName == want.name && svcNS == want.namespace && path == cfg.Status.WebhookPath && port == int64(want.port) &&
 		xrd.GetAnnotations()[conversionpatch.PlanHashAnnotation] == cfg.Status.LastAppliedPlanHash {
 		return "the incoming XRD already carries the applied conversion stanza", false
 	}
 	return "", true
 }
 
-type guardService struct{ name, namespace string }
+type guardService struct {
+	name, namespace string
+	port            int32
+}
 
 // guardWebhookService derives the service coordinates from the config's own
 // published status rather than re-resolving the assignment. The controller
@@ -230,7 +234,15 @@ func guardWebhookService(cfg *teraskyv1alpha1.XRDConversionConfig) (guardService
 	if len(parts) < 3 || parts[0] == "" || parts[1] == "" {
 		return guardService{}, fmt.Errorf("the config's status.webhookURL host %q is not <service>.<namespace>.svc", u.Hostname())
 	}
-	return guardService{name: parts[0], namespace: parts[1]}, nil
+	// The port is not in the URL, so it is carried separately. An empty
+	// value means the config was last applied by an operator predating
+	// status.webhookPort — 443 is what that version always used, and the
+	// controller will fill the field in on its next reconcile.
+	port := cfg.Status.WebhookPort
+	if port == 0 {
+		port = 443
+	}
+	return guardService{name: parts[0], namespace: parts[1], port: port}, nil
 }
 
 // applyConversionToXRD writes the conversion stanza and both annotations
@@ -265,7 +277,7 @@ func applyConversionToXRD(xrd *unstructured.Unstructured, cfg *teraskyv1alpha1.X
 					"name":      svc.name,
 					"namespace": svc.namespace,
 					"path":      cfg.Status.WebhookPath,
-					"port":      int64(443),
+					"port":      int64(svc.port),
 				},
 			},
 			"conversionReviewVersions": versions,

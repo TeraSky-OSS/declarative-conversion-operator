@@ -141,6 +141,7 @@ status:
   assignedWebhookServer: default
   webhookPath: /convert/xwidgets.example.org
   webhookURL: https://default-webhook-server.declarative-conversion-system.svc/convert/xwidgets.example.org
+  webhookPort: 443
   conditions:
     - type: Validated
       status: "True"

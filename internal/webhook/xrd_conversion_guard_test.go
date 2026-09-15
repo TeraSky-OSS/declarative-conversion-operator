@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8sjson "k8s.io/apimachinery/pkg/util/json"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -40,6 +41,7 @@ const (
 	guardSvcName = "srv-conversion"
 	guardSvcNS   = "operator-ns"
 	guardPath    = "/convert/xfoos.example.org"
+	guardPort    = int32(8443)
 )
 
 // appliedConfig is a config in exactly the state that earns an apply:
@@ -57,6 +59,7 @@ func appliedConfig() *teraskyv1alpha1.XRDConversionConfig {
 			AssignedWebhookServer: "srv",
 			WebhookPath:           guardPath,
 			WebhookURL:            "https://" + guardSvcName + "." + guardSvcNS + ".svc" + guardPath,
+			WebhookPort:           guardPort,
 			LastAppliedPlanHash:   "hash-abc123",
 			Conditions: []metav1.Condition{{
 				Type: teraskyv1alpha1.ConditionApplied, Status: metav1.ConditionTrue,
@@ -82,7 +85,7 @@ func ourConversionXRD() *unstructured.Unstructured {
 		"webhook": map[string]any{
 			"clientConfig": map[string]any{
 				"service": map[string]any{
-					"name": guardSvcName, "namespace": guardSvcNS, "path": guardPath, "port": int64(443),
+					"name": guardSvcName, "namespace": guardSvcNS, "path": guardPath, "port": int64(guardPort),
 				},
 				"caBundle": "Zm9v",
 			},
@@ -144,8 +147,13 @@ func applyPatches(t *testing.T, in *unstructured.Unstructured, resp admission.Re
 	if err != nil {
 		t.Fatalf("applying patch: %v", err)
 	}
+	// Decode with apimachinery's JSON, not encoding/json: the apiserver
+	// decodes an unstructured object with UseNumber semantics, so whole
+	// numbers land as int64. encoding/json would make them float64 and
+	// every NestedInt64 assertion below would fail for a reason that does
+	// not exist in production.
 	out := &unstructured.Unstructured{}
-	if err := json.Unmarshal(patched, &out.Object); err != nil {
+	if err := k8sjson.Unmarshal(patched, &out.Object); err != nil {
 		t.Fatalf("unmarshalling patched: %v", err)
 	}
 	return out
@@ -400,5 +408,60 @@ func TestGuardWebhookService(t *testing.T) {
 func TestTargetXRDNameIndexNameMatchesTheController(t *testing.T) {
 	if TargetXRDNameIndexName != controller.TargetXRDNameIndex {
 		t.Fatalf("index key drifted: webhook has %q, controller has %q", TargetXRDNameIndexName, controller.TargetXRDNameIndex)
+	}
+}
+
+// TestXRDConversionGuard_RestoresTheConfiguredPort pins a detail that is
+// invisible until somebody sets ConversionWebhookServer.spec.service.port
+// to something other than 443: status.webhookURL does not carry the port,
+// so the guard has to read it from status.webhookPort. Restoring 443 onto a
+// server listening on 8443 would point the generated CRD at a closed port
+// until the controller's next reconcile — a window the guard exists to
+// eliminate, not to create.
+func TestXRDConversionGuard_RestoresTheConfiguredPort(t *testing.T) {
+	g := newGuard(t, appliedConfig())
+	in := strippedXRD()
+
+	resp := g.Handle(context.Background(), guardRequest(t, in, admissionv1.Update))
+	if len(resp.Patches) == 0 {
+		t.Fatal("expected the conversion stanza to be restored")
+	}
+	out := applyPatches(t, in, resp)
+	port, found, _ := unstructured.NestedInt64(out.Object, "spec", "conversion", "webhook", "clientConfig", "service", "port")
+	if !found || port != int64(guardPort) {
+		t.Fatalf("restored port = %d (found=%v), want %d", port, found, guardPort)
+	}
+}
+
+func TestXRDConversionGuard_WrongPortIsCorrected(t *testing.T) {
+	// Everything else matches, so only the port distinguishes "already
+	// correct" from "needs restoring".
+	g := newGuard(t, appliedConfig())
+	in := ourConversionXRD()
+	_ = unstructured.SetNestedField(in.Object, int64(443), "spec", "conversion", "webhook", "clientConfig", "service", "port")
+
+	resp := g.Handle(context.Background(), guardRequest(t, in, admissionv1.Update))
+	if len(resp.Patches) == 0 {
+		t.Fatal("a wrong port must be corrected")
+	}
+	out := applyPatches(t, in, resp)
+	port, _, _ := unstructured.NestedInt64(out.Object, "spec", "conversion", "webhook", "clientConfig", "service", "port")
+	if port != int64(guardPort) {
+		t.Fatalf("port = %d, want %d", port, guardPort)
+	}
+}
+
+func TestGuardWebhookService_PortDefaultsWhenUnset(t *testing.T) {
+	// A config last applied by an operator predating status.webhookPort.
+	// 443 is what that version always used, and the controller fills the
+	// field in on its next reconcile.
+	cfg := appliedConfig()
+	cfg.Status.WebhookPort = 0
+	got, err := guardWebhookService(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.port != 443 {
+		t.Errorf("port = %d, want the 443 default", got.port)
 	}
 }

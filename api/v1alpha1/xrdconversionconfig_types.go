@@ -666,6 +666,13 @@ type XRDConversionConfigStatus struct {
 	WebhookPath string `json:"webhookPath,omitempty"`
 	// +optional
 	WebhookURL string `json:"webhookURL,omitempty"`
+	// WebhookPort is the assigned ConversionWebhookServer's service port.
+	// Recorded separately from WebhookURL because the URL omits it, and
+	// the XRD conversion guard has to reconstruct the exact clientConfig
+	// the controller applied — restoring the wrong port would point the
+	// generated CRD at a closed port until the next reconcile.
+	// +optional
+	WebhookPort int32 `json:"webhookPort,omitempty"`
 	// +optional
 	OverallLossless bool `json:"overallLossless,omitempty"`
 	// +optional

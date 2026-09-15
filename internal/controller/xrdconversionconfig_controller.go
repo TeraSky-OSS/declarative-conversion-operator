@@ -281,6 +281,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	cfg.Status.Phase = teraskyv1alpha1.PhaseApplied
 	cfg.Status.WebhookPath = path
 	cfg.Status.WebhookURL = fmt.Sprintf("https://%s.%s.svc%s", cwsServiceName(serverName), serverNamespace, path)
+	cfg.Status.WebhookPort = port
 	cfg.Status.LastAppliedPlanHash = cfg.Status.SchemaHash
 	cfg.Status.Message = "conversion webhook configuration applied to the target XRD"
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
