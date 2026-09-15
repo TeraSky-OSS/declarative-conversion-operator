@@ -193,60 +193,31 @@ jobs:
             --set dashboards.enabled=true \
             --set manager.podDisruptionBudget.enabled=true
 
-      - name: helm template (scheduling, labels, extraEnv, cacheSelector)
+      # The assertions that used to live here as `helm template | grep -q`
+      # are now helm-unittest suites in charts/*/tests/. grep proves that a
+      # string is present somewhere in the rendered stream; it cannot say
+      # which object the key is on, and it cannot say that something is
+      # ABSENT — so a template that rendered when it should not have used to
+      # pass unnoticed. The `helm install`-time value validation they
+      # partially stood in for is now values.schema.json.
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version 1.0.2
+
+      - name: helm unittest
+        run: helm unittest charts/declarative-conversion-operator
+
+      - name: helm template (the install-UX fixture, against values.schema.json)
         run: |
-          out="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+          helm template declarative-conversion-operator charts/declarative-conversion-operator \
             --namespace declarative-conversion-system \
-            -f hack/testdata/helm-install-ux-values.yaml)"
-          echo "$out" | grep -q 'priorityClassName: system-cluster-critical'
-          echo "$out" | grep -q 'team: "platform"'
-          echo "$out" | grep -q 'env: "ci"'
-          echo "$out" | grep -q 'name: FOO'
-          echo "$out" | grep -q 'name: TENANT'
-          echo "$out" | grep -q -- '--cert-reload-interval=1m'
-          echo "$out" | grep -q 'tenant: a'
-          echo "$out" | grep -q 'app.kubernetes.io/name: declarative-conversion-operator'
-          if echo "$out" | grep -q 'app.kubernetes.io/name: hijack'; then
-            echo "FAIL: commonLabels overrode the manager selector name" >&2
-            exit 1
-          fi
-          if echo "$out" | grep -q 'control-plane: hijack'; then
-            echo "FAIL: podLabels overrode the manager selector" >&2
-            exit 1
-          fi
+            -f hack/testdata/helm-install-ux-values.yaml >/dev/null
 
-      - name: helm template (XRD conversion guard, enabled and disabled)
+      - name: values.schema.json rejects a typo
         run: |
-          on="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
-            --namespace declarative-conversion-system)"
-          echo "$on" | grep -q 'kind: MutatingWebhookConfiguration'
-          echo "$on" | grep -q 'name: gxrdconversion.terasky.com'
-          echo "$on" | grep -q 'path: /guard-xrd-conversion'
-          echo "$on" | grep -q -- '--enable-xrd-conversion-guard=true'
-          # failurePolicy is hard-coded to Ignore and must stay that way: a
-          # guard that can block XRD writes would make every Crossplane
-          # package install depend on this operator being up.
-          if ! echo "$on" | awk '/name: gxrdconversion.terasky.com/,/rules:/' | grep -q 'failurePolicy: Ignore'; then
-            echo "FAIL: the conversion guard must be failurePolicy: Ignore" >&2
-            exit 1
-          fi
-
-          off="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+          if helm template declarative-conversion-operator charts/declarative-conversion-operator \
             --namespace declarative-conversion-system \
-            --set features.crossplane.conversionGuard.enabled=false)"
-          if echo "$off" | grep -q 'kind: MutatingWebhookConfiguration'; then
-            echo "FAIL: the guard's MutatingWebhookConfiguration is still rendered when disabled" >&2
-            exit 1
-          fi
-          echo "$off" | grep -q -- '--enable-xrd-conversion-guard=false'
-
-          # Disabling Crossplane support entirely must take the guard with
-          # it: on a cluster with no Crossplane the type does not exist.
-          nocp="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
-            --namespace declarative-conversion-system \
-            --set features.crossplane.enabled=false)"
-          if echo "$nocp" | grep -q 'kind: MutatingWebhookConfiguration'; then
-            echo "FAIL: the guard is rendered with Crossplane support disabled" >&2
+            --set conversionWebhookServer.replicaCount2=3 >/dev/null 2>&1; then
+            echo "FAIL: a misspelled values key was accepted; the schema is not being enforced" >&2
             exit 1
           fi
 

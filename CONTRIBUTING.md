@@ -41,6 +41,7 @@ Useful extras:
 make helm-sync          # copy generated CRDs into the Helm chart
 make build              # manager, webhook-server, convctl binaries into bin/
 make test-prometheus    # promtool unit tests for shipped alerts
+make helm-test          # helm-unittest suites for the chart's template logic
 make test-e2e-legacy-claims   # kind + a scope: LegacyCluster XRD with claims (both generated CRDs)
 make test-e2e-package-managed # kind + the XRD conversion guard, including a guard-off run that must fail
 make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)

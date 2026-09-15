@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "declarative-conversion-operator Helm values",
+  "description": "Every documented value, typed. `additionalProperties: false` is set at the top level and inside each documented object so that a typo'd key is rejected at `helm install` rather than silently ignored. Genuinely free-form maps (labels, annotations, node selectors, arbitrary env) are deliberately left open — see the `x-dco-open` note on each.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "commonLabels": {
+      "type": "object",
+      "description": "Free-form. Merged onto every chart-templated resource.",
+      "additionalProperties": { "type": "string" }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"]
+      }
+    },
+
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "manager": { "$ref": "#/definitions/imageComponent" },
+        "webhookServer": { "$ref": "#/definitions/imageComponent" }
+      }
+    },
+
+    "crds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "install": { "type": "boolean" } }
+    },
+
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "crossplane": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "conversionGuard": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "enabled": { "type": "boolean" } }
+            }
+          }
+        },
+        "nativeCRD": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "manager": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "leaderElection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "image": { "type": "object", "description": "Free-form per-component image override." },
+        "resources": { "$ref": "#/definitions/resources" },
+        "extraArgs": { "type": "array", "items": { "type": "string" } },
+        "extraEnv": { "type": "array", "items": { "type": "object" }, "description": "Free-form corev1.EnvVar objects." },
+        "extraVolumes": { "type": "array", "items": { "type": "object" }, "description": "Free-form corev1.Volume objects." },
+        "extraVolumeMounts": { "type": "array", "items": { "type": "object" }, "description": "Free-form corev1.VolumeMount objects." },
+        "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "affinity": { "type": "object", "description": "Free-form corev1.Affinity." },
+        "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } },
+        "priorityClassName": { "type": "string" },
+        "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "podDisruptionBudget": { "$ref": "#/definitions/podDisruptionBudget" }
+      }
+    },
+
+    "rbac": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "create": { "type": "boolean" } }
+    },
+
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "webhookServerName": { "type": "string" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+
+    "admissionWebhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "failurePolicy": {
+          "type": "string",
+          "enum": ["Fail", "Ignore"],
+          "description": "Fail is the default and the safe one: an Ignore here lets an invalid config be admitted while the manager is down."
+        },
+        "certificate": { "$ref": "#/definitions/certificate" }
+      }
+    },
+
+    "certManager": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuerRef": { "$ref": "#/definitions/issuerRef" },
+        "selfSigned": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "conversionWebhookServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "default": { "type": "boolean" },
+        "namespace": { "type": "string" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "maxRequestBytes": {
+          "type": ["integer", "string"],
+          "description": "Bytes. Empty string takes the binary's own default (32 MiB)."
+        },
+        "requestTimeout": {
+          "type": "string",
+          "description": "A Go duration such as 30s. Empty string takes the binary's own default.",
+          "pattern": "^$|^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$"
+        },
+        "extraArgs": { "type": "array", "items": { "type": "string" } },
+        "extraEnv": { "type": "array", "items": { "type": "object" } },
+        "extraVolumes": { "type": "array", "items": { "type": "object" } },
+        "extraVolumeMounts": { "type": "array", "items": { "type": "object" } },
+        "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } },
+        "priorityClassName": { "type": "string" },
+        "cacheSelector": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A metav1.LabelSelector. Scopes config AND schema informers, so targets must carry the label too.",
+          "properties": {
+            "matchLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "matchExpressions": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        "podDisruptionBudget": { "$ref": "#/definitions/podDisruptionBudget" },
+        "rollout": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Null leaves the CRD's own default in place; the defaults are what make a rolling update cause zero failed conversions.",
+          "properties": {
+            "preStopSleepSeconds": { "type": ["integer", "null"], "minimum": 0, "maximum": 300 },
+            "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 1 },
+            "maxUnavailable": { "type": ["integer", "string", "null"] },
+            "maxSurge": { "type": ["integer", "string", "null"] },
+            "defaultTopologySpread": { "type": ["boolean", "null"] }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" },
+        "certificate": { "$ref": "#/definitions/certificate" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "affinity": { "type": "object" }
+      }
+    },
+
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "propagationLagFor": { "type": "string", "pattern": "^[0-9]+(ms|s|m|h)$" }
+          }
+        }
+      }
+    },
+
+    "dashboards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowedPeers": {
+              "type": "array",
+              "description": "Free-form networking.k8s.io NetworkPolicyPeer objects.",
+              "items": { "type": "object" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "imageComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "description": "When set, pins by digest instead of tag.",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A corev1.ResourceRequirements. Values are Kubernetes quantities, so they stay strings or numbers rather than being pattern-checked here.",
+      "properties": {
+        "requests": { "type": "object", "additionalProperties": { "type": ["string", "number"] } },
+        "limits": { "type": "object", "additionalProperties": { "type": ["string", "number"] } },
+        "claims": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "type": ["integer", "string"] },
+        "maxUnavailable": { "type": ["integer", "string"] }
+      }
+    },
+    "issuerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": ["Issuer", "ClusterIssuer"] }
+      }
+    },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuerRef": { "$ref": "#/definitions/issuerRef" },
+        "duration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "renewBefore": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "dnsNames": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

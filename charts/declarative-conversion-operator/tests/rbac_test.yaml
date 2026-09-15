@@ -1,0 +1,42 @@
+suite: RBAC follows the feature toggles
+# The ClusterRole's most consequential grant is patch on
+# compositeresourcedefinitions — the operator mutating somebody else's type.
+# It should not be there on a cluster that has told the chart there is no
+# Crossplane.
+templates:
+  - rbac/clusterrole.yaml
+
+tests:
+  - it: grants XRD patch when Crossplane support is on
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apiextensions.crossplane.io"]
+            resources: ["compositeresourcedefinitions"]
+            verbs: ["get", "list", "patch", "watch"]
+          any: true
+        documentIndex: 0
+
+  - it: does not grant XRD access when Crossplane support is off
+    set:
+      features.crossplane.enabled: false
+    asserts:
+      - notMatchRegex:
+          path: rules[*].apiGroups[*]
+          pattern: apiextensions.crossplane.io
+
+  - it: does not grant CRD access when native CRD support is off
+    set:
+      features.nativeCRD.enabled: false
+    asserts:
+      - notMatchRegex:
+          path: rules[*].apiGroups[*]
+          pattern: apiextensions.k8s.io
+
+  - it: renders nothing when rbac.create is false
+    set:
+      rbac.create: false
+    asserts:
+      - hasDocuments:
+          count: 0

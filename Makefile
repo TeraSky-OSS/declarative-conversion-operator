@@ -144,6 +144,25 @@ undeploy: kustomize ## Undeploy the operator from the current cluster.
 
 ##@ Helm
 
+HELM_UNITTEST_VERSION ?= 1.0.2
+
+.PHONY: helm-unittest-plugin
+helm-unittest-plugin: ## Install the helm-unittest plugin at the pinned version if it is not already present.
+	@if helm plugin list 2>/dev/null | grep -q '^unittest'; then \
+		echo "Using the installed helm-unittest plugin"; \
+	else \
+		echo "Installing helm-unittest $(HELM_UNITTEST_VERSION)"; \
+		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION); \
+	fi
+
+.PHONY: helm-test
+helm-test: helm-unittest-plugin ## Run the chart's helm-unittest suites (charts/*/tests/) plus a default-values render.
+	helm unittest charts/declarative-conversion-operator
+	@echo "Rendering with default values to exercise values.schema.json"
+	@helm template declarative-conversion-operator charts/declarative-conversion-operator \
+		--namespace declarative-conversion-system >/dev/null
+	@echo "OK"
+
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart.
 	helm lint charts/declarative-conversion-operator

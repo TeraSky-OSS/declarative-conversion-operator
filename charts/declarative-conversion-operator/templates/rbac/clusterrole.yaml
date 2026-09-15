@@ -15,12 +15,24 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  {{- /*
+    The two highest-privilege grants this operator holds — patching somebody
+    else's CompositeResourceDefinitions and CustomResourceDefinitions — are
+    conditioned on the feature that needs them. With a feature off the
+    manager does not watch or write that type at all, so the grant would be
+    dormant privilege, which is the kind that gets found later by somebody
+    who was not looking for it.
+  */}}
+  {{- if .Values.features.crossplane.enabled }}
   - apiGroups: ["apiextensions.crossplane.io"]
     resources: ["compositeresourcedefinitions"]
     verbs: ["get", "list", "patch", "watch"]
+  {{- end }}
+  {{- if .Values.features.nativeCRD.enabled }}
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "patch", "watch"]
+  {{- end }}
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
@@ -64,10 +76,14 @@ rules:
   - apiGroups: ["terasky.com"]
     resources: ["xrdconversionconfigs", "crdconversionconfigs", "conversionwebhookservers"]
     verbs: ["get", "list", "watch"]
+  {{- if .Values.features.crossplane.enabled }}
   - apiGroups: ["apiextensions.crossplane.io"]
     resources: ["compositeresourcedefinitions"]
     verbs: ["get", "list", "watch"]
+  {{- end }}
+  {{- if .Values.features.nativeCRD.enabled }}
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
+  {{- end }}
 {{- end }}

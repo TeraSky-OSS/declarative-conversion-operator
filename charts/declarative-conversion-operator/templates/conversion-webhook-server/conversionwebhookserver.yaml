@@ -104,7 +104,13 @@ spec:
   */}}
   {{- $args := list }}
   {{- with .Values.conversionWebhookServer.maxRequestBytes }}
-  {{- $args = append $args (printf "--max-request-bytes=%v" .) }}
+  {{- /*
+    int64, not %v: Helm parses a YAML integer as a float64, and %v on
+    67108864 renders as "6.7108864e+07" — which the webhook-server's
+    flag.Int64Var rejects, so the pod crash-loops on a value that looked
+    perfectly reasonable in values.yaml.
+  */}}
+  {{- $args = append $args (printf "--max-request-bytes=%d" (int64 .)) }}
   {{- end }}
   {{- with .Values.conversionWebhookServer.requestTimeout }}
   {{- $args = append $args (printf "--request-timeout=%v" .) }}
