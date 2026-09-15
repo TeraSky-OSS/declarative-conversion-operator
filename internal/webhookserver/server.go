@@ -17,8 +17,12 @@ limitations under the License.
 package webhookserver
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -42,7 +46,83 @@ type Server struct {
 	Registry *Registry
 	Metrics  *Metrics
 
+	// MaxRequestBytes caps the ConversionReview body. Zero means
+	// DefaultMaxRequestBytes; a negative value disables the cap, which is
+	// only ever right in a test.
+	MaxRequestBytes int64
+
+	// RequestTimeout bounds how long one ConversionReview may occupy a
+	// worker. Zero means DefaultRequestTimeout.
+	RequestTimeout time.Duration
+
 	ready atomic.Bool
+}
+
+// Timeouts and limits for the two HTTP servers this package is served by
+// (cmd/webhook-server builds them; they live here so the handler and the
+// listener cannot drift apart).
+//
+// The conversion endpoint sits directly in the apiserver's write path, so
+// the failure mode being defended against is not "a slow client gets a bad
+// experience" but "every write to every target this replica serves stops".
+// A slow-loris client holding connections open, or one oversized body, is
+// a denial of the write path.
+const (
+	// DefaultReadHeaderTimeout is the slow-loris defence: a client that
+	// has not finished its headers by then is not going to.
+	DefaultReadHeaderTimeout = 10 * time.Second
+
+	// DefaultReadTimeout and DefaultWriteTimeout are deliberately longer
+	// than the apiserver's own conversion timeout, which is fixed at 30s.
+	// Being the one to give up first turns a slow conversion into a
+	// connection error the apiserver cannot explain, instead of a timeout
+	// it reports precisely.
+	DefaultReadTimeout  = 35 * time.Second
+	DefaultWriteTimeout = 35 * time.Second
+
+	// DefaultIdleTimeout keeps the apiserver's keep-alive connections
+	// alive across quiet periods — reconnecting on every write would add a
+	// TLS handshake to the admission path — while still reaping abandoned
+	// ones.
+	DefaultIdleTimeout = 120 * time.Second
+
+	// DefaultMaxHeaderBytes is net/http's own default, set explicitly so
+	// that it is a decision rather than an accident.
+	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
+
+	// DefaultMaxRequestBytes bounds the ConversionReview body. A review
+	// can legitimately carry a large batch of large objects — a LIST of
+	// several thousand composites at a non-storage version is the usual
+	// case — so the ceiling is generous. Operators with unusual objects
+	// can raise it with --max-request-bytes.
+	DefaultMaxRequestBytes int64 = 32 << 20 // 32 MiB
+
+	// DefaultRequestTimeout bounds one review's time on a worker, just
+	// inside DefaultWriteTimeout so the failure surfaces as a
+	// ConversionReview the apiserver can report rather than a truncated
+	// response.
+	DefaultRequestTimeout = 30 * time.Second
+
+	// uidSniffBytes is how much of an oversized body is retained in the
+	// hope of recovering its request UID. The apiserver serializes
+	// ConversionRequest with uid as its first field, so in practice the
+	// UID is in the first hundred bytes; this is two orders of magnitude
+	// of headroom and still a fixed, small allocation.
+	uidSniffBytes = 8 << 10 // 8 KiB
+)
+
+func (s *Server) maxRequestBytes() int64 {
+	if s.MaxRequestBytes == 0 {
+		return DefaultMaxRequestBytes
+	}
+	return s.MaxRequestBytes
+}
+
+func (s *Server) requestTimeout() time.Duration {
+	if s.RequestTimeout <= 0 {
+		return DefaultRequestTimeout
+	}
+	return s.RequestTimeout
 }
 
 // SetReady flips the readiness gate. Call this only once InitialSync has
@@ -137,7 +217,6 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	ctx, span := Tracer.Start(r.Context(), "ConversionReview",
 		trace.WithAttributes(attribute.String("target", xrdName)))
 	defer span.End()
-	_ = ctx
 
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -154,8 +233,34 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound the body before reading a byte of it. Without this a single
+	// client can make the process allocate without limit on the apiserver's
+	// write path.
+	body := r.Body
+	if limit := s.maxRequestBytes(); limit > 0 {
+		body = http.MaxBytesReader(w, r.Body, limit)
+	}
+	// Retain the leading bytes so an oversized body can still be answered
+	// with a ConversionReview the apiserver will accept — which requires
+	// echoing back the request UID it sent.
+	sniff := &prefixRecorder{limit: uidSniffBytes}
+
 	var review extv1.ConversionReview
-	if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
+	if err := json.NewDecoder(io.TeeReader(body, sniff)).Decode(&review); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			// Deliberately a ConversionReview failure rather than a bare
+			// HTTP error: the apiserver discards a non-ConversionReview
+			// response body, so an HTTP 413 reaches the user as an opaque
+			// "conversion webhook returned invalid response" with nothing
+			// about size in it.
+			s.writeReview(w, sniffRequestUID(sniff.Bytes()), nil, fmt.Sprintf(
+				"ConversionReview body exceeds the %d-byte limit; raise --max-request-bytes on the webhook-server if this batch size is expected",
+				tooLarge.Limit))
+			s.observe(xrdName, direction, "too_large", start)
+			span.SetStatus(codes.Error, "request body too large")
+			return
+		}
 		http.Error(w, fmt.Sprintf("decoding ConversionReview: %v", err), http.StatusBadRequest)
 		s.observe(xrdName, direction, "bad_request", start)
 		return
@@ -165,6 +270,14 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		s.observe(xrdName, direction, "bad_request", start)
 		return
 	}
+
+	// Bound the conversion itself, separately from the body read: a
+	// pathological object (a deeply nested forEach over a huge array) is
+	// slow after the body is fully in hand, so a read timeout does not
+	// catch it. Without this the worker is occupied until the apiserver
+	// gives up, and the apiserver's own timeout does not free it.
+	ctx, cancel := context.WithTimeout(ctx, s.requestTimeout())
+	defer cancel()
 
 	entry, ok := s.Registry.Get(xrdName)
 	if !ok || entry.Router == nil {
@@ -177,6 +290,15 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	toVersion := versionOf(review.Request.DesiredAPIVersion)
 	converted := make([]runtime.RawExtension, 0, len(review.Request.Objects))
 	for _, raw := range review.Request.Objects {
+		if err := ctx.Err(); err != nil {
+			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf(
+				"conversion exceeded the %s per-request budget after %d of %d objects; raise --request-timeout or send smaller batches",
+				s.requestTimeout(), len(converted), len(review.Request.Objects)))
+			s.observe(xrdName, direction, "timeout", start)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return
+		}
 		var obj map[string]any
 		if err := json.Unmarshal(raw.Raw, &obj); err != nil {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf("decoding object: %v", err))
@@ -295,3 +417,70 @@ func stringField(obj map[string]any, key string) string {
 	s, _ := obj[key].(string)
 	return s
 }
+
+// prefixRecorder keeps the first `limit` bytes written through it and
+// silently discards the rest. Used to retain enough of an oversized
+// ConversionReview to recover its UID without buffering the whole thing —
+// buffering the body to answer "your body was too big" would be its own
+// denial of service.
+type prefixRecorder struct {
+	limit int
+	buf   bytes.Buffer
+}
+
+func (p *prefixRecorder) Write(b []byte) (int, error) {
+	if remaining := p.limit - p.buf.Len(); remaining > 0 {
+		if len(b) < remaining {
+			remaining = len(b)
+		}
+		p.buf.Write(b[:remaining])
+	}
+	// Always report the full length: this is a TeeReader sink, and a short
+	// write would surface as an error on the read side.
+	return len(b), nil
+}
+
+func (p *prefixRecorder) Bytes() []byte { return p.buf.Bytes() }
+
+// sniffRequestUID recovers request.uid from the leading, possibly truncated
+// bytes of a ConversionReview body.
+//
+// It exists because the apiserver rejects a conversion response whose uid
+// does not match the request's, so a size-limit failure with an empty uid
+// reaches the user as a generic UID-mismatch error and the message
+// explaining the limit is thrown away. Best-effort by construction: the
+// body is truncated, so a full JSON parse is not possible.
+//
+// ConversionRequest serializes uid first (it is the first field of the Go
+// struct), so in practice the value is in the first hundred bytes and well
+// inside the retained prefix. A miss returns the empty UID, which is the
+// same as not trying.
+func sniffRequestUID(prefix []byte) types.UID {
+	req := bytes.Index(prefix, []byte(`"request"`))
+	if req < 0 {
+		return ""
+	}
+	rest := prefix[req+len(`"request"`):]
+	key := bytes.Index(rest, []byte(`"uid"`))
+	if key < 0 {
+		return ""
+	}
+	rest = rest[key+len(`"uid"`):]
+	// Skip the colon and any whitespace, then require a complete quoted
+	// string: a UID cut in half by the truncation is worse than none, since
+	// it would still mismatch but would look deliberate.
+	open := bytes.IndexByte(rest, '"')
+	if open < 0 {
+		return ""
+	}
+	if colon := bytes.IndexByte(rest, ':'); colon < 0 || colon > open {
+		return ""
+	}
+	rest = rest[open+1:]
+	end := bytes.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	return types.UID(rest[:end])
+}
+

@@ -83,7 +83,22 @@ spec:
   podAnnotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .Values.conversionWebhookServer.extraArgs }}
+  {{- /*
+    extraArgs is assembled rather than passed through: maxRequestBytes and
+    requestTimeout get first-class values keys (so values.schema.json can
+    type them and a typo is rejected) but are ordinary webhook-server flags
+    underneath. User-supplied extraArgs come last so an operator can still
+    override either one the hard way.
+  */}}
+  {{- $args := list }}
+  {{- with .Values.conversionWebhookServer.maxRequestBytes }}
+  {{- $args = append $args (printf "--max-request-bytes=%v" .) }}
+  {{- end }}
+  {{- with .Values.conversionWebhookServer.requestTimeout }}
+  {{- $args = append $args (printf "--request-timeout=%v" .) }}
+  {{- end }}
+  {{- $args = concat $args (.Values.conversionWebhookServer.extraArgs | default list) }}
+  {{- with $args }}
   extraArgs:
     {{- toYaml . | nindent 4 }}
   {{- end }}

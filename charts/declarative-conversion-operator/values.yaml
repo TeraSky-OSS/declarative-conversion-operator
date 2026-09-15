@@ -156,6 +156,17 @@ conversionWebhookServer:
   default: true
   namespace: ""
   replicaCount: 2
+  # Maximum ConversionReview request body the webhook-server will read.
+  # A larger body is answered with a ConversionReview failure naming this
+  # limit, rather than being buffered. Raise it only if legitimate batches
+  # are being rejected — this is what stops one client from exhausting the
+  # process on the apiserver's write path. Empty string uses the binary's
+  # own default (32 MiB).
+  maxRequestBytes: ""
+  # Maximum time one ConversionReview may occupy a worker. Must stay below
+  # the write timeout (35s) so the failure is delivered rather than
+  # truncated. Empty string uses the binary's own default (30s).
+  requestTimeout: ""
   extraArgs: []
   extraEnv: []
   extraVolumes: []

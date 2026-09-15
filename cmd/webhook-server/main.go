@@ -67,6 +67,8 @@ func main() {
 		otelSampleRatio  float64
 		otelInsecure     bool
 		cacheSelector    string
+		maxRequestBytes  int64
+		requestTimeout   time.Duration
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -79,6 +81,8 @@ func main() {
 	flag.Float64Var(&otelSampleRatio, "otel-trace-sample-ratio", 0.1, "Trace sampling ratio when --otel-exporter-otlp-endpoint is set (0.0–1.0).")
 	flag.BoolVar(&otelInsecure, "otel-exporter-otlp-insecure", false, "Disable TLS when exporting traces (trusted in-cluster collectors only).")
 	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping this replica's informers. It covers the XRDConversionConfig and CRDConversionConfig objects AND the CustomResourceDefinition/CompositeResourceDefinition objects holding their schemas, so targets must carry the label too. Empty watches everything.")
+	flag.Int64Var(&maxRequestBytes, "max-request-bytes", webhookserver.DefaultMaxRequestBytes, "Maximum ConversionReview request body size. A larger body is answered with a ConversionReview failure rather than being read. Raise it if legitimate batches are being rejected.")
+	flag.DurationVar(&requestTimeout, "request-timeout", webhookserver.DefaultRequestTimeout, "Maximum time one ConversionReview may occupy a worker. Must stay below the apiserver's own fixed 30s conversion timeout plus this server's write timeout.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -158,7 +162,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := &webhookserver.Server{Registry: registry, Metrics: metrics}
+	server := &webhookserver.Server{
+		Registry: registry, Metrics: metrics,
+		MaxRequestBytes: maxRequestBytes, RequestTimeout: requestTimeout,
+	}
 
 	ctx := rootCtx
 
@@ -176,12 +183,31 @@ func main() {
 	server.SetReady(true)
 	logger.Info("registry synced, marking replica ready", "serverName", serverName)
 
+	// Both servers carry the same timeouts. The conversion endpoint needs
+	// them because it is in the apiserver's write path; the plain endpoint
+	// needs them because it also serves /debug/registry, and an endpoint
+	// that can be held open is an endpoint that can be used to hold the
+	// process open. See webhookserver's Default*Timeout constants for the
+	// reasoning behind each value.
 	conversionSrv := &http.Server{
-		Addr:      conversionAddr,
-		Handler:   server.ConversionMux(),
-		TLSConfig: &tls.Config{GetCertificate: certReloader.GetCertificate, MinVersion: tls.VersionTLS12},
+		Addr:              conversionAddr,
+		Handler:           server.ConversionMux(),
+		TLSConfig:         &tls.Config{GetCertificate: certReloader.GetCertificate, MinVersion: tls.VersionTLS12},
+		ReadHeaderTimeout: webhookserver.DefaultReadHeaderTimeout,
+		ReadTimeout:       webhookserver.DefaultReadTimeout,
+		WriteTimeout:      webhookserver.DefaultWriteTimeout,
+		IdleTimeout:       webhookserver.DefaultIdleTimeout,
+		MaxHeaderBytes:    webhookserver.DefaultMaxHeaderBytes,
 	}
-	plainSrv := &http.Server{Addr: plainAddr, Handler: server.PlainMux()}
+	plainSrv := &http.Server{
+		Addr:              plainAddr,
+		Handler:           server.PlainMux(),
+		ReadHeaderTimeout: webhookserver.DefaultReadHeaderTimeout,
+		ReadTimeout:       webhookserver.DefaultReadTimeout,
+		WriteTimeout:      webhookserver.DefaultWriteTimeout,
+		IdleTimeout:       webhookserver.DefaultIdleTimeout,
+		MaxHeaderBytes:    webhookserver.DefaultMaxHeaderBytes,
+	}
 
 	go func() {
 		logger.Info("serving conversion requests", "address", conversionAddr)
