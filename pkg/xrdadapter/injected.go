@@ -17,6 +17,8 @@ limitations under the License.
 package xrdadapter
 
 import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
 )
 
@@ -91,14 +93,23 @@ var (
 // InjectedPathsForScope returns the paths Crossplane overwrites for one
 // scope. An unrecognized scope returns nil; callers that cannot determine
 // the scope should use InjectedPathsUnion instead of guessing.
-func InjectedPathsForScope(s Scope) []engine.FieldPath {
+//
+// offersClaims decides whether the claim CRD's own machinery names count.
+// They only exist if the XRD actually generates a claim CRD: a
+// LegacyCluster XRD with no spec.claimNames renders one CRD, so reserving
+// spec.resourceRef and spec.compositeDeletePolicy on it would reject
+// authored fields Crossplane is never going to overwrite.
+func InjectedPathsForScope(s Scope, offersClaims bool) []engine.FieldPath {
 	switch s {
 	case ScopeNamespaced, ScopeCluster:
 		return concatPaths(modernSpecInjected, commonStatusInjected)
 	case ScopeLegacyCluster:
-		// A LegacyCluster XRD's claim CRD carries the same authored schema
-		// and the same conversion webhook, so one config covers both — and
-		// a name that collides on either one is a problem. Union them.
+		if !offersClaims {
+			return concatPaths(legacySpecInjected, legacyStatusInjected)
+		}
+		// The claim CRD carries the same authored schema and the same
+		// conversion webhook, so one config covers both — and a name that
+		// collides on either one is a problem. Union them.
 		return concatPaths(legacySpecInjected, claimSpecInjected, legacyStatusInjected)
 	default:
 		return nil
@@ -130,8 +141,19 @@ func (s *Source) PlatformInjectedPaths() engine.PlatformInjectedPaths {
 	}
 	return engine.PlatformInjectedPaths{
 		Platform: "Crossplane",
-		Paths:    InjectedPathsForScope(res.Scope),
+		Paths:    InjectedPathsForScope(res.Scope, offersClaims(s.XRD)),
 	}
+}
+
+// offersClaims reports whether this XRD generates a claim CRD. Only then do
+// the claim's own machinery names (spec.resourceRef,
+// spec.compositeDeletePolicy) exist to be overwritten.
+func offersClaims(xrd *unstructured.Unstructured) bool {
+	if xrd == nil {
+		return false
+	}
+	plural, found, _ := unstructured.NestedString(xrd.Object, "spec", "claimNames", "plural")
+	return found && plural != ""
 }
 
 func concatPaths(sets ...[]engine.FieldPath) []engine.FieldPath {

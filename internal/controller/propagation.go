@@ -86,6 +86,7 @@ func (r *XRDConversionConfigReconciler) verifyPropagation(ctx context.Context, c
 	if err != nil {
 		setPropagationCondition(cfg, metav1.ConditionFalse, teraskyv1alpha1.ReasonNotPropagated,
 			fmt.Sprintf("cannot determine which CRDs the XRD generates: %v", err))
+		GetManagerMetrics().ConversionPropagated.WithLabelValues(cfg.Spec.TargetXRD.Name).Set(0)
 		return
 	}
 
@@ -138,6 +139,16 @@ func (r *XRDConversionConfigReconciler) verifyPropagation(ctx context.Context, c
 	}
 
 	cfg.Status.GeneratedCRDs = statuses
+
+	// Publish the current verdict for this target before branching, so the
+	// gauge always reflects the state the condition below is about.
+	defer func() {
+		propagated := 0.0
+		if meta.IsStatusConditionTrue(cfg.Status.Conditions, teraskyv1alpha1.ConditionConversionPropagated) {
+			propagated = 1
+		}
+		GetManagerMetrics().ConversionPropagated.WithLabelValues(cfg.Spec.TargetXRD.Name).Set(propagated)
+	}()
 
 	switch {
 	case len(notFound) > 0:

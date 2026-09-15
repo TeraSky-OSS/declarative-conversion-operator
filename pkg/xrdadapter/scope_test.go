@@ -71,6 +71,17 @@ func scopeXRD(scope string, claimNames bool, connectionSecretKeys bool) *unstruc
 // through admission, and which default it will get depends on the API
 // version it is applied at. That is the case these tests pin.
 
+// atAPIVersion rewrites the manifest's apiVersion, which is what decides
+// how the apiserver would default an omitted spec.scope.
+func atAPIVersion(xrd *unstructured.Unstructured, apiVersion string) *unstructured.Unstructured {
+	if apiVersion == "" {
+		unstructured.RemoveNestedField(xrd.Object, "apiVersion")
+		return xrd
+	}
+	xrd.SetAPIVersion(apiVersion)
+	return xrd
+}
+
 func TestResolveScope(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -130,11 +141,36 @@ func TestResolveScope(t *testing.T) {
 			reasonHas: "spec.claimNames and spec.connectionSecretKeys",
 		},
 		{
-			// The offline case this resolver exists for.
-			name:      "absent scope with no signal is indeterminate",
+			// The offline case. A manifest that omits spec.scope is only
+			// ambiguous if you ignore what it says it is: the fixture is
+			// written at v2, whose schema defaults an absent scope to
+			// Namespaced.
+			name:      "absent scope resolves from a v2 apiVersion",
 			xrd:       scopeXRD("", false, false),
+			wantScope: ScopeNamespaced, wantConf: ConfidenceInferred,
+			reasonHas: "apiextensions.crossplane.io/v2 defaults it to Namespaced",
+		},
+		{
+			// The same manifest at v1 defaults the other way — which is
+			// exactly why the version has to be consulted rather than
+			// assumed.
+			name:      "absent scope resolves from a v1 apiVersion",
+			xrd:       atAPIVersion(scopeXRD("", false, false), "apiextensions.crossplane.io/v1"),
+			wantScope: ScopeLegacyCluster, wantConf: ConfidenceInferred,
+			reasonHas: "apiextensions.crossplane.io/v1 defaults it to LegacyCluster",
+		},
+		{
+			// An unrecognized version is where guessing would start, so it
+			// is where the resolver stops.
+			name:      "absent scope with an unrecognized apiVersion is indeterminate",
+			xrd:       atAPIVersion(scopeXRD("", false, false), "apiextensions.crossplane.io/v99"),
 			wantScope: ScopeIndeterminate, wantConf: ConfidenceNone,
-			reasonHas: "which version this manifest is applied at",
+			reasonHas: "not a recognized XRD API version",
+		},
+		{
+			name:      "absent scope with no apiVersion at all is indeterminate",
+			xrd:       atAPIVersion(scopeXRD("", false, false), ""),
+			wantScope: ScopeIndeterminate, wantConf: ConfidenceNone,
 		},
 		{
 			name:      "unrecognized scope with no signal is indeterminate",

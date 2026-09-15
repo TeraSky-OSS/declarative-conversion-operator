@@ -232,11 +232,43 @@ echo "OK: the claim carries Crossplane-owned conditions at the hub = '${CLAIM_CO
 # Read the whole conditions array at each version and compare it verbatim.
 # Conversion must not filter, reorder, or reshape it — condition ownership
 # is not knowable from the schema, so any of those would be guesswork.
-CLAIM_COND_HUB="$(kubectl get "${CL_V3}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.status.conditions}')"
-assert_eq "$(kubectl get "${CL_V2}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.status.conditions}')" "${CLAIM_COND_HUB}" \
-  "the claim's conditions are byte-identical read at v2"
-assert_eq "$(kubectl get "${CL_V1}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.status.conditions}')" "${CLAIM_COND_HUB}" \
-  "the claim's conditions are byte-identical read at v1"
+#
+# The three reads have to describe ONE revision of the object. Crossplane's
+# claim controller is still running and updates Synced/Ready from the bound
+# composite's state; this XRD has no Composition, so that state moves. A
+# mid-sequence update would make the comparison fail for a reason that has
+# nothing to do with conversion. So: bracket the reads with
+# metadata.resourceVersion and retry the whole comparison if it moved.
+compare_claim_conditions() {
+  local rv_before rv_after hub v2 v1
+  rv_before="$(kubectl get "${CL_V3}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.metadata.resourceVersion}')"
+  hub="$(kubectl get "${CL_V3}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.status.conditions}')"
+  v2="$(kubectl get "${CL_V2}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.status.conditions}')"
+  v1="$(kubectl get "${CL_V1}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.status.conditions}')"
+  rv_after="$(kubectl get "${CL_V3}" "${CL}" -n "${CLAIM_NS}" -o jsonpath='{.metadata.resourceVersion}')"
+  if [ "${rv_before}" != "${rv_after}" ]; then
+    echo "retry"
+    return 0
+  fi
+  if [ "${v2}" != "${hub}" ]; then
+    echo "MISMATCH at v2: got '${v2}' want '${hub}'"
+    return 0
+  fi
+  if [ "${v1}" != "${hub}" ]; then
+    echo "MISMATCH at v1: got '${v1}' want '${hub}'"
+    return 0
+  fi
+  echo "ok"
+}
+
+CLAIM_COND_RESULT="retry"
+for _ in $(seq 1 10); do
+  CLAIM_COND_RESULT="$(compare_claim_conditions)"
+  [ "${CLAIM_COND_RESULT}" != "retry" ] && break
+  sleep 2
+done
+assert_eq "${CLAIM_COND_RESULT}" "ok" \
+  "the claim's conditions are byte-identical at v3, v2 and v1 within one resourceVersion"
 
 # --- Assertion 6: convctl test --live samples BOTH object classes --------
 log "Running convctl test --live and asserting it sampled composites AND claims"

@@ -19,8 +19,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -210,3 +213,43 @@ func TestRunCrossplaneStatus_NoConfigIsNotAnError(t *testing.T) {
 		t.Errorf("the table should say so plainly:\n%s", buf.String())
 	}
 }
+
+// TestRunCrossplaneStatus_ConfigListFailureIsNotReportedAsNone guards
+// against a definite wrong statement: an RBAC denial on
+// XRDConversionConfigs used to be swallowed and rendered as "none — no
+// XRDConversionConfig targets this XRD", which is a different claim
+// entirely from "I could not look".
+func TestRunCrossplaneStatus_ConfigListFailureIsNotReportedAsNone(t *testing.T) {
+	dyn := newStatusFake(
+		claimXRD(),
+		migrateCRD("xwidgets.e2e.example.org", "e2e.example.org", "XWidget", "xwidgets", "v2", []string{"v2"}, false),
+		migrateCRD("widgets.e2e.example.org", "e2e.example.org", "Widget", "widgets", "v2", []string{"v2"}, true),
+	)
+	dyn.PrependReactor("list", "xrdconversionconfigs", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(
+			schema.GroupResource{Group: "terasky.com", Resource: "xrdconversionconfigs"}, "", errForbidden)
+	})
+
+	rep, err := RunCrossplaneStatus(context.Background(), dyn, "xwidgets.e2e.example.org")
+	if err != nil {
+		t.Fatalf("a config-list failure must not fail the whole command: %v", err)
+	}
+	if !rep.ConfigLookupFailed {
+		t.Error("expected the lookup failure to be recorded")
+	}
+
+	var buf bytes.Buffer
+	rep.WriteTable(&buf)
+	out := buf.String()
+	if strings.Contains(out, "no XRDConversionConfig targets this XRD") {
+		t.Errorf("a permissions failure must not read as a clean 'none':\n%s", out)
+	}
+	if !strings.Contains(out, "UNKNOWN") {
+		t.Errorf("expected the table to say the answer is unknown:\n%s", out)
+	}
+	if !strings.Contains(strings.Join(rep.Warnings, " "), "could not list XRDConversionConfigs") {
+		t.Errorf("expected a warning naming the failure: %v", rep.Warnings)
+	}
+}
+
+var errForbidden = fmt.Errorf("user cannot list resource")

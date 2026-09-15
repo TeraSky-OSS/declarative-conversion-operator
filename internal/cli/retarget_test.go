@@ -340,8 +340,14 @@ func TestRunRetarget_RejectsAVersionTheXRDDoesNotHave(t *testing.T) {
 func TestRunRetarget_RefusesWhenScopeIsIndeterminate(t *testing.T) {
 	// Scope decides where the machinery fields sit, so guessing would
 	// write a subtree Crossplane never reads and report success.
+	//
+	// A merely ABSENT spec.scope is no longer indeterminate — a live XRD is
+	// always read at a known API version, which says how the apiserver
+	// defaults it. What the resolver still cannot interpret is a value it
+	// does not recognize, which is what a future Crossplane scope would
+	// look like to this build.
 	xrd := migrateXRD("v2", true)
-	unstructured.RemoveNestedField(xrd.Object, "spec", "scope")
+	_ = unstructured.SetNestedField(xrd.Object, "Galactic", "spec", "scope")
 	dyn := newMigrateFake(xrd,
 		migrateCRD("xwidgets.e2e.example.org", "e2e.example.org", "XWidget", "xwidgets", "v2", []string{"v2"}, true))
 

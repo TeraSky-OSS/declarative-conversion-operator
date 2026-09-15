@@ -67,10 +67,13 @@ spec:
             summary: "Manager analyze/compile failures for {{`{{ $labels.target }}`}}"
             description: "config_kind={{`{{ $labels.config_kind }}`}} reason={{`{{ $labels.reason }}`}}. Check the config status conditions and recent manager logs."
         - alert: ConversionAppliedButNotPropagated
-          expr: |-
-            (sum by (target) (increase(dco_manager_apply_duration_seconds_count{config_kind="xrd",result="success"}[10m])) > 0)
-            unless
-            (sum by (target) (increase(dco_manager_propagation_lag_seconds_count[10m])) > 0)
+          # A gauge, not a comparison of counter increases. The counter form
+          # aggregated away WHICH apply it was talking about, so a target
+          # that propagated once and then received a later apply that never
+          # propagated stayed silent — indefinitely, if the earlier
+          # observations kept rolling into the window. The gauge is the
+          # current verdict for the current state, per target.
+          expr: dco_manager_conversion_propagated == 0
           for: {{ .Values.metrics.prometheusRule.propagationLagFor | default "5m" }}
           labels:
             severity: warning

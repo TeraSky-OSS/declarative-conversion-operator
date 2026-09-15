@@ -290,6 +290,21 @@ func RunMigrateStorage(ctx context.Context, dyn dynamic.Interface, opts MigrateS
 		applyOpts.DryRun = []string{metav1.DryRunAll}
 	}
 
+	// Refuse the unsupported combination before a single object is
+	// written. This used to live inside the per-target loop, where on a
+	// claim-offering XRD the composite pass (cluster-scoped, so listNS is
+	// empty) had already listed and applied every composite by the time
+	// the claim pass returned the error — and RunMigrateStorage returns a
+	// nil report with an error, so the caller lost the record of writes
+	// that had already happened.
+	if opts.PruneStoredVersions && opts.Namespace != "" {
+		for _, t := range targets {
+			if t.namespaced {
+				return nil, fmt.Errorf("--prune-stored-versions cannot be combined with --namespace: objects in other namespaces may still be stored at an older version")
+			}
+		}
+	}
+
 	primary := targets[0]
 	rep := &MigrateStorageReport{
 		ResourceKind:   primary.resourceKind,
@@ -313,10 +328,6 @@ func RunMigrateStorage(ctx context.Context, dyn dynamic.Interface, opts MigrateS
 		} else if opts.Namespace != "" {
 			warnings = append(warnings, fmt.Sprintf("--namespace %q ignored for %s: it is cluster-scoped", opts.Namespace, target.crdName))
 		}
-		if opts.PruneStoredVersions && listNS != "" {
-			return nil, fmt.Errorf("--prune-stored-versions cannot be combined with --namespace: objects in other namespaces may still be stored at an older version")
-		}
-
 		gvr := schema.GroupVersionResource{Group: target.group, Version: target.storageVersion, Resource: target.plural}
 		items, err := listAllByGVR(ctx, dyn, gvr, listNS)
 		if err != nil {

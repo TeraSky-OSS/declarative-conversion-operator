@@ -52,9 +52,15 @@ type VersionStatus struct {
 	// can convert it. A served version with no rules is the shape that
 	// breaks reads.
 	HasSpokeRules bool `json:"hasSpokeRules"`
-	// Objects counts live objects whose apiVersion reads as this version.
-	Objects int `json:"objects"`
 }
+
+// Deliberately no per-version object count. Listing a generated type
+// returns every object converted to whichever version was asked for, so a
+// count bucketed by the returned apiVersion would put the entire population
+// on the hub and zero everywhere else — which reads as a finished
+// migration regardless of what is actually in etcd. What objects are STORED
+// at is status.storedVersions, which the generated-CRD table prints. See
+// convctl versions for the per-object breakdown that needs managedFields.
 
 // CompositionStatus is one Composition and the version it targets.
 type CompositionStatus struct {
@@ -102,7 +108,11 @@ type CrossplaneStatusReport struct {
 	// Crossplane selects for by label.
 	Unpinned int               `json:"unpinnedObjects"`
 	Config   *ConfigStatusView `json:"config,omitempty"`
-	Warnings []string          `json:"warnings,omitempty"`
+	// ConfigLookupFailed distinguishes "there is no config" from "we could
+	// not tell" — the difference between a clean answer and a permissions
+	// problem, which must not read the same.
+	ConfigLookupFailed bool     `json:"configLookupFailed,omitempty"`
+	Warnings           []string `json:"warnings,omitempty"`
 }
 
 // RunCrossplaneStatus assembles, in one read-only pass, the state an
@@ -127,10 +137,19 @@ func RunCrossplaneStatus(ctx context.Context, dyn dynamic.Interface, xrdName str
 	rep.Kind, _, _ = unstructured.NestedString(xrd.Object, "spec", "names", "kind")
 
 	var cfg *teraskyv1alpha1.XRDConversionConfig
-	if cfgName := conversionConfigNameForXRD(ctx, dyn, xrdName); cfgName != "" {
-		var err error
+	cfgName, err := conversionConfigNameForXRD(ctx, dyn, xrdName)
+	switch {
+	case err != nil:
+		// "none" is a definite statement, and an RBAC denial is not
+		// grounds for making it. Every other read failure here degrades to
+		// a warning; this one did not, which made a permissions problem
+		// look like a clean answer.
+		rep.Warnings = append(rep.Warnings, "could not list XRDConversionConfigs, so the config column below may be wrong: "+err.Error())
+		rep.ConfigLookupFailed = true
+	case cfgName != "":
 		if cfg, err = FetchLiveXRDConversionConfig(ctx, dyn, cfgName); err != nil {
 			rep.Warnings = append(rep.Warnings, "could not read the XRDConversionConfig: "+err.Error())
+			rep.ConfigLookupFailed = true
 		}
 	}
 	spokeVersions := map[string]bool{}
@@ -161,7 +180,6 @@ func RunCrossplaneStatus(ctx context.Context, dyn dynamic.Interface, xrdName str
 	}
 
 	pinned := map[string]int{}
-	objectsByVersion := map[string]int{}
 	for _, g := range generated {
 		view := GeneratedCRDStatusView{CRD: g.Name, Role: string(g.Role), Namespaced: g.Namespaced, Strategy: "None"}
 		crd, err := FetchLiveCRD(ctx, dyn, g.Name)
@@ -188,7 +206,6 @@ func RunCrossplaneStatus(ctx context.Context, dyn dynamic.Interface, xrdName str
 		view.Objects = len(items)
 		prefix := machineryPrefix(scope.Scope, g.Role)
 		for i := range items {
-			objectsByVersion[versionFromAPIVersion(items[i].GetAPIVersion())]++
 			name, found, _ := unstructured.NestedString(items[i].Object, append(append([]string(nil), prefix...), "compositionRef", "name")...)
 			if found && name != "" {
 				pinned[name]++
@@ -197,10 +214,6 @@ func RunCrossplaneStatus(ctx context.Context, dyn dynamic.Interface, xrdName str
 			}
 		}
 		rep.GeneratedCRDs = append(rep.GeneratedCRDs, view)
-	}
-
-	for i := range rep.Versions {
-		rep.Versions[i].Objects = objectsByVersion[rep.Versions[i].Version]
 	}
 
 	comps, err := listAllByGVR(ctx, dyn, compositionGVR, "")
@@ -250,18 +263,18 @@ func collectVersions(xrd *unstructured.Unstructured, spokeVersions map[string]bo
 // XRD. There is at most one — the admission webhook enforces it — but the
 // config's name is the user's choice, so it has to be looked up rather
 // than derived.
-func conversionConfigNameForXRD(ctx context.Context, dyn dynamic.Interface, xrdName string) string {
+func conversionConfigNameForXRD(ctx context.Context, dyn dynamic.Interface, xrdName string) (string, error) {
 	list, err := dyn.Resource(xrdConversionConfigGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return ""
+		return "", err
 	}
 	for i := range list.Items {
 		target, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "targetXRD", "name")
 		if target == xrdName {
-			return list.Items[i].GetName()
+			return list.Items[i].GetName(), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // WriteTable renders the whole migration state on one screen.
@@ -286,21 +299,24 @@ func (r *CrossplaneStatusReport) WriteTable(w io.Writer) {
 		if len(parts) > 0 {
 			_, _ = fmt.Fprintf(w, "  %s\n", strings.Join(parts, "  "))
 		}
+	} else if r.ConfigLookupFailed {
+		_, _ = fmt.Fprintln(w, "Config: UNKNOWN — the XRDConversionConfig could not be read (see warnings below)")
 	} else {
 		_, _ = fmt.Fprintln(w, "Config: none — no XRDConversionConfig targets this XRD")
 	}
 
 	_, _ = fmt.Fprintln(w, "\nVERSIONS")
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "VERSION\tSERVED\tREFERENCEABLE\tDEPRECATED\tRULES\tOBJECTS")
+	_, _ = fmt.Fprintln(tw, "VERSION\tSERVED\tREFERENCEABLE\tDEPRECATED\tRULES")
 	for _, v := range r.Versions {
 		rules := "-"
 		if v.HasSpokeRules {
 			rules = "yes"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%v\t%v\t%v\t%s\t%d\n", v.Version, v.Served, v.Referenceable, v.Deprecated, rules, v.Objects)
+		_, _ = fmt.Fprintf(tw, "%s\t%v\t%v\t%v\t%s\n", v.Version, v.Served, v.Referenceable, v.Deprecated, rules)
 	}
 	_ = tw.Flush()
+	_, _ = fmt.Fprintln(w, "  (object counts are per generated CRD below — a list returns every object converted to the version asked for, so it cannot say which version they are STORED at; that is storedVersions)")
 	for _, v := range r.Versions {
 		if v.Served && !v.HasSpokeRules {
 			_, _ = fmt.Fprintf(w, "  WARNING: %s is served but no rule set covers it — reads at that version are not converted\n", v.Version)

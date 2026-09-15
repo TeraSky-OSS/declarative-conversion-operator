@@ -140,14 +140,40 @@ func ResolveScope(xrd *unstructured.Unstructured) ScopeResolution {
 			Reason: fmt.Sprintf("spec.scope is explicitly %s", declared)}
 	case "":
 		// Offline only: anything that has been through admission carries a
-		// persisted scope. v1 would default this to LegacyCluster and v2
-		// to Namespaced, and which one applies depends on the API version
-		// the manifest is applied at — which this object does not say.
+		// persisted scope. v1 defaults an absent scope to LegacyCluster and
+		// v2 to Namespaced — and which applies is decided by the version
+		// the manifest is applied at, which a manifest *does* state, in its
+		// own apiVersion. Use it.
+		if defaulted, ok := scopeDefaultForAPIVersion(xrd.GetAPIVersion()); ok {
+			return ScopeResolution{Scope: defaulted, Confidence: ConfidenceInferred,
+				Reason: fmt.Sprintf("spec.scope is absent; %s defaults it to %s. Declare spec.scope explicitly to remove the dependence on which API version this is applied at",
+					xrd.GetAPIVersion(), defaulted)}
+		}
 		return ScopeResolution{Scope: ScopeIndeterminate, Confidence: ConfidenceNone,
-			Reason: "spec.scope is absent and no claim signal is present; the apiserver defaults it to LegacyCluster at apiextensions.crossplane.io/v1 and to Namespaced at /v2, so the scope depends on which version this manifest is applied at. Declare spec.scope explicitly"}
+			Reason: fmt.Sprintf("spec.scope is absent, no claim signal is present, and apiVersion %q is not a recognized XRD API version; the apiserver defaults an absent scope to LegacyCluster at apiextensions.crossplane.io/v1 and to Namespaced at /v2, so the scope cannot be determined. Declare spec.scope explicitly", xrd.GetAPIVersion())}
 	default:
 		return ScopeResolution{Scope: ScopeIndeterminate, Confidence: ConfidenceNone,
 			Reason: fmt.Sprintf("spec.scope has the unrecognized value %q", declared)}
+	}
+}
+
+// scopeDefaultForAPIVersion returns what the apiserver would default an
+// absent spec.scope to for a manifest written at this apiVersion. The two
+// served XRD schemas differ here — v1 defaults LegacyCluster (its enum
+// includes it), v2 defaults Namespaced (its enum does not) — so a manifest
+// that omits spec.scope is only ambiguous if you ignore what it says it is.
+//
+// Anything else, including an empty apiVersion, is unrecognized: guessing
+// from a version this code does not know about would be exactly the kind of
+// silent assumption ResolveScope exists to avoid.
+func scopeDefaultForAPIVersion(apiVersion string) (Scope, bool) {
+	switch apiVersion {
+	case LegacyGroupVersion.String():
+		return ScopeLegacyCluster, true
+	case GroupVersionKind.GroupVersion().String():
+		return ScopeNamespaced, true
+	default:
+		return "", false
 	}
 }
 

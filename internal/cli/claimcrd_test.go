@@ -380,3 +380,34 @@ func TestRunMigrateStorage_NamespaceWarnsPerClusterScopedCRD(t *testing.T) {
 		t.Errorf("expected a warning naming the cluster-scoped composite, got %q", joined)
 	}
 }
+
+// TestRunMigrateStorage_NamespacePruneRefusalHappensBeforeAnyWrite is the
+// regression test for an ordering bug: the refusal used to live inside the
+// per-target loop, and targets run composite-first. So on a claim-offering
+// XRD, every composite was listed and applied before the claim iteration
+// returned the error — and RunMigrateStorage returns a nil report alongside
+// an error, so the caller lost the record of the writes that had already
+// happened.
+func TestRunMigrateStorage_NamespacePruneRefusalHappensBeforeAnyWrite(t *testing.T) {
+	objs := append(claimCRDs(),
+		claimXRD(),
+		widget("", "composite-a", "v2", map[string]any{"n": "1"}),
+		claimObject("team-a", "claim-a"),
+	)
+	dyn := newClaimFake(objs...)
+
+	_, err := RunMigrateStorage(context.Background(), dyn, MigrateStorageOptions{
+		XRDName:             "xwidgets.e2e.example.org",
+		Namespace:           "team-a",
+		PruneStoredVersions: true,
+		Quiet:               true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--prune-stored-versions cannot be combined with --namespace") {
+		t.Fatalf("expected the refusal, got %v", err)
+	}
+
+	for _, p := range applyPatches(t, dyn) {
+		t.Fatalf("nothing may be written before the refusal, but %s/%s was patched",
+			p.GetResource().Resource, p.GetName())
+	}
+}

@@ -31,7 +31,12 @@ webhooks:
       service:
         name: {{ include "declarative-conversion-operator.webhookServiceName" . }}
         namespace: {{ .Release.Namespace }}
-        path: {{ .Values.features.crossplane.conversionGuard.path | default "/guard-xrd-conversion" }}
+        # Hard-coded, deliberately: the manager registers exactly one
+        # handler path (internalwebhook.GuardPath). A value that let this
+        # drift would point admission at a path nothing serves — and since
+        # failurePolicy is Ignore, it would fail open silently, leaving the
+        # guard switched off with every appearance of being on.
+        path: /guard-xrd-conversion
         port: 443
     # Deliberately no objectSelector. The tempting one — a label the
     # operator sets — is self-defeating: that label is wiped by the very

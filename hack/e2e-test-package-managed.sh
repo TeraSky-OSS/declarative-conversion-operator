@@ -274,6 +274,24 @@ hammer() {
   echo "${stripped}/${ROUNDS} ${bad}/${reads}"
 }
 
+# await_metric polls metric_value until it reaches at least $2, or gives up
+# after $3 seconds, echoing whatever it last saw.
+#
+# A single scrape is a race: the metric is a counter inside the manager
+# process, and the operator increments it on the reconcile that observes the
+# revert — which may not have happened yet when the scrape lands. Polling
+# turns "not yet" into "waited and it never moved", which is the assertion
+# actually intended.
+await_metric() {
+  local metric="$1" want="$2" deadline="$3" seen=0
+  for _ in $(seq 1 "${deadline}"); do
+    seen="$(metric_value "${metric}")"
+    [ "${seen:-0}" -ge "${want}" ] && break
+    sleep 1
+  done
+  echo "${seen:-0}"
+}
+
 # metric_value sums every series of a manager metric. The manager image is
 # distroless, so there is no shell to exec into — scrape the metrics Service
 # from a throwaway pod on the cluster network instead.
@@ -404,6 +422,20 @@ if [ "${UNGUARDED_STRIPPED%%/*}" = "0" ] && [ "${UNGUARDED_READS%%/*}" = "0" ]; 
 fi
 echo "OK: guard disabled — caught stripped ${UNGUARDED_STRIPPED}, wrong reads ${UNGUARDED_READS}; phase 1's green is the guard's doing"
 
+# Assert the revert counter HERE, before phase 2b restarts the manager. The
+# counter lives in the manager process, so a restart resets it to zero —
+# checking it after the restart would be measuring whatever the fresh pod
+# had managed to observe in the seconds since, which is a race rather than a
+# test. Phase 2a's strips are what the running operator actually saw.
+log "Asserting dco_manager_conversion_reverts_total moved during phase 2a"
+REVERTS="$(await_metric "dco_manager_conversion_reverts_total" 1 60)"
+if [ "${REVERTS:-0}" -lt 1 ]; then
+  echo "FAIL: dco_manager_conversion_reverts_total is ${REVERTS:-0} after ${UNGUARDED_STRIPPED} observed strips;"
+  echo "      the operator re-applied without ever recording that the stanza had gone."
+  exit 1
+fi
+echo "OK: dco_manager_conversion_reverts_total = ${REVERTS}"
+
 log "Phase 2b: scaling the manager to zero so nothing re-applies, and proving the read detector fires"
 # With the guard off AND nothing re-applying, conversion is durably gone:
 # Crossplane re-renders the generated CRD without it and the apiserver falls
@@ -435,16 +467,6 @@ echo "OK: with conversion provably gone the read came back wrong as expected: ${
 log "Scaling the manager back up"
 kubectl -n "${NAMESPACE}" scale deploy/"${RELEASE_NAME}"-manager --replicas=1
 kubectl -n "${NAMESPACE}" rollout status deploy/"${RELEASE_NAME}"-manager --timeout=180s
-
-# --- the revert counter ---------------------------------------------------
-
-log "Asserting dco_manager_conversion_reverts_total moved"
-REVERTS="$(metric_value "dco_manager_conversion_reverts_total")"
-if [ "${REVERTS:-0}" -lt 1 ]; then
-  echo "FAIL: dco_manager_conversion_reverts_total is ${REVERTS:-0}; the operator never observed a revert"
-  exit 1
-fi
-echo "OK: dco_manager_conversion_reverts_total = ${REVERTS}"
 
 # --- restore the guard ----------------------------------------------------
 

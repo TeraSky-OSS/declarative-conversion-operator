@@ -33,18 +33,22 @@ func pathSet(paths []engine.FieldPath) map[string]bool {
 
 func TestInjectedPathsForScope(t *testing.T) {
 	cases := []struct {
-		scope   Scope
-		want    []string
-		notWant []string
+		name        string
+		scope       Scope
+		offersClaim bool
+		want        []string
+		notWant     []string
 	}{
 		{
 			// The modern scopes nest everything under one key, so a single
 			// subtree root covers the machinery.
+			name:    "Namespaced",
 			scope:   ScopeNamespaced,
 			want:    []string{"spec.crossplane", "status.conditions"},
 			notWant: []string{"spec.compositionRef", "spec.claimRef", "status.connectionDetails", "status.claimConditionTypes"},
 		},
 		{
+			name:    "Cluster",
 			scope:   ScopeCluster,
 			want:    []string{"spec.crossplane", "status.conditions"},
 			notWant: []string{"spec.compositionRef", "spec.claimRef"},
@@ -54,7 +58,9 @@ func TestInjectedPathsForScope(t *testing.T) {
 			// spec — and its claim CRD shares the authored schema, so the
 			// claim's own names (resourceRef singular,
 			// compositeDeletePolicy) count too.
-			scope: ScopeLegacyCluster,
+			name:        "LegacyCluster with claims",
+			scope:       ScopeLegacyCluster,
+			offersClaim: true,
 			want: []string{
 				"spec.compositionRef", "spec.compositionSelector", "spec.compositionRevisionRef",
 				"spec.compositionRevisionSelector", "spec.compositionUpdatePolicy", "spec.resourceRefs",
@@ -66,12 +72,25 @@ func TestInjectedPathsForScope(t *testing.T) {
 			// author who declares one there is doing something legitimate.
 			notWant: []string{"spec.crossplane"},
 		},
-		{scope: ScopeIndeterminate, notWant: []string{"spec.crossplane", "spec.compositionRef"}},
+		{
+			// A LegacyCluster XRD with no spec.claimNames renders ONE CRD,
+			// so the claim's own machinery names are not reserved on it —
+			// reserving them would reject authored fields Crossplane is
+			// never going to overwrite.
+			name:  "LegacyCluster without claims",
+			scope: ScopeLegacyCluster,
+			want: []string{
+				"spec.compositionRef", "spec.claimRef", "spec.resourceRefs",
+				"status.conditions", "status.connectionDetails", "status.claimConditionTypes",
+			},
+			notWant: []string{"spec.crossplane", "spec.resourceRef", "spec.compositeDeletePolicy"},
+		},
+		{name: "Indeterminate", scope: ScopeIndeterminate, notWant: []string{"spec.crossplane", "spec.compositionRef"}},
 	}
 
 	for _, tc := range cases {
-		t.Run(string(tc.scope), func(t *testing.T) {
-			got := pathSet(InjectedPathsForScope(tc.scope))
+		t.Run(tc.name, func(t *testing.T) {
+			got := pathSet(InjectedPathsForScope(tc.scope, tc.offersClaim))
 			for _, w := range tc.want {
 				if !got[w] {
 					t.Errorf("missing %q", w)
@@ -88,7 +107,7 @@ func TestInjectedPathsForScope(t *testing.T) {
 
 func TestInjectedPathsForScope_NoStatusCrossplaneInAnyScope(t *testing.T) {
 	for _, s := range []Scope{ScopeNamespaced, ScopeCluster, ScopeLegacyCluster} {
-		if pathSet(InjectedPathsForScope(s))["status.crossplane"] {
+		if pathSet(InjectedPathsForScope(s, true))["status.crossplane"] {
 			t.Errorf("scope %s: there is no status.crossplane in any scope", s)
 		}
 	}
@@ -101,7 +120,7 @@ func TestInjectedPathsUnion_IsASupersetAndDeduplicated(t *testing.T) {
 		t.Errorf("union contains duplicates: %d entries, %d distinct", len(union), len(set))
 	}
 	for _, s := range []Scope{ScopeNamespaced, ScopeCluster, ScopeLegacyCluster} {
-		for _, p := range InjectedPathsForScope(s) {
+		for _, p := range InjectedPathsForScope(s, true) {
 			if !set[p.String()] {
 				t.Errorf("union is missing %q from scope %s", p.String(), s)
 			}
@@ -138,7 +157,12 @@ func TestSource_PlatformInjectedPaths(t *testing.T) {
 	})
 
 	t.Run("indeterminate scope yields the union, marked uncertain", func(t *testing.T) {
-		got := New(scopeXRD("", false, false)).PlatformInjectedPaths()
+		// An unrecognized apiVersion is the case the resolver refuses to
+		// guess at; a plain v2 manifest with no scope resolves to
+		// Namespaced from its own apiVersion and is not uncertain at all.
+		xrd := scopeXRD("", false, false)
+		xrd.SetAPIVersion("apiextensions.crossplane.io/v99")
+		got := New(xrd).PlatformInjectedPaths()
 		if !got.Uncertain {
 			t.Fatal("an XRD with no scope and no claim signal must degrade to warnings")
 		}

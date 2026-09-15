@@ -109,6 +109,19 @@ func RunTest(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Enforce VerifyPropagation's documented constraints here rather than
+	// only in the cobra command: TestOptions is exported, and silently
+	// skipping a check the caller asked for is the failure mode the check
+	// exists to prevent.
+	if opts.VerifyPropagation {
+		if !opts.Live {
+			return nil, fmt.Errorf("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
+		}
+		if kind == "CRDConversionConfig" {
+			return nil, fmt.Errorf("--verify-propagation applies only to an XRDConversionConfig: a CRDConversionConfig's target IS the CRD, so there is no generated CRD for the conversion webhook to propagate into")
+		}
+	}
+
 	switch kind {
 	case "CRDConversionConfig":
 		if opts.CRDPath == "" {

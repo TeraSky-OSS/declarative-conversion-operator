@@ -114,13 +114,17 @@ func TestVerifyPropagation_ClaimCRDLagsBehind(t *testing.T) {
 	if rep.Propagated {
 		t.Fatal("must not report propagated while the claim CRD is still strategy: None")
 	}
-	var claim *PropagationCRDStatus
-	for i := range rep.CRDs {
-		if rep.CRDs[i].Role == "claim" {
-			claim = &rep.CRDs[i]
+	// A value plus a found flag rather than a pointer: there is nothing to
+	// dereference, so there is nothing for a reader (or staticcheck) to
+	// wonder about.
+	var claim PropagationCRDStatus
+	found := false
+	for _, c := range rep.CRDs {
+		if c.Role == "claim" {
+			claim, found = c, true
 		}
 	}
-	if claim == nil {
+	if !found {
 		t.Fatalf("no claim entry: %+v", rep.CRDs)
 	}
 	// The message has to explain why "None" is worse than an outage.
@@ -192,4 +196,31 @@ func TestVerifyPropagation_GeneratedCRDDoesNotExistYet(t *testing.T) {
 	if !strings.Contains(rep.CRDs[0].Message, "has not created this CRD yet") {
 		t.Errorf("unexpected message: %q", rep.CRDs[0].Message)
 	}
+}
+
+func TestRunTest_VerifyPropagationConstraints(t *testing.T) {
+	// TestOptions is exported, so the cobra command's own check is not the
+	// only way in. Silently skipping a check the caller asked for is
+	// exactly the failure mode the check exists to prevent.
+	t.Run("without --live", func(t *testing.T) {
+		_, err := RunTest(TestOptions{
+			XRDPath: "testdata/xrd.yaml", ConfigPath: "testdata/config.yaml",
+			SamplesDir: "testdata/samples", VerifyPropagation: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "requires --live") {
+			t.Fatalf("expected a refusal, got %v", err)
+		}
+	})
+
+	t.Run("against a CRDConversionConfig", func(t *testing.T) {
+		// A CRDConversionConfig's target IS the CRD, so there is no
+		// generated CRD for anything to propagate into.
+		_, err := RunTest(TestOptions{
+			CRDPath: "testdata/crd.yaml", ConfigPath: "testdata/crdconfig.yaml",
+			Live: true, VerifyPropagation: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "applies only to an XRDConversionConfig") {
+			t.Fatalf("expected a refusal, got %v", err)
+		}
+	})
 }
