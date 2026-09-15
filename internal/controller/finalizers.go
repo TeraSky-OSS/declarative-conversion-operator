@@ -52,12 +52,20 @@ import (
 //
 // A merge patch claims only the fields the patch body actually carries, so
 // scoping the write to metadata.finalizers scopes the ownership with it.
+//
+// The patch carries an optimistic lock, which is not optional here.
+// metadata.finalizers is an atomic list: a merge patch replaces it whole.
+// Without a resourceVersion precondition, a finalizer another controller
+// added between our read and our write would be silently dropped — and a
+// dropped finalizer means that controller's cleanup is skipped entirely
+// when the object is deleted. With the lock, a concurrent write makes this
+// patch fail with a conflict and the reconcile retries against fresh state.
 func patchFinalizers(ctx context.Context, c client.Client, obj client.Object, mutate func() bool) error {
 	orig := obj.DeepCopyObject().(client.Object)
 	if !mutate() {
 		return nil
 	}
-	return c.Patch(ctx, obj, client.MergeFrom(orig))
+	return c.Patch(ctx, obj, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{}))
 }
 
 // addFinalizer adds one, patching only metadata.finalizers. Returns nil

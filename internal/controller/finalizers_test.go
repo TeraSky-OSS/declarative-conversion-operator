@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -192,5 +193,74 @@ func TestRemoveFinalizer_AbsentSendsNothing(t *testing.T) {
 	}
 	if rec.body != nil || rec.updates != 0 {
 		t.Fatalf("removing an absent finalizer must produce no write (patch=%v updates=%d)", rec.body, rec.updates)
+	}
+}
+
+// TestAddFinalizer_ConflictsWithAConcurrentFinalizerWrite is the regression
+// test for the optimistic lock.
+//
+// metadata.finalizers is an atomic list, so a merge patch replaces it
+// whole. Without a resourceVersion precondition, a finalizer another
+// controller added between our read and our write is silently dropped —
+// and a dropped finalizer means that controller's cleanup never runs when
+// the object is deleted.
+func TestAddFinalizer_ConflictsWithAConcurrentFinalizerWrite(t *testing.T) {
+	server := chartManagedServer()
+	c, _ := newFinalizerRecorder(t, server)
+
+	// Our read of the object. Everything below happens against this
+	// snapshot, exactly as a reconcile would.
+	var ours teraskyv1alpha1.ConversionWebhookServer
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "default"}, &ours); err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+
+	// Somebody else adds their own finalizer in the meantime.
+	var theirs teraskyv1alpha1.ConversionWebhookServer
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "default"}, &theirs); err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	theirs.Finalizers = append(theirs.Finalizers, "someone.else/cleanup")
+	if err := c.Update(context.Background(), &theirs); err != nil {
+		t.Fatalf("concurrent update: %v", err)
+	}
+
+	// Our write, built from the stale snapshot, must be rejected rather
+	// than replacing their list with ours.
+	err := addFinalizer(context.Background(), c, &ours, teraskyv1alpha1.ConversionWebhookServerFinalizer)
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("expected a conflict, got %v", err)
+	}
+
+	// And their finalizer is still there.
+	var got teraskyv1alpha1.ConversionWebhookServer
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "default"}, &got); err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if len(got.Finalizers) != 1 || got.Finalizers[0] != "someone.else/cleanup" {
+		t.Fatalf("the concurrent finalizer was clobbered: %+v", got.Finalizers)
+	}
+}
+
+// TestAddFinalizer_SucceedsAgainstFreshState is the other half: the lock
+// must not make the ordinary path fail.
+func TestAddFinalizer_SucceedsAgainstFreshState(t *testing.T) {
+	server := chartManagedServer()
+	c, _ := newFinalizerRecorder(t, server)
+
+	var fresh teraskyv1alpha1.ConversionWebhookServer
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "default"}, &fresh); err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if err := addFinalizer(context.Background(), c, &fresh, teraskyv1alpha1.ConversionWebhookServerFinalizer); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got teraskyv1alpha1.ConversionWebhookServer
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "default"}, &got); err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if len(got.Finalizers) != 1 || got.Finalizers[0] != teraskyv1alpha1.ConversionWebhookServerFinalizer {
+		t.Fatalf("finalizer not persisted: %+v", got.Finalizers)
 	}
 }

@@ -90,10 +90,15 @@ func TestXRDReconcile_PackageManagedCondition(t *testing.T) {
 			}
 
 			got := getXRDConfig(t, r, "cfg")
-			cond := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionPackageManaged)
-			if cond == nil {
-				t.Fatalf("expected a PackageManaged condition, got %+v", got.Status.Conditions)
+			found := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionPackageManaged)
+			if found == nil {
+				// Errorf plus an explicit return rather than Fatalf: inside
+				// a subtest closure the early exit is clearer stated than
+				// inferred.
+				t.Errorf("expected a PackageManaged condition, got %+v", got.Status.Conditions)
+				return
 			}
+			cond := *found
 			if cond.Status != tc.wantStatus {
 				t.Errorf("status = %q, want %q (message: %s)", cond.Status, tc.wantStatus, cond.Message)
 			}
