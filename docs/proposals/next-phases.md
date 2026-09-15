@@ -782,8 +782,8 @@ apiserver's write path".
   logic the CI job currently greps for.
 - **A documented deprecation policy.** What "beta" promises, how a breaking
   change to the chart's values or the CLI's flags is announced, and how long a
-  deprecated flag keeps working. The CRD API group stays `terasky.com/v1alpha1`;
-  changing it is out of scope for this roadmap.
+  deprecated flag keeps working. The CRD API version stays `v1alpha1` (group
+  `terasky.com`); changing the API version is out of scope for this roadmap.
 
 ## Phase 15 — Scale
 
