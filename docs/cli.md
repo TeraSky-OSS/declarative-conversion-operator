@@ -392,6 +392,10 @@ Rewrites every live instance of a target XRD or CRD so etcd stores it at the cur
 
 `--xrd` and `--crd` here are **cluster resource names**, not local YAML files. No conversion config is required. The live schema is the source of truth for GVK, scope, storage version, and `status.storedVersions`.
 
+**A claim-offering XRD has two CRDs, and both are migrated.** A `scope: LegacyCluster` XRD with `spec.claimNames` generates the cluster-scoped composite CRD *and* a namespace-scoped claim CRD (`{claimPlural}.{group}`). Claims are their own stored object class with their own `status.storedVersions`, so migrating the composite alone left the old version un-droppable — which is the entire reason to run `--prune-stored-versions`. Both are now listed, rewritten, and pruned, and the report breaks the counts down per CRD.
+
+A failure on **either** CRD blocks the prune on **both**, naming which one failed. A half-pruned pair still cannot drop the version, but has already thrown away the record of which objects were stored at it.
+
 After you promote a new storage version (`storage: true` on a CRD, `referenceable: true` on an XRD), objects already in etcd stay physically encoded at whichever version was storage when they were last written — **unless something writes them again**. The apiserver serves them correctly either way, but Kubernetes rejects dropping an old version from the CRD/XRD until `status.storedVersions` no longer lists it.
 
 **XRD vs CRD — this command is not equally urgent.**
@@ -416,7 +420,7 @@ convctl migrate-storage --crd widgets.example.org --prune-stored-versions
 | `--crd` | Cluster name of the `CustomResourceDefinition`. **Not a file path.** |
 | `--kubeconfig` | Path to a kubeconfig file. Resolves exactly like `kubectl`. |
 | `--context` | Kubeconfig context to use. |
-| `-n, --namespace` | Limit to this namespace. Default: all namespaces. Ignored (with a warning) for cluster-scoped types. |
+| `-n, --namespace` | Limit to this namespace. Default: all namespaces. Ignored (with a warning) for cluster-scoped types — on a `LegacyCluster` XRD that is the **composite** side, so `--namespace` narrows only its claims. Refused with `--prune-stored-versions`. |
 | `--dry-run` | Same Apply call with server-side dry-run (`DryRun: All`) — exercises conversion, does not persist. Also skips `--prune-stored-versions`. |
 | `--concurrency` | How many objects to patch in parallel. Defaults to **1** (this is a write). |
 | `--field-manager` | SSA field manager. Defaults to `convctl`. Always applied with force-conflicts. |
@@ -444,13 +448,15 @@ The invoking identity — not the operator's ServiceAccount — needs:
 
 ## Pre-upgrade checks: testing against everything that already exists
 
-`--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of the target XRD's generated composite resource type (or, for a `CRDConversionConfig`, the native CRD's own resource type), fetched at its hub/storage version (so it works even *before* any conversion webhook is wired up, since the storage version is always readable):
+`--samples` is for hand-written fixtures. `--live` sources samples from a real cluster instead — every existing instance of **every** resource type the target generates, fetched at its hub/storage version (so it works even *before* any conversion webhook is wired up, since the storage version is always readable). For a `CRDConversionConfig` that is the native CRD's own type. For an `XRDConversionConfig` it is the composite type and, on a `scope: LegacyCluster` XRD with `spec.claimNames`, its **claims** as well — claims carry the same `spec.conversion` and are built from the same authored schema, so they go through the very same webhook, and sampling composites alone silently covered roughly half the objects a pre-upgrade check is supposed to cover:
 
 ```console
 convctl test --xrd xrd.yaml --config new-config.yaml --live
 convctl test --crd crd.yaml --config new-crd-config.yaml --live \
   --kubeconfig ~/.kube/other-config --context prod
 ```
+
+When more than one CRD contributes, the report breaks the sample count down per CRD, each sample records which CRD it came from (`crd` / `crdRole` in JSON), and every JUnit `<testcase>` carries `crd` and `crdRole` properties — so a claim-side failure is distinguishable from a composite-side one without parsing case names.
 
 This is the tool to run before applying a new or changed `XRDConversionConfig`/`CRDConversionConfig`: does it hold up against every object that already exists in the cluster, not just your fixtures? `--kubeconfig`/`--context` resolve exactly like `kubectl` does. The invoking identity only needs `get`/`list` on the target resource type — no write access, and nothing related to this operator's own CRDs or webhook server.
 

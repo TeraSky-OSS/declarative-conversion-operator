@@ -52,6 +52,19 @@ type SampleResult struct {
 	File            string       `json:"file"`
 	AssertedVersion string       `json:"assertedVersion"`
 	Paths           []PathResult `json:"paths"`
+	// CRD and CRDRole attribute a --live sample to the generated CRD it
+	// came from. A claim-offering XRD generates two, and a failure that
+	// does not say which half it is in is much harder to act on. Empty for
+	// file-loaded samples.
+	CRD     string `json:"crd,omitempty"`
+	CRDRole string `json:"crdRole,omitempty"`
+}
+
+// CRDSampleCount is the per-generated-CRD breakdown of a --live run.
+type CRDSampleCount struct {
+	CRD     string `json:"crd"`
+	Role    string `json:"role"`
+	Samples int    `json:"samples"`
 }
 
 // RuleCoverage reports whether a declared rule was exercised by any sample.
@@ -83,6 +96,10 @@ type Report struct {
 		AcknowledgedLoss   int `json:"acknowledgedLoss"`
 		UnacknowledgedLoss int `json:"unacknowledgedLoss"`
 		Errors             int `json:"errors"`
+		// SamplesByCRD breaks the sample count down per generated CRD.
+		// Present only for --live runs against an XRD that generates more
+		// than one (a LegacyCluster XRD with claimNames).
+		SamplesByCRD []CRDSampleCount `json:"samplesByCRD,omitempty"`
 	} `json:"summary"`
 	Samples      []SampleResult `json:"samples"`
 	RuleCoverage []RuleCoverage `json:"ruleCoverage,omitempty"`
@@ -96,7 +113,11 @@ func (r *Report) WriteTable(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "%s Conversion Test Report\n", r.Meta.ResourceKind)
 	_, _ = fmt.Fprintf(w, "%s: %s\tConfig: %s (hub: %s)\n", r.Meta.ResourceKind, r.Meta.Resource, r.Meta.Config, r.Meta.HubVersion)
 	r.Meta.Scope.write(w)
-	_, _ = fmt.Fprintf(w, "Samples: %d\tPaths tested: %d\tTotal time: %.1fms\n\n", r.Summary.Samples, r.Summary.PathsTested, r.Meta.DurationMs)
+	_, _ = fmt.Fprintf(w, "Samples: %d\tPaths tested: %d\tTotal time: %.1fms\n", r.Summary.Samples, r.Summary.PathsTested, r.Meta.DurationMs)
+	for _, c := range r.Summary.SamplesByCRD {
+		_, _ = fmt.Fprintf(w, "  %s (%s): %d samples\n", c.CRD, c.Role, c.Samples)
+	}
+	_, _ = fmt.Fprintln(w)
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SAMPLE\tPATH\tRESULT\tFIELDS\tTIME(µs)\tRULES MATCHED")
@@ -182,12 +203,25 @@ type junitTestSuite struct {
 }
 
 type junitTestCase struct {
-	Name      string        `xml:"name,attr"`
-	Classname string        `xml:"classname,attr"`
-	Time      string        `xml:"time,attr"`
-	Failure   *junitMessage `xml:"failure,omitempty"`
-	Error     *junitMessage `xml:"error,omitempty"`
-	SystemOut string        `xml:"system-out,omitempty"`
+	Name      string           `xml:"name,attr"`
+	Classname string           `xml:"classname,attr"`
+	Time      string           `xml:"time,attr"`
+	Props     *junitProperties `xml:"properties,omitempty"`
+	Failure   *junitMessage    `xml:"failure,omitempty"`
+	Error     *junitMessage    `xml:"error,omitempty"`
+	SystemOut string           `xml:"system-out,omitempty"`
+}
+
+// junitProperties carries the generated CRD a --live sample came from, so
+// a CI system rendering the report can tell a claim failure from a
+// composite one without parsing the case name.
+type junitProperties struct {
+	Properties []junitProperty `xml:"property"`
+}
+
+type junitProperty struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
 }
 
 type junitMessage struct {
@@ -212,6 +246,12 @@ func (r *Report) junitSuite() junitTestSuite {
 				Name:      fmt.Sprintf("%s: %s→%s", s.File, p.From, p.To),
 				Classname: fmt.Sprintf("%s.%s", r.Meta.Config, r.Meta.HubVersion),
 				Time:      fmt.Sprintf("%.6f", seconds),
+			}
+			if s.CRD != "" {
+				tc.Props = &junitProperties{Properties: []junitProperty{
+					{Name: "crd", Value: s.CRD},
+					{Name: "crdRole", Value: s.CRDRole},
+				}}
 			}
 			switch p.Result {
 			case "fail":

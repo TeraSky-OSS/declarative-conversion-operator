@@ -310,6 +310,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 
 	rep.Samples = results
 	rep.Summary.Samples = len(samples)
+	rep.Summary.SamplesByCRD = samplesByCRD(samples)
 
 	for _, sr := range report.SpokeReports {
 		for _, rr := range sr.RuleResults {
@@ -338,7 +339,7 @@ type sampleCounts struct {
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
 func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string) (SampleResult, sampleCounts, map[string]int) {
-	sr := SampleResult{File: s.File, AssertedVersion: s.Version}
+	sr := SampleResult{File: s.File, AssertedVersion: s.Version, CRD: s.CRD, CRDRole: s.CRDRole}
 	var counts sampleCounts
 	usage := map[string]int{}
 	if !containsString(configured, s.Version) {
@@ -543,4 +544,33 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		}
 	}
 	return pr
+}
+
+// samplesByCRD breaks a --live run's sample count down per generated CRD,
+// preserving the order FetchLiveSamples listed them in (composite first,
+// then claim). It returns nil unless more than one CRD contributed —
+// "1 CRD, N samples" is what every other run already reports.
+func samplesByCRD(samples []Sample) []CRDSampleCount {
+	var order []string
+	byCRD := map[string]*CRDSampleCount{}
+	for _, s := range samples {
+		if s.CRD == "" {
+			continue
+		}
+		c, ok := byCRD[s.CRD]
+		if !ok {
+			c = &CRDSampleCount{CRD: s.CRD, Role: s.CRDRole}
+			byCRD[s.CRD] = c
+			order = append(order, s.CRD)
+		}
+		c.Samples++
+	}
+	if len(order) < 2 {
+		return nil
+	}
+	out := make([]CRDSampleCount, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byCRD[name])
+	}
+	return out
 }

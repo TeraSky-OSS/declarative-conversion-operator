@@ -94,15 +94,34 @@ func xrdGroupKind(xrd *unstructured.Unstructured) (group, kind string, err error
 	return group, kind, nil
 }
 
-// FetchLiveSamples lists every existing instance of the XRD's generated
-// composite resource type at hubVersion. See fetchLiveSamplesByGVR for why
-// hubVersion specifically, and why pagination isn't capped.
+// FetchLiveSamples lists every existing instance of every resource type
+// the XRD generates, at hubVersion. On a LegacyCluster XRD with
+// spec.claimNames that is two types, not one: claims are their own stored
+// object class with their own instances, and they go through the very same
+// webhook, so sampling composites alone silently covers roughly half the
+// objects a pre-upgrade check is supposed to cover.
+//
+// See fetchLiveSamplesByGVR for why hubVersion specifically, and why
+// pagination isn't capped.
 func FetchLiveSamples(ctx context.Context, dyn dynamic.Interface, xrd *unstructured.Unstructured, hubVersion string) ([]Sample, error) {
-	group, plural, err := xrdResourceInfo(xrd)
+	generated, err := xrdadapter.GeneratedCRDNames(xrd)
 	if err != nil {
 		return nil, err
 	}
-	return fetchLiveSamplesByGVR(ctx, dyn, schema.GroupVersionResource{Group: group, Version: hubVersion, Resource: plural}, hubVersion)
+	var samples []Sample
+	for _, g := range generated {
+		gvr := schema.GroupVersionResource{Group: g.Group, Version: hubVersion, Resource: g.Plural}
+		got, err := fetchLiveSamplesByGVR(ctx, dyn, gvr, hubVersion)
+		if err != nil {
+			return nil, err
+		}
+		for i := range got {
+			got[i].CRD = g.Name
+			got[i].CRDRole = string(g.Role)
+		}
+		samples = append(samples, got...)
+	}
+	return samples, nil
 }
 
 // FetchLiveSamplesCRD is FetchLiveSamples's sibling for a native

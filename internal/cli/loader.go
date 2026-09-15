@@ -127,6 +127,14 @@ type Sample struct {
 	Index   int // position within File, for multi-document files
 	Object  map[string]any
 	Version string
+	// CRD names the generated CRD a --live sample came from. A
+	// claim-offering XRD generates two, and a report that lumps them
+	// together cannot tell an operator which half of their objects a
+	// failure is in. Empty for file-loaded samples.
+	CRD string
+	// CRDRole is "composite" or "claim" for --live samples of an XRD.
+	// Empty otherwise.
+	CRDRole string
 }
 
 // LoadSamples walks dir recursively, decoding every .yaml/.yml file as a
