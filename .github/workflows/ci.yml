@@ -112,6 +112,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Reads .golangci.yml from the repository root. The version here,
+      # GOLANGCI_LINT_VERSION in the Makefile, and the `version:` key in
+      # .golangci.yml are one set — a config written against a different
+      # schema version fails the run outright, so `make lint` locally and
+      # this job have to be the same tool.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

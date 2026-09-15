@@ -18,7 +18,7 @@ package controller
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -52,7 +52,7 @@ func TestXRDReconcile_CrashBeforePatch_RestartsAndApplies(t *testing.T) {
 				if applyCalls.Add(1) == 1 {
 					// Simulate a controller crash after analysis/compile
 					// succeeded but before the XRD conversion patch landed.
-					return fmt.Errorf("injected crash before XRD patch")
+					return errors.New("injected crash before XRD patch")
 				}
 				return c.Apply(ctx, obj, opts...)
 			},
@@ -105,7 +105,7 @@ func TestXRDReconcile_CrashAfterPatchBeforeStatus_RestartsIdempotently(t *testin
 					if statusPatches.Add(1) == 1 {
 						// Patch landed on the XRD; crash before status
 						// ObservedGeneration/Phase=Applied is persisted.
-						return fmt.Errorf("injected crash before status Applied")
+						return errors.New("injected crash before status Applied")
 					}
 				}
 				return c.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
@@ -307,7 +307,7 @@ func TestXRDReconcile_FailClosed_PartwayRevertThenRecover(t *testing.T) {
 		WithInterceptorFuncs(interceptor.Funcs{
 			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				if applyCalls.Add(1) == 1 {
-					return fmt.Errorf("injected partway revert failure")
+					return errors.New("injected partway revert failure")
 				}
 				return c.Apply(ctx, obj, opts...)
 			},

@@ -23,6 +23,7 @@ package v1alpha1
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -98,7 +99,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 	switch r.Strategy {
 	case StrategyFieldRename:
 		if r.FieldRename == nil {
-			return nil, fmt.Errorf("requires fieldRename params")
+			return nil, errors.New("requires fieldRename params")
 		}
 		return engine.FieldRenameParams{
 			HubPath:   engine.ParsePath(r.FieldRename.HubPath),
@@ -107,7 +108,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyScalarToObject:
 		if r.ScalarToObject == nil {
-			return nil, fmt.Errorf("requires scalarToObject params")
+			return nil, errors.New("requires scalarToObject params")
 		}
 		defaults, err := jsonMapToAny(r.ScalarToObject.DefaultsForOtherKeys)
 		if err != nil {
@@ -120,7 +121,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyObjectToScalar:
 		if r.ObjectToScalar == nil {
-			return nil, fmt.Errorf("requires objectToScalar params")
+			return nil, errors.New("requires objectToScalar params")
 		}
 		defaults, err := jsonMapToAny(r.ObjectToScalar.DefaultsForOtherKeys)
 		if err != nil {
@@ -133,7 +134,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategySingletonArrayToObject:
 		if r.SingletonArrayToObject == nil {
-			return nil, fmt.Errorf("requires singletonArrayToObject params")
+			return nil, errors.New("requires singletonArrayToObject params")
 		}
 		return engine.SingletonArrayToObjectParams{
 			HubPath: engine.ParsePath(r.SingletonArrayToObject.HubPath), SpokePath: engine.ParsePath(r.SingletonArrayToObject.SpokePath),
@@ -141,7 +142,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyObjectToSingletonArray:
 		if r.ObjectToSingletonArray == nil {
-			return nil, fmt.Errorf("requires objectToSingletonArray params")
+			return nil, errors.New("requires objectToSingletonArray params")
 		}
 		return engine.ObjectToSingletonArrayParams{
 			HubPath: engine.ParsePath(r.ObjectToSingletonArray.HubPath), SpokePath: engine.ParsePath(r.ObjectToSingletonArray.SpokePath),
@@ -149,7 +150,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyFieldsToMap:
 		if r.FieldsToMap == nil {
-			return nil, fmt.Errorf("requires fieldsToMap params")
+			return nil, errors.New("requires fieldsToMap params")
 		}
 		return engine.FieldsToMapParams{
 			HubPaths:          parsePaths(r.FieldsToMap.HubPaths),
@@ -160,7 +161,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyMapToFields:
 		if r.MapToFields == nil {
-			return nil, fmt.Errorf("requires mapToFields params")
+			return nil, errors.New("requires mapToFields params")
 		}
 		return engine.MapToFieldsParams{
 			HubMapPath:      engine.ParsePath(r.MapToFields.HubMapPath),
@@ -184,7 +185,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyFromAnnotation:
 		if r.FromAnnotation == nil {
-			return nil, fmt.Errorf("requires FromAnnotation params")
+			return nil, errors.New("requires FromAnnotation params")
 		}
 		p := r.FromAnnotation
 		return engine.FromMetadataParams{
@@ -194,12 +195,12 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyFromLabel:
 		if r.FromLabel == nil {
-			return nil, fmt.Errorf("requires FromLabel params")
+			return nil, errors.New("requires FromLabel params")
 		}
 		p := r.FromLabel
 		// Labels must be plain strings; JSON quoting produces invalid label values.
 		if p.Serialization == "JSON" {
-			return nil, fmt.Errorf("FromLabel does not support serialization=JSON; use String")
+			return nil, errors.New("FromLabel does not support serialization=JSON; use String")
 		}
 		return engine.FromMetadataParams{
 			SpokePath: engine.ParsePath(p.SpokePath), Key: p.Key,
@@ -208,7 +209,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyEnumRemap:
 		if r.EnumRemap == nil {
-			return nil, fmt.Errorf("requires enumRemap params")
+			return nil, errors.New("requires enumRemap params")
 		}
 		mapping := make([]engine.EnumValueMapping, 0, len(r.EnumRemap.Mapping))
 		for _, m := range r.EnumRemap.Mapping {
@@ -230,7 +231,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyDefaultValue:
 		if r.DefaultValue == nil {
-			return nil, fmt.Errorf("requires defaultValue params")
+			return nil, errors.New("requires defaultValue params")
 		}
 		val, err := jsonToAny(r.DefaultValue.Default)
 		if err != nil {
@@ -242,7 +243,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyConstant:
 		if r.Constant == nil {
-			return nil, fmt.Errorf("requires constant params")
+			return nil, errors.New("requires constant params")
 		}
 		val, err := jsonToAny(r.Constant.Value)
 		if err != nil {
@@ -254,13 +255,13 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyDelete:
 		if r.Delete == nil {
-			return nil, fmt.Errorf("requires delete params")
+			return nil, errors.New("requires delete params")
 		}
 		return engine.DeleteParams{Path: engine.ParsePath(r.Delete.Path), ExistsOn: engine.Side(r.Delete.ExistsOn)}, nil
 
 	case StrategyJSONPatch:
 		if r.JSONPatch == nil {
-			return nil, fmt.Errorf("requires jsonPatch params")
+			return nil, errors.New("requires jsonPatch params")
 		}
 		h2s, err := convertPatchOps(r.JSONPatch.HubToSpoke)
 		if err != nil {
@@ -274,7 +275,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyForEach:
 		if r.ForEach == nil {
-			return nil, fmt.Errorf("requires forEach params")
+			return nil, errors.New("requires forEach params")
 		}
 		nested, err := convertRules(r.ForEach.Rules)
 		if err != nil {
@@ -287,7 +288,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyTypeCoerce:
 		if r.TypeCoerce == nil {
-			return nil, fmt.Errorf("requires typeCoerce params")
+			return nil, errors.New("requires typeCoerce params")
 		}
 		return engine.TypeCoerceParams{
 			Path:                engine.ParsePath(r.TypeCoerce.Path),
@@ -296,7 +297,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyScalarToFields:
 		if r.ScalarToFields == nil {
-			return nil, fmt.Errorf("requires scalarToFields params")
+			return nil, errors.New("requires scalarToFields params")
 		}
 		return engine.ScalarToFieldsParams{
 			HubPath:          engine.ParsePath(r.ScalarToFields.HubPath),
@@ -308,7 +309,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyFieldsToScalar:
 		if r.FieldsToScalar == nil {
-			return nil, fmt.Errorf("requires fieldsToScalar params")
+			return nil, errors.New("requires fieldsToScalar params")
 		}
 		return engine.FieldsToScalarParams{
 			HubFields:        parsePathMap(r.FieldsToScalar.HubFields),
@@ -320,7 +321,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyArrayToMapByKey:
 		if r.ArrayToMapByKey == nil {
-			return nil, fmt.Errorf("requires arrayToMapByKey params")
+			return nil, errors.New("requires arrayToMapByKey params")
 		}
 		return engine.ArrayToMapByKeyParams{
 			HubPath: engine.ParsePath(r.ArrayToMapByKey.HubPath), SpokePath: engine.ParsePath(r.ArrayToMapByKey.SpokePath),
@@ -329,7 +330,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyMapToArrayByKey:
 		if r.MapToArrayByKey == nil {
-			return nil, fmt.Errorf("requires mapToArrayByKey params")
+			return nil, errors.New("requires mapToArrayByKey params")
 		}
 		return engine.MapToArrayByKeyParams{
 			HubPath: engine.ParsePath(r.MapToArrayByKey.HubPath), SpokePath: engine.ParsePath(r.MapToArrayByKey.SpokePath),
@@ -338,7 +339,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyNumericScale:
 		if r.NumericScale == nil {
-			return nil, fmt.Errorf("requires numericScale params")
+			return nil, errors.New("requires numericScale params")
 		}
 		return engine.NumericScaleParams{
 			HubPath: engine.ParsePath(r.NumericScale.HubPath), SpokePath: engine.ParsePath(r.NumericScale.SpokePath),
@@ -347,7 +348,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyListJoin:
 		if r.ListJoin == nil {
-			return nil, fmt.Errorf("requires listJoin params")
+			return nil, errors.New("requires listJoin params")
 		}
 		return engine.ListJoinParams{
 			HubPath: engine.ParsePath(r.ListJoin.HubPath), SpokePath: engine.ParsePath(r.ListJoin.SpokePath),
@@ -356,7 +357,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyListSplit:
 		if r.ListSplit == nil {
-			return nil, fmt.Errorf("requires listSplit params")
+			return nil, errors.New("requires listSplit params")
 		}
 		return engine.ListSplitParams{
 			HubPath: engine.ParsePath(r.ListSplit.HubPath), SpokePath: engine.ParsePath(r.ListSplit.SpokePath),
@@ -365,7 +366,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyQuantity:
 		if r.Quantity == nil {
-			return nil, fmt.Errorf("requires quantity params")
+			return nil, errors.New("requires quantity params")
 		}
 		return engine.QuantityParams{
 			HubPath: engine.ParsePath(r.Quantity.HubPath), SpokePath: engine.ParsePath(r.Quantity.SpokePath),
@@ -373,7 +374,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyDuration:
 		if r.Duration == nil {
-			return nil, fmt.Errorf("requires duration params")
+			return nil, errors.New("requires duration params")
 		}
 		return engine.DurationParams{
 			HubPath: engine.ParsePath(r.Duration.HubPath), SpokePath: engine.ParsePath(r.Duration.SpokePath),
@@ -381,7 +382,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyMapKeyRename:
 		if r.MapKeyRename == nil {
-			return nil, fmt.Errorf("requires mapKeyRename params")
+			return nil, errors.New("requires mapKeyRename params")
 		}
 		return engine.MapKeyRenameParams{
 			HubPath: engine.ParsePath(r.MapKeyRename.HubPath), SpokePath: engine.ParsePath(r.MapKeyRename.SpokePath),
@@ -390,7 +391,7 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 
 	case StrategyCEL:
 		if r.CEL == nil {
-			return nil, fmt.Errorf("requires cel params")
+			return nil, errors.New("requires cel params")
 		}
 		return engine.CELParams{
 			HubPaths: parsePaths(r.CEL.HubPaths), SpokePaths: parsePaths(r.CEL.SpokePaths),
@@ -451,7 +452,11 @@ func convertPatchOps(ops []JSONPatchOp) ([]engine.JSONPatchOp, error) {
 
 func jsonToAny(j extv1.JSON) (any, error) {
 	if len(j.Raw) == 0 {
-		return nil, nil
+		// nil is the value, not the absence of one: an unset extv1.JSON
+		// means "no value was configured", and every caller treats a nil
+		// any as exactly that. A sentinel error would make each of them
+		// re-translate it back.
+		return nil, nil //nolint:nilnil // nil is a meaningful value here, not a missing one
 	}
 	var v any
 	if err := json.Unmarshal(j.Raw, &v); err != nil {
@@ -462,7 +467,9 @@ func jsonToAny(j extv1.JSON) (any, error) {
 
 func convertWhen(w *RuleWhen) (*engine.RuleWhen, error) {
 	if w == nil {
-		return nil, nil
+		// No when clause is not an error; engine.RuleWhen is nil-checked by
+		// every op that consults it.
+		return nil, nil //nolint:nilnil // an absent when clause is legitimately (nil, nil)
 	}
 	eq, err := jsonToAny(w.Equals)
 	if err != nil {
@@ -473,7 +480,9 @@ func convertWhen(w *RuleWhen) (*engine.RuleWhen, error) {
 
 func jsonMapToAny(m map[string]extv1.JSON) (map[string]any, error) {
 	if len(m) == 0 {
-		return nil, nil
+		// An empty map converts to a nil map, which reads and ranges
+		// identically. Allocating one would only hide that it was empty.
+		return nil, nil //nolint:nilnil // an empty map legitimately converts to (nil, nil)
 	}
 	out := make(map[string]any, len(m))
 	for k, v := range m {

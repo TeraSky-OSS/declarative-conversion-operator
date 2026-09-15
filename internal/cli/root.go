@@ -19,6 +19,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,7 +28,7 @@ import (
 )
 
 // Exit codes, chosen so CI can tell "the config is broken" apart from "the
-// invocation was wrong."
+// invocation was wrong.".
 const (
 	ExitOK          = 0
 	ExitTestFailure = 1
@@ -226,10 +227,10 @@ results are collected by sample index, never by completion order.`,
 				return fmt.Errorf("invalid --fail-on value %q (want %s, %s, or %s)", failOn, failOnNone, failOnWarn, failOnLoss)
 			}
 			if !live && (len(contexts) > 0 || kubeconfigDir != "") {
-				return fmt.Errorf("--contexts and --kubeconfig-dir require --live")
+				return errors.New("--contexts and --kubeconfig-dir require --live")
 			}
 			if verifyPropagation && !live {
-				return fmt.Errorf("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
+				return errors.New("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
 			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
@@ -415,7 +416,11 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 		return err
 	}
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, buf.Bytes(), 0o644); err != nil {
+		// 0o600 rather than 0o644: a report can contain the full schema
+		// and rule set of a cluster's conversion configuration, and the
+		// person who asked for it is the only one who asked for it. Widen
+		// it deliberately with umask or chmod if a CI job needs to read it.
+		if err := os.WriteFile(outputFile, buf.Bytes(), 0o600); err != nil {
 			return fmt.Errorf("writing report to %s: %w", outputFile, err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "output written to file %s\n", outputFile)

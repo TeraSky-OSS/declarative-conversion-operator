@@ -763,7 +763,15 @@ func (o joinListOp) apply(ctx *execContext) error {
 		if err != nil {
 			return fmt.Errorf("listJoin: element %d: %w", i, err)
 		}
-		parts[i] = s.(string)
+		str, ok := s.(string)
+		if !ok {
+			// coerceScalarValue with FieldKindString is documented to
+			// return a string, so this is unreachable — but a panic here
+			// would be on the conversion hot path, inside the apiserver's
+			// write, which is the worst place to find out.
+			return fmt.Errorf("listJoin: element %d coerced to %T, not string", i, s)
+		}
+		parts[i] = str
 	}
 	return setValue(ctx.output, o.stringPath, strings.Join(parts, o.separator))
 }

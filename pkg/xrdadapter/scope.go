@@ -18,6 +18,7 @@ package xrdadapter
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -142,7 +143,7 @@ func ResolveScope(xrd *unstructured.Unstructured) ScopeResolution {
 		switch Scope(declared) {
 		case ScopeLegacyCluster:
 			return ScopeResolution{Scope: ScopeLegacyCluster, Confidence: ConfidenceHigh,
-				Reason: fmt.Sprintf("spec.scope is LegacyCluster, corroborated by %s", signals)}
+				Reason: "spec.scope is LegacyCluster, corroborated by " + signals}
 		case "":
 			return ScopeResolution{Scope: ScopeLegacyCluster, Confidence: ConfidenceInferred,
 				Reason: fmt.Sprintf("spec.scope is absent, but %s can only exist on a LegacyCluster XRD", signals)}
@@ -158,7 +159,7 @@ func ResolveScope(xrd *unstructured.Unstructured) ScopeResolution {
 	switch Scope(declared) {
 	case ScopeNamespaced, ScopeCluster, ScopeLegacyCluster:
 		return ScopeResolution{Scope: Scope(declared), Confidence: ConfidenceHigh,
-			Reason: fmt.Sprintf("spec.scope is explicitly %s", declared)}
+			Reason: "spec.scope is explicitly " + declared}
 	case "":
 		// Offline only: anything that has been through admission carries a
 		// persisted scope. v1 defaults an absent scope to LegacyCluster and
@@ -206,9 +207,11 @@ func joinSignals(s []string) string {
 		return s[0]
 	default:
 		out := s[0]
+		var outSb209 strings.Builder
 		for _, x := range s[1 : len(s)-1] {
-			out += ", " + x
+			outSb209.WriteString(", " + x)
 		}
+		out += outSb209.String()
 		return out + " and " + s[len(s)-1]
 	}
 }

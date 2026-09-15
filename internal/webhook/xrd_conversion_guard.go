@@ -287,8 +287,15 @@ func applyConversionToXRD(xrd *unstructured.Unstructured, cfg *teraskyv1alpha1.X
 	// the one this operator would have applied is knowable here, and the
 	// controller reconciles it either way.
 	if existing, found, _ := unstructured.NestedString(xrd.Object, "spec", "conversion", "webhook", "clientConfig", "caBundle"); found && existing != "" {
-		clientConfig := conversion["webhook"].(map[string]any)["clientConfig"].(map[string]any)
-		clientConfig["caBundle"] = existing
+		// conversion is built a few lines above by this function, so the
+		// shape is known — but this is an admission handler, and a panic
+		// here fails open on every XRD write in the cluster. Navigate it
+		// defensively and skip the preservation rather than crash.
+		if webhookCfg, ok := conversion["webhook"].(map[string]any); ok {
+			if clientConfig, ok := webhookCfg["clientConfig"].(map[string]any); ok {
+				clientConfig["caBundle"] = existing
+			}
+		}
 	}
 	if err := unstructured.SetNestedMap(xrd.Object, conversion, "spec", "conversion"); err != nil {
 		return fmt.Errorf("setting spec.conversion: %w", err)

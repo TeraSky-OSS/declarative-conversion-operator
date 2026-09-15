@@ -82,7 +82,6 @@ func TestBuildTargets_AnalyzeAndConvert(t *testing.T) {
 		t.Fatalf("CRD categories = %v, want [%s]", got, Category)
 	}
 	for _, tgt := range targets {
-		tgt := tgt
 		t.Run(tgt.CRDName, func(t *testing.T) {
 			t.Parallel()
 			ruleSets, err := tgt.Config.ToRuleSets()

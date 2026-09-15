@@ -19,6 +19,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -301,7 +302,7 @@ func TestRunMigrateStorage_OneFailureDoesNotSkipRestAndBlocksPrune(t *testing.T)
 	dyn.PrependReactor("patch", "xwidgets", func(action clienttesting.Action) (bool, runtime.Object, error) {
 		p := action.(clienttesting.PatchAction)
 		if p.GetName() == "b" {
-			return true, nil, fmt.Errorf("apply conflict")
+			return true, nil, errors.New("apply conflict")
 		}
 		return false, nil, nil
 	})

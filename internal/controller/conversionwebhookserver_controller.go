@@ -377,7 +377,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		return err
 	}
 	args := []string{
-		fmt.Sprintf("--webhook-server-name=%s", server.Name),
+		"--webhook-server-name=" + server.Name,
 		"--tls-cert-dir=/tls",
 		fmt.Sprintf("--conversion-bind-address=:%d", webhookServerConversionPort),
 		fmt.Sprintf("--metrics-bind-address=:%d", webhookServerMetricsPort),

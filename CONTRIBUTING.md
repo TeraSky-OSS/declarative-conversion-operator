@@ -19,9 +19,21 @@ make manifests  # CRD + RBAC into config/
 make fmt
 make vet
 make test       # generate + manifests + fmt + vet + go test -race
+make lint       # golangci-lint, same config and pinned version as CI
 make bench      # pkg/engine + webhook-server microbenchmarks (see docs/operations/capacity.md)
 ```
 
+`make lint` runs the linter set in `.golangci.yml`, pinned to the same
+version the CI job uses. The set is deliberately narrow in both directions:
+it enables what this codebase actually gets wrong (`gosec` on the HTTP
+surfaces, `errorlint` on the wrapping, `bodyclose` on the CLI's live paths)
+and leaves out everything that would fight the house style — long
+explanatory comments and a few necessarily long strategy switches. `make
+lint-fix` applies what can be applied automatically.
+
+There is no baseline or exclusion file: the tree is clean, and the intent is
+that it stays that way. A finding that is genuinely wrong gets a `//nolint`
+**with a comment saying why** — a bare one will be asked about in review.
 
 Useful extras:
 

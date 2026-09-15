@@ -58,7 +58,6 @@ func buildKnownTree(schema *extv1.JSONSchemaProps) *knownTree {
 	}
 	t := &knownTree{children: make(map[string]*knownTree, len(schema.Properties))}
 	for name, propSchema := range schema.Properties {
-		propSchema := propSchema
 		t.children[name] = buildKnownTree(&propSchema)
 	}
 	return t

@@ -18,6 +18,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -274,7 +275,7 @@ type migrateTarget struct {
 // the entire reason anyone runs --prune-stored-versions.
 func RunMigrateStorage(ctx context.Context, dyn dynamic.Interface, opts MigrateStorageOptions) (*MigrateStorageReport, error) {
 	if (opts.XRDName == "") == (opts.CRDName == "") {
-		return nil, fmt.Errorf("exactly one of --xrd or --crd is required")
+		return nil, errors.New("exactly one of --xrd or --crd is required")
 	}
 
 	targets, warnings, err := resolveMigrateTargets(ctx, dyn, opts)
@@ -300,7 +301,7 @@ func RunMigrateStorage(ctx context.Context, dyn dynamic.Interface, opts MigrateS
 	if opts.PruneStoredVersions && opts.Namespace != "" {
 		for _, t := range targets {
 			if t.namespaced {
-				return nil, fmt.Errorf("--prune-stored-versions cannot be combined with --namespace: objects in other namespaces may still be stored at an older version")
+				return nil, errors.New("--prune-stored-versions cannot be combined with --namespace: objects in other namespaces may still be stored at an older version")
 			}
 		}
 	}

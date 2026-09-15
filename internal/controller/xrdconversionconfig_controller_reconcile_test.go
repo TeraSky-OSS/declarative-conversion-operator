@@ -18,7 +18,7 @@ package controller
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 
@@ -277,7 +277,7 @@ func TestXRDReconcile_Drift_FailClosed_RevertFailure_HonestStatus(t *testing.T) 
 	c := newFakeClient(cfg, server, secret).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Apply: func(ctx context.Context, c client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
-				return fmt.Errorf("injected apply failure")
+				return errors.New("injected apply failure")
 			},
 		}).
 		Build()

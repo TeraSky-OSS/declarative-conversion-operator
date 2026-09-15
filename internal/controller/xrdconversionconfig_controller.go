@@ -590,8 +590,11 @@ func (r *XRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, c
 // only configs assigned to that server, paced at enqueue.CWSConfigEnqueueQPS).
 func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &teraskyv1alpha1.XRDConversionConfig{}, TargetXRDNameIndex, func(obj client.Object) []string {
-		cfg := obj.(*teraskyv1alpha1.XRDConversionConfig)
-		if cfg.Spec.TargetXRD.Name == "" {
+		// Checked rather than asserted: an index function panicking takes
+		// the whole manager down, and this one runs on every object the
+		// informer sees.
+		cfg, ok := obj.(*teraskyv1alpha1.XRDConversionConfig)
+		if !ok || cfg.Spec.TargetXRD.Name == "" {
 			return nil
 		}
 		return []string{cfg.Spec.TargetXRD.Name}

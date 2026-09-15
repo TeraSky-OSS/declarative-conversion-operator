@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -176,7 +177,7 @@ func main() {
 	go certReloader.Run(ctx)
 
 	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		logger.Error(fmt.Errorf("cache sync failed"), "unable to sync cache before initial registry population")
+		logger.Error(errors.New("cache sync failed"), "unable to sync cache before initial registry population")
 		os.Exit(1)
 	}
 	if err := reconciler.InitialSync(ctx); err != nil {

@@ -17,6 +17,7 @@ limitations under the License.
 package xrdadapter
 
 import (
+	"errors"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -69,7 +70,7 @@ type GeneratedCRD struct {
 // and "which fields does Crossplane inject" answering to the same source.
 func GeneratedCRDNames(xrd *unstructured.Unstructured) ([]GeneratedCRD, error) {
 	if xrd == nil {
-		return nil, fmt.Errorf("xrdadapter: no XRD object")
+		return nil, errors.New("xrdadapter: no XRD object")
 	}
 	group, found, err := unstructured.NestedString(xrd.Object, "spec", "group")
 	if err != nil || !found || group == "" {

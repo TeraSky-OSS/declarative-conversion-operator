@@ -18,7 +18,7 @@ package cli
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sort"
 	"testing"
 
@@ -130,7 +130,7 @@ func TestFetchLiveSamples_ListError(t *testing.T) {
 	xrd := testXRD()
 	dyn := newFakeXWidgetClient()
 	dyn.PrependReactor("list", "xwidgets", func(action clienttesting.Action) (bool, runtime.Object, error) {
-		return true, nil, fmt.Errorf("boom: RBAC forbidden")
+		return true, nil, errors.New("boom: RBAC forbidden")
 	})
 
 	if _, err := FetchLiveSamples(context.Background(), dyn, xrd, "v2"); err == nil {

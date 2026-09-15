@@ -19,6 +19,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -212,10 +213,10 @@ func machineryPrefix(scope xrdadapter.Scope, role xrdadapter.GeneratedCRDRole) [
 // hub version.
 func RunRetarget(ctx context.Context, dyn dynamic.Interface, opts RetargetOptions) (*RetargetReport, error) {
 	if opts.XRDName == "" {
-		return nil, fmt.Errorf("--xrd is required")
+		return nil, errors.New("--xrd is required")
 	}
 	if opts.To == "" {
-		return nil, fmt.Errorf("--to is required")
+		return nil, errors.New("--to is required")
 	}
 
 	xrd, err := FetchLiveXRD(ctx, dyn, opts.XRDName)

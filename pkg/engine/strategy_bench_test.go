@@ -261,7 +261,6 @@ func BenchmarkConvert_PerStrategy(b *testing.B) {
 		b.Fatalf("perStrategyBenches has %d, want 29", len(cases))
 	}
 	for _, tc := range cases {
-		tc := tc
 		hub, spoke := tc.hub, tc.spoke
 		plan, diags, err := Compile(RuleSet{HubVersion: "v2", SpokeVersion: "v1", Rules: tc.rules}, &hub, &spoke)
 		if err != nil {

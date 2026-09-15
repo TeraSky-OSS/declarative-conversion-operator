@@ -19,7 +19,7 @@ package cli
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 	"testing"
 
@@ -252,4 +252,4 @@ func TestRunCrossplaneStatus_ConfigListFailureIsNotReportedAsNone(t *testing.T) 
 	}
 }
 
-var errForbidden = fmt.Errorf("user cannot list resource")
+var errForbidden = errors.New("user cannot list resource")

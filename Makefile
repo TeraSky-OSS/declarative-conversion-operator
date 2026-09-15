@@ -50,6 +50,14 @@ vet: ## Run go vet against code.
 test: generate manifests fmt vet ## Run unit tests.
 	go test ./... -race -count=1
 
+.PHONY: lint
+lint: golangci-lint ## Run golangci-lint with the repository's .golangci.yml (the same config and version CI uses).
+	$(GOLANGCI_LINT) run ./...
+
+.PHONY: lint-fix
+lint-fix: golangci-lint ## Run golangci-lint with --fix. Not every linter can autofix; the rest still have to be read.
+	$(GOLANGCI_LINT) run ./... --fix
+
 .PHONY: bench
 bench: ## Run microbenchmarks (times are not asserted; see docs/operations/capacity.md).
 	go test -run=^$$ -bench=. -benchmem -count=1 -benchtime=200ms ./pkg/engine/ ./internal/webhookserver/
@@ -149,6 +157,11 @@ helm-template: ## Render the Helm chart with default values.
 PROMTOOL ?= $(LOCALBIN)/promtool
 PROMTOOL_VERSION ?= 2.54.1
 
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
+# Must match the version in .github/workflows/ci.yml. .golangci.yml is
+# written against this schema version; a different one fails the run
+# outright rather than degrading, so the three move together.
+GOLANGCI_LINT_VERSION ?= v2.12.2
 
 .PHONY: promtool
 promtool: $(LOCALBIN) ## Download promtool into bin/ if not already on PATH or in LOCALBIN.
@@ -167,6 +180,15 @@ promtool: $(LOCALBIN) ## Download promtool into bin/ if not already on PATH or i
 		cp "$$TMP"/prometheus-$(PROMTOOL_VERSION).$${OS}-$${ARCH}/promtool "$(PROMTOOL)"; \
 		chmod +x "$(PROMTOOL)"; \
 		rm -rf "$$TMP"; \
+	fi
+
+.PHONY: golangci-lint
+golangci-lint: ## Install golangci-lint at the pinned version into bin/ if it is not already there.
+	@if [ -x "$(GOLANGCI_LINT)" ] && $(GOLANGCI_LINT) version 2>/dev/null | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))"; then \
+		echo "Using $(GOLANGCI_LINT)"; \
+	else \
+		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION) into $(LOCALBIN)"; \
+		GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
 	fi
 
 .PHONY: test-prometheus

@@ -1,0 +1,125 @@
+# golangci-lint configuration.
+#
+# Pinned to the version the CI job runs (.github/workflows/ci.yml) — a config
+# written against a different schema version fails the run outright rather
+# than degrading, so the two have to move together.
+#
+# The selection below is deliberate in both directions. What is enabled is
+# the class of defect this codebase actually produces: an HTTP server on the
+# apiserver's admission path, a lot of error wrapping, and a CLI that makes
+# live HTTP calls. What is disabled is every linter that would object to the
+# way this code is deliberately written — long explanatory comments, and a
+# few necessarily long switch statements in the strategy resolvers. A lint
+# config that produces noise trains people to ignore the tool, which costs
+# more than it finds.
+version: "2"
+
+issues:
+  # Report everything. The defaults (50 per linter, 3 per identical message)
+  # hide findings, which turns "the lint job is green" into a statement about
+  # the truncation limit rather than about the tree.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    # G112 (slowloris: no ReadHeaderTimeout) is the reason this is here at
+    # all — it would have caught the missing timeouts on both HTTP servers.
+    # G114 (bare http.ListenAndServe) guards the same surface.
+    - gosec
+    # This code wraps errors heavily and inspects them with errors.Is/As.
+    # A %v where %w was meant silently breaks every caller downstream.
+    - errorlint
+    # The CLI's --live paths make real HTTP calls; a leaked body is a leaked
+    # connection.
+    - bodyclose
+    # Go 1.22+ loop-variable semantics. Cheap insurance on the goroutine
+    # sites that exist.
+    - copyloopvar
+    # Returning a nil error alongside a nil result, or after checking one.
+    - nilerr
+    - nilnil
+    # fmt.Sprintf on paths that run per ConversionReview.
+    - perfsprint
+    # http.MethodPost / http.StatusOK over string and integer literals.
+    - usestdlibvars
+    - misspell
+    - godot
+    - whitespace
+    # A small curated subset, configured below — not the whole thing.
+    - revive
+
+  # Explicitly NOT enabled: lll, funlen, gocyclo, cyclop, wsl, varnamelen,
+  # nlreturn, exhaustruct, depguard. Each would fire hundreds of times on
+  # code whose shape is a deliberate choice: the long comments are the
+  # documentation, and the strategy resolvers are long switches because the
+  # alternative is indirection that hides the dispatch.
+
+  settings:
+    errcheck:
+      # Deliberate discards are written as `_ =` throughout; the ones that
+      # matter are checked.
+      check-type-assertions: true
+      check-blank: false
+    gosec:
+      excludes:
+        # G104 duplicates errcheck.
+        - G104
+    govet:
+      enable:
+        - nilness
+    misspell:
+      # `strat` is this codebase's abbreviation for a conversion strategy,
+      # not a typo for `start`. It appears as an identifier, which misspell
+      # does not distinguish from prose.
+      ignore-rules:
+        - strat
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    # staticcheck is left on its golangci default check set, which excludes
+    # the ST10xx comment-form rules (ST1000, ST1021, ST1022 and friends).
+    # Those would fire on a deliberate house style — `// TypeName: what it
+    # is`, and package comments only where a package has something to say —
+    # and rewriting ~20 doc comments to satisfy a form rule is exactly the
+    # kind of churn that makes a lint config get ignored.
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test fixtures are not attack surface, and a test that ignores an
+      # error it has already asserted on is clearer than one that does not.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - bodyclose
+      # Generated deepcopy code is not ours to style.
+      - path: zz_generated\..*\.go
+        linters:
+          - godot
+          - revive
+          - staticcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/terasky-oss/declarative-conversion-operator

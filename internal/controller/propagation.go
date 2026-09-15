@@ -164,7 +164,7 @@ func (r *XRDConversionConfigReconciler) verifyPropagation(ctx context.Context, c
 		// still serving the old bundle", which breaks conversion with a
 		// TLS error rather than a missing webhook.
 		setPropagationCondition(cfg, metav1.ConditionFalse, teraskyv1alpha1.ReasonCABundleStale,
-			fmt.Sprintf("%s carries a stale caBundle; conversion requests will fail TLS verification until Crossplane re-renders it", strings.Join(stale, ", ")))
+			strings.Join(stale, ", ")+" carries a stale caBundle; conversion requests will fail TLS verification until Crossplane re-renders it")
 	default:
 		r.observePropagationLag(cfg)
 		setPropagationCondition(cfg, metav1.ConditionTrue, teraskyv1alpha1.ReasonPropagated,

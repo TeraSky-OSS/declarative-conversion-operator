@@ -17,6 +17,7 @@ limitations under the License.
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -45,10 +46,10 @@ type RehubOptions struct {
 // --to must already be a spoke in the input config.
 func RunRehub(opts RehubOptions) (any, error) {
 	if opts.To == "" {
-		return nil, fmt.Errorf("--to is required: name the version that becomes the new hub")
+		return nil, errors.New("--to is required: name the version that becomes the new hub")
 	}
 	if opts.XRDPath != "" && opts.CRDPath != "" {
-		return nil, fmt.Errorf("--xrd and --crd are mutually exclusive")
+		return nil, errors.New("--xrd and --crd are mutually exclusive")
 	}
 	kind, err := PeekConfigKind(opts.ConfigPath)
 	if err != nil {

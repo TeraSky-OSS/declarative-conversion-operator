@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -61,7 +62,13 @@ import (
 // when the object is deleted. With the lock, a concurrent write makes this
 // patch fail with a conflict and the reconcile retries against fresh state.
 func patchFinalizers(ctx context.Context, c client.Client, obj client.Object, mutate func() bool) error {
-	orig := obj.DeepCopyObject().(client.Object)
+	orig, ok := obj.DeepCopyObject().(client.Object)
+	if !ok {
+		// Unreachable: DeepCopyObject on a client.Object returns the same
+		// concrete type. Checked anyway because this runs inside a
+		// reconcile, where a panic costs the whole manager.
+		return fmt.Errorf("patchFinalizers: %T does not deep-copy to a client.Object", obj)
+	}
 	if !mutate() {
 		return nil
 	}

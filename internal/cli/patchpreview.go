@@ -18,6 +18,7 @@ package cli
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -55,10 +56,10 @@ type PatchPreviewOptions struct {
 // ever constructed, so it cannot touch a cluster even by accident.
 func RunPatchPreview(opts PatchPreviewOptions) ([]byte, error) {
 	if opts.ServiceName == "" || opts.ServiceNamespace == "" {
-		return nil, fmt.Errorf("--service-name and --service-namespace are required: patch-preview never contacts a cluster to look them up")
+		return nil, errors.New("--service-name and --service-namespace are required: patch-preview never contacts a cluster to look them up")
 	}
 	if opts.CABundle == "" {
-		return nil, fmt.Errorf("--ca-bundle is required: the patch the operator applies always carries one")
+		return nil, errors.New("--ca-bundle is required: the patch the operator applies always carries one")
 	}
 	caBundle := normalizeCABundle(opts.CABundle)
 	port := opts.Port

@@ -439,8 +439,11 @@ func (r *CRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, c
 // XRD controller this watch is never at risk of failing manager startup).
 func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &teraskyv1alpha1.CRDConversionConfig{}, TargetCRDNameIndex, func(obj client.Object) []string {
-		cfg := obj.(*teraskyv1alpha1.CRDConversionConfig)
-		if cfg.Spec.TargetCRD.Name == "" {
+		// Checked rather than asserted: an index function panicking takes
+		// the whole manager down, and this one runs on every object the
+		// informer sees.
+		cfg, ok := obj.(*teraskyv1alpha1.CRDConversionConfig)
+		if !ok || cfg.Spec.TargetCRD.Name == "" {
 			return nil
 		}
 		return []string{cfg.Spec.TargetCRD.Name}
