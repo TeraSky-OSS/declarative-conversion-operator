@@ -186,7 +186,7 @@ func TestObjectLabel(t *testing.T) {
 // report keyed on that comparison said nothing — so a bounded run over a
 // larger population read as exhaustive in every output format.
 func TestStreamLiveSamples_EarlyStopIsReportedAsSampling(t *testing.T) {
-	const population, cap = 25, 5
+	const population, keep = 25, 5
 
 	gvr := schema.GroupVersionResource{Group: "example.org", Version: "v1", Resource: "xthings"}
 	var objs []runtime.Object
@@ -201,14 +201,14 @@ func TestStreamLiveSamples_EarlyStopIsReportedAsSampling(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{gvr: "XThingList"}, objs...)
 
-	s := newSampler(SamplingOptions{MaxSamples: cap, Strategy: SampleFirst})
+	s := newSampler(SamplingOptions{MaxSamples: keep, Strategy: SampleFirst})
 	if err := streamLiveSamples(context.Background(), dyn, gvr, "v1", "", s, "xthings.example.org", "composite"); err != nil {
 		t.Fatalf("streaming: %v", err)
 	}
 	samples, rep := s.result()
 
-	if len(samples) != cap {
-		t.Fatalf("collected %d samples, want the cap of %d", len(samples), cap)
+	if len(samples) != keep {
+		t.Fatalf("collected %d samples, want the cap of %d", len(samples), keep)
 	}
 	if rep == nil {
 		t.Fatal("a bounded run over a larger population reported no sampling, so it reads as exhaustive")
