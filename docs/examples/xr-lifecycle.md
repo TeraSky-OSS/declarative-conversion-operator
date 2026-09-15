@@ -58,10 +58,32 @@ Hub-promotion safety (`KeepServingStale`) is documented in
 [XRDConversionConfig: Changing the hub version](../configuration/xrdconversionconfig.md#changing-the-hub-version).
 Use [`convctl rehub`](../cli.md#convctl-rehub) as the draft step when rewriting rules for a new hub.
 
-To retarget existing XRs without a per-object `compositionRef` patch, see the
-[GitOps example](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops)
-and [`convctl generate kyverno`](../cli.md#convctl-generate-kyverno). Do not use
-XRD `enforcedCompositionRef` for hub flips — the field is immutable.
+To retarget existing XRs without a per-object `compositionRef` patch there are
+two supported paths, and which one fits depends on whether the cluster runs
+Kyverno:
+
+- **With Kyverno:** [`convctl generate kyverno`](../cli.md#convctl-generate-kyverno)
+  drafts MutatingPolicies that clear the pin and re-select on both admission and
+  existing objects. See the
+  [GitOps example](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops).
+- **Without Kyverno:** [`convctl retarget`](../cli.md#convctl-retarget) does the
+  same rewrite directly — one patch per object, `--dry-run` and `--canary` to
+  prove it on a subset first. It is scope-aware (`spec.crossplane.*` versus the
+  bare `spec.*` layout) and covers a `LegacyCluster` XRD's claims alongside its
+  composites.
+
+Both carry the same caveat: once the pin is cleared, Crossplane picks at random
+among every Composition the selector matches, so a version-only selector is safe
+only with one Composition per hub version.
+
+At any point in the sequence,
+[`convctl crossplane status <xrd>`](../cli.md#convctl-crossplane-status) prints
+where the migration actually is — per version served/referenceable/deprecated
+and live object counts, both generated CRDs' `storedVersions` and conversion
+strategy, which Composition each XR is pinned to, and the conversion config's
+conditions.
+
+Do not use XRD `enforcedCompositionRef` for hub flips — the field is immutable.
 `--gitops-engine flux|argo` adds GitHub PRs and an in-cluster self-hosted
 Actions runner so CI can run `convctl test --live`; `migrate-storage` stays
 a local command. `--delete-repo` with `--cleanup` only deletes a repo the

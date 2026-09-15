@@ -53,6 +53,7 @@ cluster. Every command works against either resource type:
 	}
 	root.AddCommand(
 		newValidateCmd(), newAnalyzeCmd(), newTestCmd(), newDiffCmd(),
+		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
 	)
