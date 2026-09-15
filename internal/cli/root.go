@@ -57,7 +57,7 @@ cluster. Every command works against either resource type:
 		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
-		newCompatCmd(),
+		newCompatCmd(), newVersionsCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -613,4 +613,93 @@ func knownCompatClass(s string) bool {
 		return true
 	}
 	return false
+}
+
+func newVersionsCmd() *cobra.Command {
+	var (
+		xrdPath, crdPath, configPath, output, checkUnserve string
+		kubeconfig, kubeContext                            string
+		maxSamples                                         int
+	)
+	cmd := &cobra.Command{
+		Use:   "versions",
+		Short: "Inventory a target's versions and answer whether one is safe to stop serving",
+		Long: `Answer "is it safe to drop this version yet?" in one table.
+
+Deciding that requires knowing four things that live in four different
+places: whether anything is still stored at the version, whether anything is
+still writing it, whether it is marked deprecated, and whether a spoke rule
+set exists for it.
+
+LAST WRITTEN AT is the column that usually decides. "Nothing is stored at v1"
+says the data has moved; it says nothing about the controller that still PUTs
+v1 objects every reconcile and starts failing the moment the version stops
+being served. Each object's managedFields records the apiVersion its writers
+used, so the answer is already in the cluster — aggregated here by manager,
+so the output says who.
+
+A claim-offering XRD generates two CRDs and objects are counted across both.
+
+--check-unserve <version> turns the command into a gate on stopping to SERVE
+a version -- not on removing its version block, which is a later step with
+its own compatibility check. It exits non-zero with the reasons when that
+version is still stored, still written, still the hub, or could not be read
+at all.
+
+LIVE OBJECTS is inventory, not evidence about one version, and is not a
+blocker: the apiserver converts on read, so a list at any served version
+returns every object, and the count is identical on every served row.
+
+Read-only. The object walk paginates and is bounded by --max-samples; a count
+shown as "N+" means the bound was hit and the answer is incomplete, and "N?"
+means the objects could not be listed at all.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			}
+			rep, err := RunVersions(cmd.Context(), VersionsOptions{
+				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath,
+				Kubeconfig: kubeconfig, KubeContext: kubeContext,
+				MaxSamples: maxSamples, CheckUnserve: checkUnserve,
+			})
+			if err != nil {
+				return err
+			}
+			if output == "json" {
+				if err := writeJSON(cmd, rep); err != nil {
+					return err
+				}
+			} else {
+				rep.WriteTable(cmd.OutOrStdout())
+			}
+
+			if checkUnserve != "" {
+				blockers := rep.UnserveBlockers(checkUnserve)
+				out := cmd.OutOrStdout()
+				if len(blockers) == 0 {
+					_, _ = fmt.Fprintf(out, "\n%s is safe to stop serving.\n", checkUnserve)
+					return nil
+				}
+				_, _ = fmt.Fprintf(out, "\n%s is NOT safe to stop serving:\n", checkUnserve)
+				for _, b := range blockers {
+					_, _ = fmt.Fprintf(out, "  - %s\n", b)
+				}
+				exitCode = ExitTestFailure
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to the XRD")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to the CRD")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to the conversion config, to populate the SPOKE RULES column")
+	cmd.Flags().StringVar(&checkUnserve, "check-unserve", "", "Exit non-zero, with reasons, if this version is not yet safe to stop serving")
+	cmd.Flags().IntVar(&maxSamples, "max-samples", 0, "Bound the object walk (default 5000). A count shown as N+ means the bound was hit")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file")
+	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
 }

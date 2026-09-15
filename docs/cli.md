@@ -329,6 +329,75 @@ Here is every threshold against every outcome:
 
 `--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
 
+## `convctl versions`
+
+One table that answers *is it safe to drop this version yet?*
+
+Deciding that requires four facts that live in four different places: is
+anything still stored at it, is anything still *writing* it, is it marked
+deprecated, and does a spoke rule set exist for it.
+
+```console
+$ convctl versions --xrd xrd.yaml --config config.yaml
+
+XRD: xwidgets.example.org	Config: widgets-conversion
+
+VERSION  SERVED  HUB  DEPRECATED  SPOKE RULES  LIVE OBJECTS  STORED  LAST WRITTEN AT
+v3       yes     yes  no          yes          412           yes     argocd @ 2026-06-01T09:14:02Z
+v2       yes     no   no          yes          0             no      -
+v1       yes     no   yes         yes          3             yes     legacy-reconciler @ 2026-05-30T22:10:44Z
+
+v1 is deprecated: use v3; v1 will stop being served in the next release
+```
+
+| Column | Source |
+|---|---|
+| `SERVED` | XRD `spec.versions[].served` |
+| `HUB` | `referenceable` / `storage` |
+| `DEPRECATED` | `deprecated` + `deprecationWarning` |
+| `SPOKE RULES` | whether the conversion config has a spoke entry |
+| `LIVE OBJECTS` | instance count, across **both** generated CRDs on a claim-offering XRD |
+| `LAST WRITTEN AT` | derived from each object's `managedFields[].apiVersion` |
+| `STORED` | whether the version appears in `status.storedVersions` |
+
+**`LAST WRITTEN AT` is usually the one that decides.** "Nothing is stored at
+v1" says the data has moved; it says nothing about the controller that still
+PUTs v1 objects every reconcile and starts failing the moment the version
+stops being served. Each object's `managedFields` records the apiVersion its
+writers used, so the answer is already in the cluster — aggregated here by
+manager, so the output says *who*, not just *that*.
+
+Crossplane's own `deprecated` / `deprecationWarning` are per-version fields
+copied into the generated CRD by `xcrd.genCrdVersion`, and nothing in this
+project surfaced them until now.
+
+A count followed by `+` hit the sample bound (`--max-samples`); a count
+followed by `?` means the objects at that version **could not be listed** —
+RBAC, a timeout, anything that is not "the apiserver does not serve this
+version". The row then says so underneath, and `--check-unserve` treats it as
+a blocker. This is the one command where mistaking *"I could not look"* for
+*"there are none"* unserves a version the fleet is still reading.
+
+### As a gate
+
+```console
+$ convctl versions --xrd xrd.yaml --check-unserve v1
+
+v1 is NOT safe to stop serving:
+  - it appears in status.storedVersions, so the apiserver believes objects are still persisted at it — run `convctl migrate-storage` first
+  - 3 live object(s) are readable at it
+  - still actively written by: legacy-reconciler
+```
+
+Exits non-zero with the reasons, so it drops into a pipeline or into
+[`convctl plan`](#convctl-plan)'s gate for the un-serve step.
+
+Read-only throughout. The object walk paginates and is bounded by
+`--max-samples` (default 5000): asking whether a version is safe to drop
+should not be a way to take the apiserver down. A count shown as `N+` means
+the bound was hit, and an incomplete walk is itself reported as a blocker
+rather than being allowed to read as "nothing is there".
+
 ## `convctl compat`
 
 A single command a branch-protection rule can require: *you may not merge a
