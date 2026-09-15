@@ -102,7 +102,7 @@ jobs:
       # distroless base would block every release until upstream moves,
       # which trains people to bypass the gate rather than fix anything.
       - name: Scan image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
           format: table
