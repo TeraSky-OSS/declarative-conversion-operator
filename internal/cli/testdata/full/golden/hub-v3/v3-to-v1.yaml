@@ -1,0 +1,58 @@
+apiVersion: example.org/v1
+kind: Widget
+metadata:
+  labels:
+    tier: gold
+  name: sample-hub
+spec:
+  allowedCIDRs:
+  - 10.0.0.0/8
+  - 192.168.0.0/16
+  bitHigh: 4
+  bitLow: 1
+  computeUnits: 1
+  contact: Jane Doe <jane@example.com>
+  cpuLimit: "4"
+  cpuMillis: 500
+  description: Production widget cluster in us-east-1
+  diskSize: 50Gi
+  dnsServers:
+  - 8.8.8.8
+  - 1.1.1.1
+  endpoints:
+    api:
+      url: https://api.example.com
+    web:
+      url: https://web.example.com
+  envTag: prod
+  extraLabels:
+    application: widget
+    region: us-east-1
+  legacyFlag: true
+  memoryLimit: 16Gi
+  memoryMB: 3000
+  network:
+    cidr: 10.0.0.0/16
+  priority: 5
+  regions:
+  - name: us-east-1
+  replicaCount: 3
+  size: Large
+  storageGB: "500"
+  teamTag: platform
+  tierLimits:
+  - limit: "1000"
+    tier: gold
+  - limit: "500"
+    tier: silver
+  timeoutSeconds: 300
+  volumes:
+  - name: data
+    size: "100"
+  - name: logs
+    size: "20"
+  zone:
+    name: us-east-1a
+status:
+  observedGeneration: 5
+  phase: Ready

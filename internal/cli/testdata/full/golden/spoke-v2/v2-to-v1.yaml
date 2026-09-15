@@ -1,0 +1,51 @@
+apiVersion: example.org/v1
+kind: Widget
+metadata:
+  annotations:
+    xrd.example.org/operator-note: '"v2 ops note"'
+  labels:
+    tier: silver
+  name: sample-v2
+spec:
+  bitHigh: 2
+  bitLow: 16
+  computeUnits: 1
+  contact: Alex Rivera <alex@example.com>
+  cpuLimit: "2"
+  cpuMillis: 250
+  description: Production widget cluster in us-east-1
+  diskSize: 25Gi
+  dnsServers:
+  - 9.9.9.9
+  - 4.2.2.2
+  endpoints:
+    admin:
+      url: https://admin.example.com
+  envTag: staging
+  extraLabels:
+    application: gadget
+    region: us-west-1
+  legacyFlag: false
+  memoryLimit: 8Gi
+  memoryMB: 2048
+  network:
+    cidr: 10.1.0.0/16
+  priority: 9
+  regions:
+  - name: us-west-1
+  replicaCount: 2
+  size: Medium
+  storageGB: "256"
+  teamTag: growth
+  tierLimits:
+  - limit: "100"
+    tier: bronze
+  timeoutSeconds: 60
+  volumes:
+  - name: cache
+    size: "50"
+  zone:
+    name: us-west-1b
+status:
+  observedGeneration: 2
+  phase: Provisioning

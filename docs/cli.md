@@ -89,6 +89,74 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 
 Each sample's asserted starting version is inferred from its own `apiVersion` — no separate index file needed.
 
+### Golden-corpus testing (`--record` / `--golden`)
+
+When a conversion config changes, a reviewer sees a YAML diff of the rules
+and a green check. Neither shows **what the change does to real objects**,
+which is the only thing that matters.
+
+`--record` writes the conversion result for every sample on every path into a
+corpus you commit alongside the config:
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples --record ./golden
+GOLDEN CORPUS: recorded 6 conversion(s) into ./golden
+
+$ find golden -type f
+golden/manifest.yaml
+golden/hub-v3/v3-to-v1.yaml
+golden/hub-v3/v3-to-v2.yaml
+golden/spoke-v1/v1-to-v2.yaml
+...
+```
+
+One object per file, named `<sample>/<from>-to-<to>.yaml`, so a change shows
+up in exactly the files it affects. Output is byte-stable: keys are sorted,
+numbers are formatted deterministically, and nothing carries a timestamp — a
+re-record that reshuffled keys would bury the real change in noise.
+
+`--golden` replays it and fails on any difference:
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples --golden ./golden
+GOLDEN CORPUS: ./golden — 1 difference(s)
+  KIND     FILE                  DETAIL
+  changed  hub-v3/v3-to-v1.yaml  spec.cpuLimit
+```
+
+**The PR diff then *is* the behavioural change.** A rule edit that alters
+output shows the affected objects and fields, in review, before merge.
+
+Three failures, each with its own remedy, so they are never collapsed into
+"the corpus does not match":
+
+| Kind | Means | Remedy |
+|---|---|---|
+| `changed` | a converted value differs; the fields are named | confirm it is intended, then re-record |
+| `missing` | a conversion produced output with no golden | re-record, or add the sample to the corpus |
+| `orphaned` | a golden nothing produces any more | re-record if the path was dropped deliberately |
+
+The corpus carries a `manifest.yaml` recording the plan hash, schema hash and
+convctl version. A mismatch is a **loud warning, not a failure** — the corpus
+may legitimately predate a config edit, and the field diffs are the real
+evidence either way.
+
+Drift fails the run regardless of `--fail-on`. That threshold grades
+conversion quality; a corpus mismatch is a fact rather than a judgement, and
+a gate `--fail-on none` could switch off would not be a gate.
+
+`--record` and `--golden` are mutually exclusive.
+
+#### Recording from live objects
+
+`--live --record` builds the corpus from what is actually in the cluster —
+the highest-value form, because every future config change is then graded
+against real data with no cluster access and no secrets in CI.
+
+> [!WARNING]
+> A corpus recorded from live objects contains real field values, which may
+> include sensitive data. Review it before committing.
+
 ### Validating the converted output (`--validate-output`)
 
 `convctl test` round-trips every sample and diffs the result. That proves the

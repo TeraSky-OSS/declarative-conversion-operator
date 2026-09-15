@@ -56,6 +56,18 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # This repo dogfoods its own golden corpus: replaying the committed
+      # one proves an engine change that alters conversion output shows up
+      # as a reviewable diff rather than as a surprise in production.
+      - name: Replay the committed golden corpus
+        run: |
+          go run ./cmd/convctl test \
+            --xrd internal/cli/testdata/full/xrd.yaml \
+            --config internal/cli/testdata/full/config.yaml \
+            --samples internal/cli/testdata/full/samples \
+            --golden internal/cli/testdata/full/golden \
+            --quiet
+
       - name: go build
         run: go build ./...
 

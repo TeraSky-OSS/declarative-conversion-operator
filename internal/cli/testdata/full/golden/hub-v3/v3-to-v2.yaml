@@ -1,0 +1,57 @@
+apiVersion: example.org/v2
+kind: Widget
+metadata:
+  annotations:
+    xrd.example.org/description: '"Production widget cluster in us-east-1"'
+  name: sample-hub
+spec:
+  allowedCIDRsCSV: 10.0.0.0/8,192.168.0.0/16
+  contactEmail: jane@example.com
+  contactName: Jane Doe
+  cpuRequest: 500m
+  diskSizeUnit: Gi
+  diskSizeValue: 50
+  dnsServersCSV: 8.8.8.8,1.1.1.1
+  endpoints:
+  - name: web
+    url: https://web.example.com
+  - name: api
+    url: https://api.example.com
+  extraLabels:
+    app: widget
+    region: us-east-1
+  legacyFlagV2: true
+  limits:
+    cpu: "4"
+    memory: 16Gi
+  limitsByTier:
+    gold:
+      limit: "1000"
+    silver:
+      limit: "500"
+  memoryGB: 3
+  networkCIDR: 10.0.0.0/16
+  packed: 1025
+  primaryRegion:
+    name: us-east-1
+  priority: "5"
+  replicas:
+    count: 3
+  schemaVersion: v2
+  size: L
+  storageSize: "500"
+  tags:
+    env: prod
+    team: platform
+  tier: gold
+  timeout: 5m
+  volumes:
+  - label: data
+    sizeGB: "100"
+  - label: logs
+    sizeGB: "20"
+  zones:
+  - name: us-east-1a
+status:
+  observedGeneration: 5
+  state: Ready

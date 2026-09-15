@@ -169,6 +169,7 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
+		recordDir, goldenDir                                                 string
 		skipIdentity, strict, live, quiet, verifyPropagation, validateOutput bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext, kubeconfigDir                               string
@@ -244,6 +245,9 @@ results are collected by sample index, never by completion order.`,
 			if verifyPropagation && !live {
 				return errors.New("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
 			}
+			if recordDir != "" && goldenDir != "" {
+				return errors.New("--record and --golden are mutually exclusive: recording while comparing would compare a corpus against itself")
+			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
@@ -252,6 +256,8 @@ results are collected by sample index, never by completion order.`,
 				Concurrency: concurrency, Quiet: quiet,
 				VerifyPropagation: verifyPropagation,
 				ValidateOutput:    validateOutput,
+				RecordDir:         recordDir,
+				GoldenDir:         goldenDir,
 			}
 			targets, err := resolveLiveTargets(opts)
 			if err != nil {
@@ -308,6 +314,8 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
+	cmd.Flags().StringVar(&recordDir, "record", "", "Write the conversion result for every sample on every path into a golden corpus at this directory, plus a manifest recording the plan hash, schema hash and convctl version")
+	cmd.Flags().StringVar(&goldenDir, "golden", "", "Replay a corpus recorded by --record and fail on any difference, reporting which fields changed. Mutually exclusive with --record")
 	cmd.Flags().BoolVar(&validateOutput, "validate-output", false, "Validate every converted object against the destination version's OpenAPI schema, using the apiserver's own validator. A violation is an error, not a loss. Off by default this release; the default is planned to flip")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
@@ -461,6 +469,13 @@ func writeTestOutput(cmd *cobra.Command, output, outputFile, failOn string, stri
 }
 
 func decideExitCode(rep *Report, failOn string, strict bool) int {
+	// Golden drift is checked before --fail-on none, deliberately. The
+	// threshold grades conversion quality; a corpus mismatch says the
+	// output changed, which is a fact rather than a judgement, and a gate
+	// that --fail-on none could switch off would not be a gate.
+	if rep.Golden != nil && rep.Golden.driftFatal() {
+		return ExitTestFailure
+	}
 	if failOn == failOnNone {
 		return ExitOK
 	}

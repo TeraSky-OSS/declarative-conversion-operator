@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,6 +75,17 @@ type TestOptions struct {
 	// Off by default: turning it on would make existing green pipelines
 	// red on first upgrade. The default flips in a later release.
 	ValidateOutput bool
+
+	// RecordDir writes the conversion result for every sample on every
+	// path into a golden corpus, and GoldenDir replays one. A committed
+	// corpus turns the next rule change into a reviewable diff: "this
+	// changes the output for these three objects, in these fields", which
+	// a YAML diff of the rules plus a green check cannot show.
+	//
+	// Mutually exclusive: recording while comparing would compare a corpus
+	// against itself.
+	RecordDir string
+	GoldenDir string
 
 	// VerifyPropagation additionally checks, against the same cluster,
 	// that every CRD Crossplane generates from the target XRD actually
@@ -294,6 +306,14 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 // whether the target is an XRD or a native CRD, once a Router and an
 // AnalyzeReport already exist.
 func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, injected []engine.FieldPath, start time.Time) (*Report, error) {
+	var corp *corpus
+	switch {
+	case opts.RecordDir != "":
+		corp = newCorpus(opts.RecordDir, "record")
+	case opts.GoldenDir != "":
+		corp = newCorpus(opts.GoldenDir, "golden")
+	}
+
 	var validator *outputValidator
 	if opts.ValidateOutput {
 		var err error
@@ -342,7 +362,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets, validator)
+				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets, validator, corp)
 
 				mu.Lock()
 				results[i] = sr
@@ -378,6 +398,25 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		}
 	}
 
+	if corp != nil {
+		if err := corp.finish(GoldenManifest{
+			ConvctlVersion: Version,
+			PlanHash:       hashPlan(report, hubVersion),
+			SchemaHash:     hashSchemas(versions),
+			Resource:       resourceName,
+			Config:         configName,
+			HubVersion:     hubVersion,
+		}); err != nil {
+			return nil, err
+		}
+		rep.Golden = &GoldenReport{
+			Dir:     corp.dir,
+			Mode:    corp.mode,
+			Written: corp.written,
+			Drifts:  corp.drifts,
+		}
+	}
+
 	rep.Meta.DurationMs = float64(time.Since(start).Microseconds()) / 1000.0
 	return rep, nil
 }
@@ -397,7 +436,7 @@ type sampleCounts struct {
 // a sample stay sequential: they're cheap next to the coordination cost,
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
-func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string, validator *outputValidator) (SampleResult, sampleCounts, map[string]int) {
+func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string, validator *outputValidator, corp *corpus) (SampleResult, sampleCounts, map[string]int) {
 	sr := SampleResult{File: s.File, AssertedVersion: s.Version, CRD: s.CRD, CRDRole: s.CRDRole}
 	var counts sampleCounts
 	usage := map[string]int{}
@@ -420,7 +459,7 @@ func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, l
 		if opts.SkipIdentity && target == s.Version {
 			continue
 		}
-		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage, validator)
+		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage, validator, corp)
 		sr.Paths = append(sr.Paths, pr)
 		counts.pathsTested++
 		switch pr.Result {
@@ -529,7 +568,23 @@ func touchedSpokes(from, to, hub string) []string {
 	return out
 }
 
-func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, target string, ruleUsage map[string]int, validator *outputValidator) PathResult {
+// withDestAPIVersion returns a shallow copy of converted carrying the
+// destination apiVersion, derived from the source object's own group.
+func withDestAPIVersion(converted, source map[string]any, to string) map[string]any {
+	av, _ := source["apiVersion"].(string)
+	i := strings.LastIndex(av, "/")
+	if i <= 0 {
+		return converted
+	}
+	out := make(map[string]any, len(converted)+1)
+	for k, v := range converted {
+		out[k] = v
+	}
+	out["apiVersion"] = av[:i] + "/" + to
+	return out
+}
+
+func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, target string, ruleUsage map[string]int, validator *outputValidator, corp *corpus) PathResult {
 	start := time.Now()
 	pr := PathResult{From: s.Version, To: target}
 
@@ -555,6 +610,16 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		pr.TimingMicros = time.Since(start).Microseconds()
 		return pr
 	}
+
+	// The corpus records the forward result — what this conversion
+	// actually produces — rather than the round-trip, which is the thing a
+	// reviewer needs to see change.
+	//
+	// Stamped with the destination apiVersion, on a copy: engine.Convert
+	// leaves apiVersion to its caller, so a golden without it could not
+	// tell a conversion to the wrong version from a correct one. The copy
+	// is what keeps that stamp out of the object the round-trip used.
+	corp.observe(s.File, s.Version, target, withDestAPIVersion(forward, s.Object, target))
 
 	// Validate the forward result against the destination version's own
 	// schema before looking at round-trip fidelity. A round-trip diff says

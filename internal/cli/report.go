@@ -36,6 +36,57 @@ type Issue struct {
 	Sample string `json:"sample,omitempty"`
 }
 
+// write renders the corpus outcome. Each drift kind has its own remedy, so
+// they are grouped rather than listed as one undifferentiated failure.
+func (g *GoldenReport) write(w io.Writer) {
+	if g == nil {
+		return
+	}
+	if g.Mode == "record" {
+		_, _ = fmt.Fprintf(w, "GOLDEN CORPUS: recorded %d conversion(s) into %s\n\n", g.Written, g.Dir)
+		return
+	}
+	if len(g.Drifts) == 0 {
+		_, _ = fmt.Fprintf(w, "GOLDEN CORPUS: %s — no drift\n\n", g.Dir)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "GOLDEN CORPUS: %s — %d difference(s)\n", g.Dir, len(g.Drifts))
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "  KIND\tFILE\tDETAIL")
+	for _, d := range g.Drifts {
+		detail := d.Detail
+		if len(d.Fields) > 0 {
+			detail = strings.Join(d.Fields, ", ")
+		}
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n", d.Kind, d.File, detail)
+	}
+	_ = tw.Flush()
+	_, _ = fmt.Fprintln(w)
+}
+
+// driftFatal reports whether the corpus outcome should fail the run. A
+// manifest mismatch alone is a warning: the corpus may legitimately predate
+// a config edit, and the field diffs are the real evidence either way.
+func (g *GoldenReport) driftFatal() bool {
+	if g == nil {
+		return false
+	}
+	for _, d := range g.Drifts {
+		if d.Kind != "manifest" {
+			return true
+		}
+	}
+	return false
+}
+
+// GoldenReport is the outcome of a --record or --golden run.
+type GoldenReport struct {
+	Dir     string        `json:"dir"`
+	Mode    string        `json:"mode"`
+	Written int           `json:"written,omitempty"`
+	Drifts  []GoldenDrift `json:"drifts,omitempty"`
+}
+
 // PathResult is one sample tested along one conversion path.
 type PathResult struct {
 	From            string   `json:"from"`
@@ -92,7 +143,9 @@ type Report struct {
 	// Propagation is present only for --live --verify-propagation runs
 	// against an XRD.
 	Propagation *PropagationReport `json:"propagation,omitempty"`
-	Summary     struct {
+	// Golden is present only for --record or --golden runs.
+	Golden  *GoldenReport `json:"golden,omitempty"`
+	Summary struct {
 		Samples            int `json:"samples"`
 		PathsTested        int `json:"pathsTested"`
 		Pass               int `json:"pass"`
@@ -121,6 +174,8 @@ func (r *Report) WriteTable(w io.Writer) {
 		_, _ = fmt.Fprintf(w, "  %s (%s): %d samples\n", c.CRD, c.Role, c.Samples)
 	}
 	_, _ = fmt.Fprintln(w)
+
+	r.Golden.write(w)
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SAMPLE\tPATH\tRESULT\tFIELDS\tTIME(µs)\tRULES MATCHED")
