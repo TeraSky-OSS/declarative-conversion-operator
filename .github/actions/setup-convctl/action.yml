@@ -21,14 +21,23 @@ inputs:
       Token for the GitHub releases API, to avoid anonymous rate limits.
     required: false
     default: ${{ github.token }}
+  binary:
+    description: >-
+      Path to a convctl that already exists, used instead of downloading
+      one. For a runner that vendors the binary or has no egress to the
+      releases API — and for this repository's own workflows, which have to
+      exercise the Actions against the build under test rather than against
+      the last release.
+    required: false
+    default: ""
 
 outputs:
   version:
-    description: The resolved release tag.
-    value: ${{ steps.resolve.outputs.version }}
+    description: The resolved release tag, or the supplied binary's version.
+    value: ${{ inputs.binary != '' && steps.supplied.outputs.version || steps.resolve.outputs.version }}
   path:
-    description: Path of the installed binary.
-    value: ${{ steps.install.outputs.path }}
+    description: Path of the binary that ended up on PATH.
+    value: ${{ inputs.binary != '' && steps.supplied.outputs.path || steps.install.outputs.path }}
   cache-hit:
     description: Whether the binary came from the runner cache.
     value: ${{ steps.cache.outputs.cache-hit }}
@@ -36,10 +45,33 @@ outputs:
 runs:
   using: composite
   steps:
+    # A binary that is already here needs no resolving, downloading or
+    # verifying: there is no artifact whose provenance could be in question.
+    - name: Use the supplied binary
+      id: supplied
+      if: inputs.binary != ''
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+      run: |
+        set -euo pipefail
+        if [ ! -x "$BINARY" ]; then
+          echo "::error::binary input points at $BINARY, which is not an executable file" >&2
+          exit 1
+        fi
+        dir="$(cd "$(dirname "$BINARY")" && pwd)"
+        echo "$dir" >> "$GITHUB_PATH"
+        {
+          echo "path=$dir/$(basename "$BINARY")"
+          echo "version=$("$BINARY" version | awk '{print $1}')"
+        } >> "$GITHUB_OUTPUT"
+        echo "using the supplied convctl at $BINARY" >> "$GITHUB_STEP_SUMMARY"
+
     # Resolve "latest" to a concrete tag and pin it in the step summary, so a
     # re-run six months from now is explainable rather than mysterious.
     - name: Resolve version and platform
       id: resolve
+      if: inputs.binary == ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -88,13 +120,14 @@ runs:
 
     - name: Restore cached binary
       id: cache
+      if: inputs.binary == ''
       uses: actions/cache@v4
       with:
         path: ${{ steps.resolve.outputs.dir }}
         key: convctl-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.arch }}
 
     - name: Download release assets
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: inputs.binary == '' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -130,7 +163,7 @@ runs:
     # laundered by a cache hit would make the whole verification decorative:
     # the cached branch is the one that runs in practice.
     - name: Verify signature and checksum
-      if: inputs.verify == 'true'
+      if: inputs.binary == '' && inputs.verify == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -188,6 +221,7 @@ runs:
 
     - name: Extract and add to PATH
       id: install
+      if: inputs.binary == ''
       shell: bash
       env:
         ARCHIVE: ${{ steps.resolve.outputs.archive }}
@@ -211,6 +245,7 @@ runs:
         echo "path=$DIR/$BIN" >> "$GITHUB_OUTPUT"
 
     - name: Verify it runs
+      if: inputs.binary == ''
       shell: bash
       env:
         EXPECTED: ${{ steps.resolve.outputs.version }}

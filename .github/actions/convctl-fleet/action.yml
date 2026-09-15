@@ -52,6 +52,12 @@ inputs:
     description: convctl release tag to install.
     required: false
     default: latest
+  binary:
+    description: >-
+      Path to a convctl that already exists, used instead of downloading one.
+      See setup-convctl.
+    required: false
+    default: ""
   upload-artifact:
     description: Upload the aggregated JUnit report.
     required: false
@@ -82,6 +88,7 @@ runs:
       uses: ./.github/actions/setup-convctl
       with:
         version: ${{ inputs.version }}
+        binary: ${{ inputs.binary }}
 
     - name: Write kubeconfig
       if: inputs.kubeconfig != ''

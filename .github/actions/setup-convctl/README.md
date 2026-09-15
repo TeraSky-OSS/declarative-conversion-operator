@@ -16,6 +16,7 @@ Installs a **verified** `convctl` onto `PATH`.
 | `version` | `latest` | a release tag, or `latest` |
 | `verify` | `true` | verify the cosign signature on `checksums.txt`, then the archive's checksum against it |
 | `token` | `${{ github.token }}` | for the releases API, to avoid anonymous rate limits |
+| `binary` | — | path to a `convctl` that already exists, used instead of downloading one |
 
 ## Outputs
 
@@ -47,6 +48,17 @@ whole thing decorative.
 
 Set `verify: false` only if you have a reason; cosign is not installed at all
 in that case, so it costs nothing to leave on.
+
+## Using a binary you already have
+
+`binary: /path/to/convctl` skips resolving, downloading and verifying
+entirely — there is no artifact whose provenance could be in question — and
+just puts it on `PATH`. For a runner that vendors the binary, one with no
+egress to the releases API, and for this repository's own workflows, which
+have to exercise the Actions against the build under test rather than against
+the last release.
+
+Every Action that composes this one accepts it too.
 
 ## Platforms
 
