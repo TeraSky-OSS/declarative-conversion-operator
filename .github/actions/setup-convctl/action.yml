@@ -1,0 +1,217 @@
+name: Set up convctl
+description: >-
+  Install a verified convctl onto PATH. Verifies the cosign signature on the
+  release's checksums.txt and the archive's own checksum, by default.
+
+inputs:
+  version:
+    description: 'Release tag to install (e.g. v0.5.0), or "latest".'
+    required: false
+    default: latest
+  verify:
+    description: >-
+      Verify the cosign signature on checksums.txt and the archive's checksum
+      against it. Defaults to true — an action that verifies by default is the
+      point, because it turns the signing work already done into something
+      every consumer gets without reading anything.
+    required: false
+    default: "true"
+  token:
+    description: >-
+      Token for the GitHub releases API, to avoid anonymous rate limits.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The resolved release tag.
+    value: ${{ steps.resolve.outputs.version }}
+  path:
+    description: Path of the installed binary.
+    value: ${{ steps.install.outputs.path }}
+  cache-hit:
+    description: Whether the binary came from the runner cache.
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # Resolve "latest" to a concrete tag and pin it in the step summary, so a
+    # re-run six months from now is explainable rather than mysterious.
+    - name: Resolve version and platform
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REQUESTED: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        if [ "$REQUESTED" = "latest" ]; then
+          version="$(gh api repos/TeraSky-OSS/declarative-conversion-operator/releases/latest --jq .tag_name)"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::could not resolve the latest convctl release" >&2
+            exit 1
+          fi
+        else
+          version="$REQUESTED"
+        fi
+
+        case "$RUNNER_OS" in
+          Linux)   os=linux   ; ext=tar.gz ; bin=convctl ;;
+          macOS)   os=darwin  ; ext=tar.gz ; bin=convctl ;;
+          Windows) os=windows ; ext=zip    ; bin=convctl.exe ;;
+          *) echo "::error::unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::unsupported runner architecture: $RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+
+        # The archive name carries the version without its leading v, which
+        # is what GoReleaser's .Version produces.
+        bare="${version#v}"
+        archive="declarative-conversion-operator-cli_${bare}_${os}_${arch}.${ext}"
+
+        {
+          echo "version=$version"
+          echo "os=$os"
+          echo "arch=$arch"
+          echo "ext=$ext"
+          echo "bin=$bin"
+          echo "archive=$archive"
+          echo "dir=$RUNNER_TEMP/convctl-$bare"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "convctl $version ($os/$arch)" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Restore cached binary
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: convctl-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.arch }}
+
+    - name: Download release assets
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ steps.resolve.outputs.version }}
+        ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        VERIFY: ${{ inputs.verify }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$DIR"
+        cd "$DIR"
+
+        assets=("$ARCHIVE" checksums.txt)
+        if [ "$VERIFY" = "true" ]; then
+          assets+=(checksums.txt.sig checksums.txt.pem)
+        fi
+        for asset in "${assets[@]}"; do
+          gh release download "$VERSION" \
+            --repo TeraSky-OSS/declarative-conversion-operator \
+            --pattern "$asset" --clobber
+        done
+
+    # Cosign is only installed when it is going to be used, so verify: false
+    # costs nothing beyond the download.
+    - name: Install cosign
+      if: inputs.verify == 'true'
+      uses: sigstore/cosign-installer@v4
+
+    # Verification runs on a cache hit too. A poisoned cache that could be
+    # laundered by a cache hit would make the whole verification decorative:
+    # the cached branch is the one that runs in practice.
+    - name: Verify signature and checksum
+      if: inputs.verify == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ steps.resolve.outputs.version }}
+        ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        cd "$DIR"
+
+        # A cache holds the archive but not necessarily the signature
+        # material, so fetch whatever is missing before verifying.
+        for asset in checksums.txt checksums.txt.sig checksums.txt.pem "$ARCHIVE"; do
+          if [ ! -f "$asset" ]; then
+            gh release download "$VERSION" \
+              --repo TeraSky-OSS/declarative-conversion-operator \
+              --pattern "$asset" --clobber
+          fi
+        done
+
+        # The certificate identity is pinned to this repository's release
+        # workflow at a tag, not to a wildcard: a signature from any other
+        # workflow in any other repository is exactly what this is meant to
+        # reject.
+        cosign verify-blob \
+          --certificate checksums.txt.pem \
+          --signature checksums.txt.sig \
+          --certificate-identity-regexp '^https://github\.com/terasky-oss/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          checksums.txt
+
+        # Then the archive against the now-trusted checksums file. grep for
+        # this archive's line only: checksums.txt covers every platform, and
+        # sha256sum -c would fail on the absent ones.
+        grep " \{1,2\}${ARCHIVE}\$" checksums.txt > archive.sha256
+        if [ ! -s archive.sha256 ]; then
+          echo "::error::${ARCHIVE} has no entry in the signed checksums.txt" >&2
+          exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+          sha256sum -c archive.sha256
+        else
+          shasum -a 256 -c archive.sha256
+        fi
+
+        if [ "$CACHE_HIT" = "true" ]; then
+          echo "verified the cached archive against the signed checksums" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Extract and add to PATH
+      id: install
+      shell: bash
+      env:
+        ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        EXT: ${{ steps.resolve.outputs.ext }}
+        BIN: ${{ steps.resolve.outputs.bin }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        set -euo pipefail
+        cd "$DIR"
+
+        if [ ! -f "$BIN" ]; then
+          if [ "$EXT" = "zip" ]; then
+            unzip -o "$ARCHIVE" >/dev/null
+          else
+            tar -xzf "$ARCHIVE"
+          fi
+        fi
+        chmod +x "$BIN"
+
+        echo "$DIR" >> "$GITHUB_PATH"
+        echo "path=$DIR/$BIN" >> "$GITHUB_OUTPUT"
+
+    - name: Verify it runs
+      shell: bash
+      env:
+        EXPECTED: ${{ steps.resolve.outputs.version }}
+        BINARY: ${{ steps.install.outputs.path }}
+      run: |
+        set -euo pipefail
+        got="$("$BINARY" version | awk '{print $1}')"
+        if [ "$got" != "$EXPECTED" ]; then
+          echo "::error::installed convctl reports $got, expected $EXPECTED" >&2
+          exit 1
+        fi
+        echo "convctl $got is on PATH"
