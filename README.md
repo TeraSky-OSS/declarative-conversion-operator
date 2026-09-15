@@ -1,5 +1,7 @@
 # declarative-conversion-operator
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/TeraSky-OSS/declarative-conversion-operator/badge)](https://scorecard.dev/viewer/?uri=github.com/TeraSky-OSS/declarative-conversion-operator)
+
 > [!NOTE]
 > **Beta.** The conversion engine, both controllers, and `convctl` are feature-complete for the documented scope and covered by unit, e2e, and scale tests. The CRDs stay at API version `v1alpha1` (group `terasky.com`). The Helm chart's values and CLI flags may still change in a minor release; breaking changes are called out in the release notes. Issues and feedback are welcome.
 

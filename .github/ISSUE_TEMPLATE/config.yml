@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/TeraSky-OSS/declarative-conversion-operator/discussions
+    about: Ask how something works, or propose an idea before writing it up as an issue.
+  - name: Security vulnerability
+    url: https://github.com/TeraSky-OSS/declarative-conversion-operator/security/policy
+    about: Report privately. Please do not open a public issue for a vulnerability.

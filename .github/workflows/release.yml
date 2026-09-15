@@ -10,9 +10,10 @@ on:
         description: "Tag to (re-)release, e.g. v0.1.0. Leave empty to use the pushed tag."
         required: false
 
+# Least privilege at the top level; every job that needs more declares it
+# for itself (image push, keyless signing, attestations, release upload).
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 env:
   REGISTRY: ghcr.io
@@ -92,6 +93,22 @@ jobs:
 
       - name: Sign image (cosign keyless)
         run: cosign sign --yes "${{ matrix.image }}@${{ steps.build.outputs.digest }}"
+
+      # Scan the image that was just pushed, by digest. A signed artifact
+      # built from a vulnerable base is still vulnerable, and the release is
+      # the last point at which not shipping it is cheap.
+      #
+      # Gated on a fix being available: failing on an unfixable CVE in the
+      # distroless base would block every release until upstream moves,
+      # which trains people to bypass the gate rather than fix anything.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Generate image SBOM
         uses: anchore/sbom-action@v0
@@ -252,6 +269,8 @@ jobs:
     name: Publish signed-artifact summary to the release
     runs-on: ubuntu-latest
     needs: [cli, images, helm-chart]
+    permissions:
+      contents: write # appends the signed-artifact summary to the GitHub release
     steps:
       - name: Download image/chart digests
         uses: actions/download-artifact@v7

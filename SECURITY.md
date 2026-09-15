@@ -39,5 +39,25 @@ receipt and work with you on a coordinated disclosure timeline.
 - **RBAC.** The manager can patch XRDs/CRDs (to wire conversion webhooks);
   webhook-server ServiceAccounts are read/watch-only. Full verb/resource
   justifications: [RBAC blast radius](docs/security/rbac.md).
-- **Supply chain.** Release images are signed (cosign) with SBOMs. Prefer
-  pinning images by digest — see chart `image.*.digest` values.
+- **Supply chain.** Release images are signed keylessly (cosign, GitHub OIDC)
+  and carry SBOM and build-provenance attestations; the Helm chart is signed
+  the same way. Prefer pinning images by digest — see chart `image.*.digest`
+  values. Verification commands are printed into every GitHub release.
+
+## Automated scanning
+
+These run without anyone asking, which is the point — a signed artifact
+built from a vulnerable dependency is still vulnerable.
+
+| What | Where | Fails on |
+|---|---|---|
+| [`govulncheck`](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | `.github/workflows/security.yml` — every push, every PR, weekly | A known vulnerability whose vulnerable symbol is actually reachable from this module |
+| [CodeQL](https://codeql.github.com/) (`security-and-quality`) | `.github/workflows/security.yml` — every push, every PR, weekly | Findings are reported to GitHub code scanning |
+| [OpenSSF Scorecard](https://securityscorecards.dev/) | `.github/workflows/security.yml` — pushes to `main` and weekly | Nothing; it reports repository-level posture (branch protection, token permissions, pinned actions) |
+| [Trivy](https://trivy.dev/) image scan | `.github/workflows/release.yml`, against the pushed digest | HIGH or CRITICAL **with a fix available** — an unfixable CVE in the distroless base does not block a release |
+| [gosec](https://github.com/securego/gosec) | `.golangci.yml`, via the `golangci-lint` CI job | Any finding; suppressions require an inline reason |
+| [Dependabot](https://docs.github.com/en/code-security/dependabot) | `.github/dependabot.yml` — weekly, grouped | Opens PRs for `gomod`, `github-actions`, and `docker` |
+
+Scanner findings that turn out to be real vulnerabilities in this project
+are handled through the private reporting process above, not as public
+issues.

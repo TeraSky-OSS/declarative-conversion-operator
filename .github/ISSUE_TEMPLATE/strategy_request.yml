@@ -1,0 +1,89 @@
+name: Conversion strategy proposal
+description: Propose a new declarative conversion strategy.
+labels: [enhancement, strategy]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Strategies are the operator's vocabulary, and every one of them is
+        permanent: once a strategy ships, somebody's `XRDConversionConfig`
+        depends on it converting exactly the way it does today.
+
+        So this form asks about the **real migration that motivated it**
+        rather than about the feature in the abstract. A strategy that cannot
+        be described as "this schema became that schema" usually turns out to
+        be two strategies, or a `jsonPatch`.
+
+        See [Adding a strategy](https://terasky-oss.github.io/declarative-conversion-operator/contributing/adding-a-strategy/)
+        for what implementing one involves.
+
+  - type: textarea
+    id: migration
+    attributes:
+      label: The migration that motivated this
+      description: >
+        The actual before-and-after schema. Two versions of a real (or
+        realistically shaped) XRD or CRD, with the field that changed.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: objects
+    attributes:
+      label: An object before and after
+      description: >
+        One concrete object at the old version and the same object at the new
+        one. This is what the strategy has to produce, and it is usually where
+        an ambiguity in the proposal first becomes visible.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: existing
+    attributes:
+      label: Why the existing strategies do not cover it
+      description: >
+        Name the closest one and say what it cannot express. `jsonPatch` can
+        express almost anything — the argument for a named strategy is that it
+        is analyzable (losslessness, field coverage, admission-time
+        validation), not that it is possible.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: lossless
+    attributes:
+      label: Is the round trip lossless?
+      description: >
+        Hub to spoke and back, does every object come out identical? "No" is a
+        perfectly good answer — lossy strategies exist and are acknowledged
+        explicitly per rule — but the engine has to know statically which it
+        is.
+      options:
+        - Lossless in both directions
+        - Lossy hub to spoke
+        - Lossy spoke to hub
+        - Lossy in both directions
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: edge-cases
+    attributes:
+      label: What happens at the edges
+      description: >
+        The field is absent. The field is null. The value is the wrong type.
+        An array is empty. These decide whether the strategy is implementable
+        as written, and answering them now is much cheaper than discovering
+        them in review.
+    validations:
+      required: true
+
+  - type: input
+    id: name
+    attributes:
+      label: Proposed name
+      description: camelCase, matching the existing strategies (`fieldRename`, `arrayToMapByKey`, ...).

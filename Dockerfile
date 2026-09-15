@@ -7,7 +7,7 @@
 #   docker build --build-arg COMPONENT=webhook-server  -t declarative-conversion-operator:webhook-server .
 #   docker build --build-arg COMPONENT=convctl       -t declarative-conversion-operator:convctl .
 
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.6
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS builder
 ARG TARGETOS
