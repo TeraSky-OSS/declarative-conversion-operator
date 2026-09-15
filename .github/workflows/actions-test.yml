@@ -57,6 +57,14 @@ jobs:
       - name: Shellcheck the composite Actions
         run: hack/shellcheck-actions.sh
 
+      # Nothing else resolves a `uses:`. A reference to a tag that does not
+      # exist passes every other check here and fails at run time with an
+      # error about the reference rather than about the thing it installs.
+      - name: Every action reference resolves
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: hack/check-action-pins.sh
+
   setup:
     name: setup-convctl (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

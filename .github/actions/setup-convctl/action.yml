@@ -121,7 +121,10 @@ runs:
     # costs nothing beyond the download.
     - name: Install cosign
       if: inputs.verify == 'true'
-      uses: sigstore/cosign-installer@v4
+      # Pinned to an exact version: sigstore publishes a floating v3 tag but
+      # no v4, so `@v4` resolves to nothing and the step fails with "unable
+      # to find version" rather than anything about cosign.
+      uses: sigstore/cosign-installer@v4.1.2
 
     # Verification runs on a cache hit too. A poisoned cache that could be
     # laundered by a cache hit would make the whole verification decorative:
