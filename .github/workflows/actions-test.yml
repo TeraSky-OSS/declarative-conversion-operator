@@ -1,0 +1,326 @@
+# The Actions this repository publishes are its public CI surface. An Action
+# nobody tests is a broken Action nobody notices until a consumer's pipeline
+# goes red — and by then the breakage is in a published tag that other
+# repositories are pinned to.
+name: Actions
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/actions-test.yml"
+      - "test/actions/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/actions-test.yml"
+      - "test/actions/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actions-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Static checks first: they are seconds, and they catch the whole class of
+  # "the action.yml is malformed" without spending a runner minute per OS.
+  static:
+    name: actionlint and static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Over the whole repository, not just the new files: a workflow that
+      # broke two years ago is still broken.
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          fail-on-error: true
+
+      # actionlint treats a composite action's action.yml as a malformed
+      # workflow, so the Actions themselves need their own checks.
+      - name: Static checks on the composite Actions
+        run: go test ./test/actions/ -v
+
+  setup:
+    name: setup-convctl (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: static
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # By local path, so the version under test is this pull request's
+      # version rather than whatever is published.
+      - name: Install latest
+        id: latest
+        uses: ./.github/actions/setup-convctl
+
+      - name: It resolved a concrete tag and works
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ steps.latest.outputs.version }}"
+          case "${{ steps.latest.outputs.version }}" in
+            v*) ;;
+            *) echo "resolved version is not a tag: ${{ steps.latest.outputs.version }}" >&2; exit 1 ;;
+          esac
+          convctl version
+          convctl lint --help >/dev/null
+
+      # The cached branch is the one that runs in practice and the one that
+      # silently rots, so it is exercised explicitly — including that it
+      # still verified.
+      - name: Install again (cache hit)
+        id: cached
+        uses: ./.github/actions/setup-convctl
+        with:
+          version: ${{ steps.latest.outputs.version }}
+
+      - name: The second install came from the cache and still verified
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.cached.outputs.cache-hit }}" != "true" ]; then
+            echo "second install was not a cache hit; the cached path is untested" >&2
+            exit 1
+          fi
+          convctl version
+
+  # The most important job here. A verification step that cannot be shown to
+  # fail is not a verification step.
+  tamper:
+    name: setup-convctl rejects a tampered archive
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install once to populate the cache directory
+        id: real
+        uses: ./.github/actions/setup-convctl
+
+      - name: Corrupt the cached archive
+        shell: bash
+        env:
+          VERSION: ${{ steps.real.outputs.version }}
+        run: |
+          set -euo pipefail
+          bare="${VERSION#v}"
+          dir="$RUNNER_TEMP/convctl-$bare"
+          archive="$(find "$dir" -name '*.tar.gz' | head -1)"
+          test -n "$archive"
+          # Same size, different bytes: a length check would not catch this,
+          # which is the point of checking the hash.
+          printf 'tampered' | dd of="$archive" bs=1 seek=0 conv=notrunc status=none
+          echo "corrupted $archive"
+
+      - name: Verification must reject it
+        id: tampered
+        continue-on-error: true
+        uses: ./.github/actions/setup-convctl
+        with:
+          version: ${{ steps.real.outputs.version }}
+
+      - name: Assert the step failed
+        shell: bash
+        run: |
+          set -euo pipefail
+          outcome="${{ steps.tampered.outcome }}"
+          if [ "$outcome" != "failure" ]; then
+            echo "::error::setup-convctl accepted a tampered archive (outcome: $outcome)" >&2
+            echo "A verification step that cannot be shown to fail is not a verification step." >&2
+            exit 1
+          fi
+          echo "tampered archive was rejected, as it must be"
+
+  test-action:
+    name: convctl-test against fixtures
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # A clean fixture passes and still produces a report.
+      - name: Clean fixture
+        id: clean
+        uses: ./.github/actions/convctl-test
+        with:
+          config: internal/cli/testdata/full/config.yaml
+          xrd: internal/cli/testdata/full/xrd.yaml
+          samples: internal/cli/testdata/full/samples
+          artifact-name: actions-test-clean
+
+      - name: It passed and reported real numbers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.clean.outputs.exit-code }}" != "0" ]; then
+            echo "a clean fixture did not pass" >&2; exit 1
+          fi
+          if [ "${{ steps.clean.outputs.pass }}" -lt 1 ]; then
+            echo "the pass count is ${{ steps.clean.outputs.pass }}; the Action exited correctly while reporting nothing" >&2
+            exit 1
+          fi
+          test -f "${{ steps.clean.outputs.report-path }}"
+
+      # A deliberately broken fixture must fail AND say where. Asserting on
+      # the annotation payload rather than only the exit code: every one of
+      # these Actions can exit correctly while rendering nothing.
+      #
+      # The fixture converts to values the destination schema rejects — an
+      # out-of-enum value and a pattern violation — which compiles cleanly
+      # and fails only at --validate-output, so it takes the path a real
+      # regression takes rather than failing at analysis.
+      - name: Capture the annotations for a failing fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          go run ./cmd/convctl test \
+            --xrd internal/cli/testdata/validate-output/xrd.yaml \
+            --config internal/cli/testdata/validate-output/config.yaml \
+            --samples internal/cli/testdata/validate-output/samples \
+            --validate-output --output github --quiet > annotations.txt 2>&1
+          code=$?
+          set -e
+          cat annotations.txt
+          if [ "$code" -eq 0 ]; then
+            echo "::error::the failing fixture passed; it is no longer a failing fixture" >&2
+            exit 1
+          fi
+
+      - name: The annotation carries the config file, a line, and the rule
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q '^::error ' annotations.txt; then
+            echo "::error::no error annotations were emitted for a failing run" >&2
+            cat annotations.txt >&2
+            exit 1
+          fi
+          if ! grep -qE '^::error file=[^,]*validate-output/config\.yaml,line=[0-9]+' annotations.txt; then
+            echo "::error::annotations do not carry the config file and a line number" >&2
+            cat annotations.txt >&2
+            exit 1
+          fi
+          # Naming the rule is what makes an annotation actionable rather
+          # than merely located.
+          if ! grep -qE 'rule\[[0-9]+\]' annotations.txt; then
+            echo "::error::annotations do not name the rule that produced the finding" >&2
+            cat annotations.txt >&2
+            exit 1
+          fi
+          echo "annotations land on the config, with line numbers and the rule"
+
+      - name: The Action itself fails on that fixture
+        id: failing
+        continue-on-error: true
+        uses: ./.github/actions/convctl-test
+        with:
+          config: internal/cli/testdata/validate-output/config.yaml
+          xrd: internal/cli/testdata/validate-output/xrd.yaml
+          samples: internal/cli/testdata/validate-output/samples
+          validate-output: "true"
+          artifact-name: actions-test-failing
+
+      - name: Assert it failed, and reported why
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.failing.outcome }}" != "failure" ]; then
+            echo "::error::a fixture that produces schema violations did not fail the Action" >&2
+            exit 1
+          fi
+          if [ "${{ steps.failing.outputs.errors }}" = "0" ]; then
+            echo "::error::the Action failed but reported no errors, so its summary would read as a mystery" >&2
+            exit 1
+          fi
+
+      - name: annotate:false and upload-artifact:false both work
+        id: quiet
+        uses: ./.github/actions/convctl-test
+        with:
+          config: internal/cli/testdata/full/config.yaml
+          xrd: internal/cli/testdata/full/xrd.yaml
+          samples: internal/cli/testdata/full/samples
+          annotate: "false"
+          upload-artifact: "false"
+
+      - name: It still ran
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.quiet.outputs.exit-code }}" = "0"
+
+  diff-action:
+    name: convctl-diff renders a delta
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # comment:false — this job proves the rendering and the exit-code
+      # semantics; commenting needs a pull request and a writable token.
+      - name: Two configs that differ
+        id: diff
+        uses: ./.github/actions/convctl-diff
+        with:
+          config: |
+            examples/crossplane-xr-multiversion/03-promote-v2/xrdconversionconfig.yaml
+            examples/crossplane-xr-multiversion/mistakes/02-missing-rename.yaml
+          xrd: examples/crossplane-xr-multiversion/03-promote-v2/xrd.yaml
+          comment: "false"
+
+      - name: A delta was found and did not fail the job
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.diff.outputs.has-deltas }}" != "true" ]; then
+            echo "two different configs produced no delta" >&2; exit 1
+          fi
+          if [ "${{ steps.diff.outputs.exit-code }}" != "1" ]; then
+            echo "expected exit 1 for deltas, got ${{ steps.diff.outputs.exit-code }}" >&2; exit 1
+          fi
+          # The rendering is the product; an empty one is a silent failure.
+          test -s "${{ steps.diff.outputs.markdown-path }}"
+          grep -q '^### Conversion config diff' "${{ steps.diff.outputs.markdown-path }}"
+          echo "delta rendered, job stayed green"
+
+      - name: Identical configs report no deltas
+        id: same
+        uses: ./.github/actions/convctl-diff
+        with:
+          config: |
+            examples/field-rename/xrdconversionconfig.yaml
+            examples/field-rename/xrdconversionconfig.yaml
+          xrd: examples/field-rename/xrd.yaml
+          comment: "false"
+
+      - name: And say so rather than rendering nothing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.same.outputs.has-deltas }}" = "false"
+          grep -q 'No differences' "${{ steps.same.outputs.markdown-path }}"
