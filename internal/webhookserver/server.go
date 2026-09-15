@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/go-logr/logr"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Server is the webhook server's HTTP surface: the conversion endpoint on
@@ -218,11 +222,34 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		trace.WithAttributes(attribute.String("target", xrdName)))
 	defer span.End()
 
+	// reqUID is captured by the recover closure below. The defer has to be
+	// registered before the body is decoded — a panic during decode must
+	// still be caught — which is why the UID cannot simply be read from
+	// the decoded review: at the time the closure is created there is no
+	// review yet. Assigning into a variable the closure has already closed
+	// over is what makes the UID available on the one path where it
+	// matters most.
+	//
+	// It matters because the apiserver validates that a conversion
+	// response's uid matches the request's and discards the response
+	// otherwise. A panic that reported an empty UID produced a generic
+	// UID-mismatch error instead of the "internal error: …" message, so
+	// the single situation where the operator most wants to say what
+	// happened was the one guaranteed not to arrive.
+	var reqUID types.UID
 	defer func() {
 		if rec := recover(); rec != nil {
-			s.writeReview(w, "", nil, fmt.Sprintf("internal error: %v", rec))
+			s.writeReview(w, reqUID, nil, fmt.Sprintf("internal error: %v", rec))
 			s.observe(xrdName, direction, "panic", start)
+			if s.Metrics != nil {
+				s.Metrics.PanicsTotal.WithLabelValues(xrdName).Inc()
+			}
 			err := fmt.Errorf("panic: %v", rec)
+			// The stack is the only thing that makes a panic actionable,
+			// and it was previously recorded on the span and nowhere else
+			// — invisible to anyone without a tracing backend.
+			logger().Error(err, "recovered from a panic while serving a ConversionReview",
+				"target", xrdName, "uid", string(reqUID), "stack", string(debug.Stack()))
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 		}
@@ -270,6 +297,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		s.observe(xrdName, direction, "bad_request", start)
 		return
 	}
+	reqUID = review.Request.UID
 
 	// Bound the conversion itself, separately from the body read: a
 	// pathological object (a deeply nested forEach over a huge array) is
@@ -484,3 +512,9 @@ func sniffRequestUID(prefix []byte) types.UID {
 	return types.UID(rest[:end])
 }
 
+// logger is resolved per call rather than stored on Server: the process
+// installs its logger in main after this package is already constructed in
+// tests, and a panic path is not hot enough for the lookup to matter.
+func logger() logr.Logger {
+	return ctrllog.Log.WithName("webhook-server")
+}

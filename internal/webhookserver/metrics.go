@@ -31,6 +31,7 @@ type Metrics struct {
 	ReviewRequestsTotal *prometheus.CounterVec
 	ObjectsTotal        *prometheus.CounterVec
 	LossyTotal          *prometheus.CounterVec
+	PanicsTotal         *prometheus.CounterVec
 	RegistrySize        prometheus.Gauge
 	RegistryEntryLoaded *prometheus.GaugeVec
 	RegistryLastReload  *prometheus.GaugeVec
@@ -67,6 +68,10 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 			Name: "dco_webhook_lossy_conversion_total",
 			Help: "Total conversions performed in a direction statically known to be lossy.",
 		}, []string{"target", "direction"}),
+		PanicsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "dco_webhook_conversion_panics_total",
+			Help: "Total panics recovered while serving a ConversionReview. A non-zero value is always a bug in this operator; alert on any increase.",
+		}, []string{"target"}),
 		RegistrySize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "dco_webhook_registry_size",
 			Help: "Number of target resources (XRD/CRD names) currently present in this replica's registry, including error-only placeholders.",
@@ -93,7 +98,7 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 		}),
 		gatherer: gatherer,
 	}
-	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
+	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
 }
 

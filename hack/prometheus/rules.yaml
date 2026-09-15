@@ -27,6 +27,14 @@ groups:
         annotations:
           summary: "p99 ConversionReview latency exceeds 1s for {{ $labels.target }}"
           description: "The conversion webhook is on the API admission critical path; sustained high latency slows apiserver requests for the affected target."
+      - alert: ConversionWebhookPanics
+        expr: increase(dco_webhook_conversion_panics_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The conversion webhook panicked while converting {{ $labels.target }}"
+          description: "A recovered panic is always a bug in declarative-conversion-operator, and every request that hits it fails a write on the apiserver's admission path. The pod log carries the stack trace. No `for:` delay: one panic is already worth waking up for."
       - alert: ConversionWebhookLossyRate
         expr: sum by (target, direction) (rate(dco_webhook_lossy_conversion_total[5m])) > 0.01
         for: 10m

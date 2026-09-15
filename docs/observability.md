@@ -37,6 +37,7 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 | `dco_webhook_conversion_review_duration_seconds` | Histogram | `target`, `direction`, `result` | End-to-end ConversionReview latency |
 | `dco_webhook_conversion_review_requests_total` | Counter | `target`, `result` | ConversionReview requests handled |
 | `dco_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `result` | Individual objects converted inside reviews |
+| `dco_webhook_conversion_panics_total` | Counter | `target` | Panics recovered while serving a review. Always a bug in this operator; alert on any increase |
 | `dco_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy |
 | `dco_webhook_registry_size` | Gauge | — | Registry entries on this replica (includes error-only placeholders) |
 | `dco_webhook_registry_entry_loaded` | Gauge | `target` | `1` if this replica has a compiled, servable plan for that target; `0` if error-only |

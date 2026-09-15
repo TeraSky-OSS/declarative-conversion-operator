@@ -416,3 +416,35 @@ tests:
             exp_annotations:
               summary: "Conversion applied to XRD xfoos.example.org but never observed in the generated CRD"
               description: "The operator patched spec.conversion onto the XRD, but Crossplane has not re-rendered xfoos.example.org's generated CRD with that webhook block. Until it does, the generated CRD falls back to strategy: None and the apiserver serves stored objects relabelled but UNCONVERTED, with HTTP 200 and no error. Check the config's ConversionPropagated condition and status.generatedCRDs, then check whether Crossplane is running, healthy, and not paused on this XRD."
+
+  # --- ConversionWebhookPanics ---
+  - name: a single panic fires immediately
+    interval: 1m
+    input_series:
+      # One panic, then flat. The alert has to fire on the step, not wait
+      # for a sustained rate: panics are not a rate, they are a bug.
+      - series: 'dco_webhook_conversion_panics_total{target="xfoos.example.org"}'
+        values: "0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ConversionWebhookPanics
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ConversionWebhookPanics
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "The conversion webhook panicked while converting xfoos.example.org"
+              description: "A recovered panic is always a bug in declarative-conversion-operator, and every request that hits it fails a write on the apiserver's admission path. The pod log carries the stack trace. No `for:` delay: one panic is already worth waking up for."
+
+  - name: no panics stays silent
+    interval: 1m
+    input_series:
+      - series: 'dco_webhook_conversion_panics_total{target="xfoos.example.org"}'
+        values: "0+0x40"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ConversionWebhookPanics
+        exp_alerts: []
