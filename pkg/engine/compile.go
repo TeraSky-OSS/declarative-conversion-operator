@@ -760,21 +760,15 @@ func resolveDelete(idx int, p DeleteParams, hub, spoke *extv1.JSONSchemaProps, c
 		claimed = claimedSpoke
 		side = "spoke"
 	}
-	node, err := lookupPath(root, p.Path)
-	if err != nil {
+	if _, err := lookupPath(root, p.Path); err != nil {
 		diags = append(diags, errorf(idx, "rule %d (Delete): %v", idx, err))
 	}
-	if node != nil {
-		parent := p.Path[:len(p.Path)-1]
-		parentNode, perr := lookupPath(root, parent)
-		if perr == nil && parentNode != nil {
-			for _, r := range parentNode.Required {
-				if r == lastSegment(p.Path) {
-					diags = append(diags, warnf(idx, "rule %d (Delete): %q is required on %s; converted objects on that side will fail apiserver validation unless the schema also declares a default", idx, p.Path, side))
-				}
-			}
-		}
-	}
+	// Deliberately no required-field warning here any more. Delete on a
+	// required field used to be the only place the engine consulted
+	// required-ness at all; analyzeRequiredFields now asks the same question
+	// for every strategy and in both directions, and answers it as an error
+	// with a specific verdict rather than a warning. Keeping this one too
+	// would report a single problem twice, at two severities.
 	if d := claim(claimed, p.Path, idx, side); d != nil {
 		diags = append(diags, *d)
 	}

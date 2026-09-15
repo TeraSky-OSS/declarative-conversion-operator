@@ -21,3 +21,7 @@ spec:
           fieldRename:
             hubPath: spec.region
             spokePath: spec.region
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.name
+            spokePath: spec.name

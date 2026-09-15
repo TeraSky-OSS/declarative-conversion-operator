@@ -310,14 +310,18 @@ func TestRunTest_ValidateOutputTurnsAFalsePassIntoAnError(t *testing.T) {
 		}
 	}
 	joinedPaths := strings.Join(paths, " ")
-	for _, want := range []string{"spec.region", "spec.tier"} {
+	// Both are value-domain violations, which is the class the compile-time
+	// required-field analysis legitimately cannot reach: the hub constrains
+	// neither, so only applying v1's schema to the converted object finds
+	// them. The two checks are complementary, not overlapping.
+	for _, want := range []string{"spec.name", "spec.tier"} {
 		if !strings.Contains(joinedPaths, want) {
 			t.Errorf("no violation reported at %s; got %v", want, paths)
 		}
 	}
 	joined := strings.Join(constraints, " ")
-	if !strings.Contains(joined, "required") {
-		t.Errorf("the missing required field was not identified as such: %v", constraints)
+	if !strings.Contains(joined, "pattern") {
+		t.Errorf("the pattern violation was not identified as such: %v", constraints)
 	}
 	if !strings.Contains(joined, "enum") {
 		t.Errorf("the out-of-enum value was not identified as such: %v", constraints)
