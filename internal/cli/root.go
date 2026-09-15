@@ -198,6 +198,8 @@ func newTestCmd() *cobra.Command {
 		kubeconfig, kubeContext, kubeconfigDir                               string
 		contexts                                                             []string
 		concurrency                                                          int
+		maxSamples                                                           int
+		sampleStrategy, namespace                                            string
 	)
 	cmd := &cobra.Command{
 		Use:   "test",
@@ -257,6 +259,12 @@ results are collected by sample index, never by completion order.`,
 			if err := checkOutputFormat(output, "table", "json", "junit", "github", "sarif", "markdown"); err != nil {
 				return err
 			}
+			if err := ValidateSamplingOptions(SamplingOptions{MaxSamples: maxSamples, Strategy: sampleStrategy, Seed: fuzzSeed}); err != nil {
+				return err
+			}
+			if (maxSamples > 0 || sampleStrategy != "" || namespace != "") && !live {
+				return errors.New("--max-samples, --sample-strategy and --namespace only apply to --live runs")
+			}
 			switch failOn {
 			case failOnNone, failOnWarn, failOnLoss:
 			default:
@@ -283,6 +291,8 @@ results are collected by sample index, never by completion order.`,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
+				Sampling:          SamplingOptions{MaxSamples: maxSamples, Strategy: sampleStrategy, Seed: fuzzSeed},
+				Namespace:         namespace,
 				VerifyPropagation: verifyPropagation,
 				ValidateOutput:    validateOutput,
 				RecordDir:         recordDir,
@@ -344,6 +354,9 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Exit-code threshold: none|warn|loss")
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
+	cmd.Flags().IntVar(&maxSamples, "max-samples", 0, "With --live, cap how many objects are tested (default: every object). The report says so when a run was sampled")
+	cmd.Flags().StringVar(&sampleStrategy, "sample-strategy", "", "With --max-samples: first (cheapest), random (uniform, reproducible with --seed), or newest (default: first)")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "With --live, narrow to one namespace. Only namespaced object classes are affected; a cluster-scoped composite cannot be narrowed")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
 	cmd.Flags().IntVar(&fuzzN, "fuzz", 0, "Generate N schema-valid objects from the hub version's own schema and test them too. Biased toward the boundaries fixtures miss: empty arrays, absent optionals, length and range limits, first and last enum members")

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -150,6 +151,11 @@ type Report struct {
 		// a fuzz failure nobody can reproduce is noise, and the seed is
 		// the whole reproduction.
 		Fuzz *FuzzMeta `json:"fuzz,omitempty"`
+		// Sampling is present only when a --live run was bounded. Its
+		// absence means every live object was tested; a sampled result
+		// that reads like an exhaustive one is the failure this guards
+		// against.
+		Sampling *SamplingReport `json:"sampling,omitempty"`
 		// Scope is the detected Crossplane scope (XRD targets only) —
 		// which injected-field set is in play, and how much the resolver
 		// trusts the answer. See pkg/xrdadapter.ResolveScope.
@@ -193,6 +199,9 @@ func (r *Report) WriteTable(w io.Writer) {
 	if r.Meta.Fuzz != nil {
 		_, _ = fmt.Fprintf(w, "FUZZ: %d generated object(s), seed %d — reproduce with --fuzz %d --seed %d\n\n",
 			r.Meta.Fuzz.Objects, r.Meta.Fuzz.Seed, r.Meta.Fuzz.Objects, r.Meta.Fuzz.Seed)
+	}
+	if r.Meta.Sampling != nil {
+		_, _ = fmt.Fprintf(w, "%s\n\n", r.Meta.Sampling.String())
 	}
 	r.Golden.write(w)
 
@@ -275,12 +284,13 @@ type junitTestSuites struct {
 }
 
 type junitTestSuite struct {
-	Name     string          `xml:"name,attr"`
-	Tests    int             `xml:"tests,attr"`
-	Failures int             `xml:"failures,attr"`
-	Errors   int             `xml:"errors,attr"`
-	Time     string          `xml:"time,attr"`
-	Cases    []junitTestCase `xml:"testcase"`
+	Name     string           `xml:"name,attr"`
+	Tests    int              `xml:"tests,attr"`
+	Failures int              `xml:"failures,attr"`
+	Errors   int              `xml:"errors,attr"`
+	Time     string           `xml:"time,attr"`
+	Props    *junitProperties `xml:"properties,omitempty"`
+	Cases    []junitTestCase  `xml:"testcase"`
 }
 
 type junitTestCase struct {
@@ -318,6 +328,18 @@ type junitMessage struct {
 // failed testcases still catch exactly what --fail-on would.
 func (r *Report) junitSuite() junitTestSuite {
 	suite := junitTestSuite{Name: fmt.Sprintf("%s/%s", r.Meta.ResourceKind, r.Meta.Resource)}
+	// A sampled run has to say so in every format it can be read in. A
+	// JUnit reporter showing 50 green tests, from a population of 40,000,
+	// with nothing saying which, is the exact false confidence the cap
+	// exists to make explicit.
+	if r.Meta.Sampling != nil {
+		suite.Props = &junitProperties{Properties: []junitProperty{
+			{Name: "sampled", Value: "true"},
+			{Name: "sampleStrategy", Value: r.Meta.Sampling.Strategy},
+			{Name: "samplePopulation", Value: strconv.Itoa(r.Meta.Sampling.Population)},
+			{Name: "sampleTested", Value: strconv.Itoa(r.Meta.Sampling.Tested)},
+		}}
+	}
 	var totalTime float64
 	for _, s := range r.Samples {
 		for _, p := range s.Paths {

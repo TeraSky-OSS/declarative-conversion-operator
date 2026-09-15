@@ -312,6 +312,43 @@ author actually caused.
 > pipelines should set it; the default is planned to flip in a future
 > release, and the change will be called out in the release notes.
 
+### Bounded sampling on a large cluster
+
+`--live` lists and tests every object of the target type. On a cluster with
+tens of thousands of composites that is exactly where a pre-upgrade check is
+most valuable and least able to run.
+
+`--max-samples <n>` caps what gets tested, with `--sample-strategy`:
+
+| Strategy | Behaviour | Cost |
+|---|---|---|
+| `first` (default) | stops listing at the cap | cheapest — the only one that can stop early |
+| `random` | reservoir-samples while paginating, so the whole population is represented without ever being held | lists everything, holds `n` |
+| `newest` | the `n` most recently created objects, where a schema change shows up first | lists everything, holds `n` |
+
+`random` is reproducible: pass `--seed` and the same objects are chosen, so a
+CI failure can be re-run rather than re-rolled.
+
+**A sampled run says so, in every format.** The table prints it, the JSON
+carries a `sampling` block, and the JUnit suite carries `sampled`,
+`samplePopulation` and `sampleTested` properties:
+
+```console
+SAMPLED: 50 of 41,204 live object(s), strategy random, seed 7 — this run did NOT cover every object
+```
+
+That line is the feature. A sampled green result that reads like an
+exhaustive green result is worse than no result, because somebody upgrades on
+the strength of it — and a JUnit reporter showing fifty green tests is where
+that mistake is easiest to make.
+
+`--namespace` narrows a `--live` run to one namespace. Only the namespaced
+object class is affected: on a claim-offering XRD the composites are
+cluster-scoped, so there is nothing to narrow on that side.
+
+Sampling interacts with `--concurrency` only in the obvious way — fewer
+samples, less to parallelise.
+
 ### Parallelism and progress
 
 Samples are tested in parallel, one worker per available CPU by default. This matters most for `--live`, where the sample set is every object of the target type in the cluster rather than a handful of fixtures. Set `--concurrency N` to pin the worker count (`--concurrency 1` to go fully sequential).

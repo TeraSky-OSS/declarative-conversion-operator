@@ -64,6 +64,13 @@ type TestOptions struct {
 	Concurrency int
 	// Quiet suppresses the progress line written to stderr.
 	Quiet bool
+	// Sampling bounds a --live run on a cluster whose population does not
+	// fit in memory. Zero-valued means every object, as before.
+	Sampling SamplingOptions
+	// Namespace narrows a --live run to one namespace. Only the namespaced
+	// object class is affected: on a claim-offering XRD the composites are
+	// cluster-scoped, so narrowing them is not a thing that exists.
+	Namespace string
 
 	// ValidateOutput additionally validates every converted object against
 	// the destination version's own schema, using the apiextensions
@@ -208,6 +215,7 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		return nil, fmt.Errorf("configuration is structurally invalid: %w", err)
 	}
 	var samples []Sample
+	var sampling *SamplingReport
 	// Which fields Crossplane injects, and where they sit, is decided by
 	// the XRD's scope — so report it alongside the results rather than
 	// making an author infer it, and say so when the manifest does not
@@ -228,7 +236,7 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 				return nil, fmt.Errorf("verifying conversion propagation: %w", perr)
 			}
 		}
-		samples, err = FetchLiveSamples(context.Background(), dyn, xrd, cfg.Spec.HubVersion)
+		samples, sampling, err = FetchLiveSamplesSampled(context.Background(), dyn, xrd, cfg.Spec.HubVersion, opts.Sampling, opts.Namespace)
 		if err != nil {
 			return nil, fmt.Errorf("fetching live samples: %w", err)
 		}
@@ -288,6 +296,7 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	rep.Meta.Sampling = sampling
 	rep.Meta.Scope = scopeView(scope)
 	rep.Propagation = propagation
 	return rep, nil
@@ -308,12 +317,13 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 		return nil, fmt.Errorf("configuration is structurally invalid: %w", err)
 	}
 	var samples []Sample
+	var sampling *SamplingReport
 	if opts.Live {
 		dyn, err := buildDynamicClient(KubeOptions{Kubeconfig: opts.Kubeconfig, Context: opts.KubeContext})
 		if err != nil {
 			return nil, err
 		}
-		samples, err = FetchLiveSamplesCRD(context.Background(), dyn, crd, cfg.Spec.HubVersion)
+		samples, sampling, err = FetchLiveSamplesCRDSampled(context.Background(), dyn, crd, cfg.Spec.HubVersion, opts.Sampling, opts.Namespace)
 		if err != nil {
 			return nil, fmt.Errorf("fetching live samples: %w", err)
 		}
@@ -357,7 +367,12 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 	}
 	// A native CRD's authored schema is the whole schema — nothing is
 	// injected behind the author's back — so there is nothing to strip.
-	return runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, nil, start)
+	rep, err := runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, nil, start)
+	if err != nil {
+		return nil, err
+	}
+	rep.Meta.Sampling = sampling
+	return rep, nil
 }
 
 // runTestCommon is runTestXRD/runTestCRD's shared tail: exercising every
