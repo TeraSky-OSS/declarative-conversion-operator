@@ -18,7 +18,10 @@ builds:
       # commit and date go in too: "convctl says this conversion is lossy"
       # is unactionable in a bug report without knowing which convctl.
       - -s -w
-      - -X main.version={{ .Version }}
+      # .Tag, not .Version: .Version strips the leading v, so the binary
+      # reported 0.3.0 for the release everyone calls v0.3.0 — a mismatch
+      # every consumer has to know about to compare the two.
+      - -X main.version={{ .Tag }}
       - -X main.commit={{ .FullCommit }}
       - -X main.date={{ .Date }}
 

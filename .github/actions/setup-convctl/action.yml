@@ -218,7 +218,12 @@ runs:
       run: |
         set -euo pipefail
         got="$("$BINARY" version | awk '{print $1}')"
-        if [ "$got" != "$EXPECTED" ]; then
+        # Compare without the leading v. Releases before this Action existed
+        # were built with GoReleaser's .Version, which strips it, so the
+        # binary reports 0.3.0 for tag v0.3.0 — and an installer that
+        # rejected its own project's releases would be worse than one that
+        # did not check at all.
+        if [ "${got#v}" != "${EXPECTED#v}" ]; then
           echo "::error::installed convctl reports $got, expected $EXPECTED" >&2
           exit 1
         fi
