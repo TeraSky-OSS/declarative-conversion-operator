@@ -381,3 +381,40 @@ func TestMapGeneratedCRDToConfigs_FindsTheClaimCRDViaItsOwnerReference(t *testin
 		}
 	})
 }
+
+// TestVerifyPropagation_WebhookWithNoClientConfig guards a shape the
+// apiserver should never produce but which must not take the controller
+// down if it ever does: strategy Webhook with a nil clientConfig.
+func TestVerifyPropagation_WebhookWithNoClientConfig(t *testing.T) {
+	crd := &extv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "xfoos.example.org"},
+		Spec: extv1.CustomResourceDefinitionSpec{
+			Group: "example.org",
+			Names: extv1.CustomResourceDefinitionNames{Plural: "xfoos", Kind: "XFoo"},
+			Scope: extv1.NamespaceScoped,
+			Conversion: &extv1.CustomResourceConversion{
+				Strategy: extv1.WebhookConverter,
+				Webhook:  &extv1.WebhookConversion{},
+			},
+			Versions: []extv1.CustomResourceDefinitionVersion{{Name: "v2", Served: true, Storage: true}},
+		},
+	}
+	c := newFakeClient(crd).Build()
+	r := &XRDConversionConfigReconciler{Client: c, DefaultServerNamespace: "operator-ns"}
+	cfg := renameRuleXRDConfig("cfg", "xfoos.example.org")
+
+	// Must not panic, and must report the CRD as not propagated.
+	r.verifyPropagation(context.Background(), cfg, establishedXRD("xfoos.example.org"), expectedConversion{
+		ServiceName: cwsServiceName("srv"), ServiceNamespace: "operator-ns",
+		Path: "/convert/xfoos.example.org", Port: 443,
+		CABundle: appliedCABundle(), ReviewVersions: []string{"v1"},
+	})
+
+	cond := meta.FindStatusCondition(cfg.Status.Conditions, teraskyv1alpha1.ConditionConversionPropagated)
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		t.Fatalf("expected ConversionPropagated=False, got %+v", cond)
+	}
+	if len(cfg.Status.GeneratedCRDs) != 1 || cfg.Status.GeneratedCRDs[0].Propagated {
+		t.Fatalf("expected the CRD to be reported not propagated, got %+v", cfg.Status.GeneratedCRDs)
+	}
+}

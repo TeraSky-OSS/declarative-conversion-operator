@@ -113,9 +113,13 @@ func (r *XRDConversionConfigReconciler) verifyPropagation(ctx context.Context, c
 			continue
 		}
 
+		// ClientConfig is nil-checked separately: the apiserver requires it
+		// when the strategy is Webhook, but this runs in a reconcile loop
+		// and a panic here would take the controller down over a shape it
+		// merely did not expect.
 		observed := ""
-		if crd.Spec.Conversion != nil && crd.Spec.Conversion.Webhook != nil {
-			observed = base64.StdEncoding.EncodeToString(crd.Spec.Conversion.Webhook.ClientConfig.CABundle)
+		if c := crd.Spec.Conversion; c != nil && c.Webhook != nil && c.Webhook.ClientConfig != nil {
+			observed = base64.StdEncoding.EncodeToString(c.Webhook.ClientConfig.CABundle)
 		}
 		st.ObservedCABundleHash = caBundleHash(observed)
 
