@@ -1,0 +1,123 @@
+# A scope: LegacyCluster XRD — the v1 compatibility layer inside Crossplane
+# 2.x, which is the shape every cluster upgraded from 1.x still runs, and
+# the ONLY shape that generates a claim CRD.
+#
+# Declared through apiextensions.crossplane.io/v1, because the v2 XRD schema
+# has no claimNames field at all: its scope enum is [Namespaced, Cluster].
+#
+# Two things about this topology make it worth its own e2e leg:
+#
+#   1. Crossplane's machinery fields sit DIRECTLY under spec here
+#      (compositionRef, resourceRefs, claimRef, writeConnectionSecretToRef,
+#      …), not under spec.crossplane. pkg/engine handles that with no code
+#      of its own — passthrough is key-by-key against the authored schema —
+#      but "correct by construction" is worth proving against a real
+#      apiserver rather than asserting.
+#   2. It generates a SECOND CRD, widgets.e2e.example.org, namespace-scoped,
+#      carrying the same spec.conversion and built from this same authored
+#      schema. Claims are their own stored object class: they convert
+#      through the very same webhook, and every part of the tooling that
+#      resolved a target by spec.names.plural alone used to be blind to them.
+#
+# The rule set deliberately covers a representative spread rather than all
+# 29 strategies — the kitchen sink is already covered by hack/e2e-test.sh.
+# What this leg exists to exercise is the topology.
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xlegacywidgets.e2e.example.org
+spec:
+  scope: LegacyCluster
+  group: e2e.example.org
+  names:
+    kind: XLegacyWidget
+    plural: xlegacywidgets
+  claimNames:
+    kind: LegacyWidget
+    plural: legacywidgets
+  versions:
+    - name: v3
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageGB:
+                  type: string
+                memoryMB:
+                  type: integer
+                size:
+                  type: string
+                  enum: ["Small", "Medium", "Large"]
+                zones:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+    - name: v2
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string
+                memoryGB:
+                  type: integer
+                size:
+                  type: string
+                  enum: ["S", "M", "L"]
+                zones:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                storageSize:
+                  type: string
+                memoryGB:
+                  type: integer
+                size:
+                  type: string
+                  enum: ["S", "M", "L"]
+                zone:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
