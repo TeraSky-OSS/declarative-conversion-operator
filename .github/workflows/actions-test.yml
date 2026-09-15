@@ -368,10 +368,16 @@ jobs:
         id: diff
         uses: ./.github/actions/convctl-diff
         with:
+          # Two configs for the SAME hub that differ in one rule. The
+          # mistakes/ fixtures cannot be used here: they target a different
+          # hub, so the comparison fails to analyze and exits 2 — which the
+          # Action correctly treats as "could not run" rather than as a
+          # delta, and which therefore tests the error path rather than the
+          # rendering this job is about.
           config: |
-            examples/crossplane-xr-multiversion/03-promote-v2/xrdconversionconfig.yaml
-            examples/crossplane-xr-multiversion/mistakes/02-missing-rename.yaml
-          xrd: examples/crossplane-xr-multiversion/03-promote-v2/xrd.yaml
+            internal/cli/testdata/config.yaml
+            internal/cli/testdata/config-norename.yaml
+          xrd: internal/cli/testdata/xrd.yaml
           comment: "false"
 
       - name: A delta was found and did not fail the job
