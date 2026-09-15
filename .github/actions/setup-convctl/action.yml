@@ -67,11 +67,25 @@ runs:
           echo "::error::binary input points at $BINARY, which is not an executable file" >&2
           exit 1
         fi
-        dir="$(cd "$(dirname "$BINARY")" && pwd)"
+        # Linked into a directory of our own as "convctl", rather than
+        # putting the supplied binary's directory on PATH. Every Action that
+        # follows invokes the literal command `convctl`, so a binary named
+        # convctl-linux-amd64 — which is exactly what a download or a build
+        # matrix produces — would be on PATH and still not found. Linking
+        # also avoids adding a directory of unrelated executables to PATH.
+        dir="$RUNNER_TEMP/convctl-supplied"
+        mkdir -p "$dir"
+        name=convctl
+        case "$RUNNER_OS" in Windows) name=convctl.exe ;; esac
+        rm -f "$dir/$name"
+        ln -s "$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" "$dir/$name" 2>/dev/null \
+          || cp "$BINARY" "$dir/$name"
+        chmod +x "$dir/$name"
+
         echo "$dir" >> "$GITHUB_PATH"
         {
-          echo "path=$dir/$(basename "$BINARY")"
-          echo "version=$("$BINARY" version | awk '{print $1}')"
+          echo "path=$dir/$name"
+          echo "version=$("$dir/$name" version | awk '{print $1}')"
         } >> "$GITHUB_OUTPUT"
         echo "using the supplied convctl at $BINARY" >> "$GITHUB_STEP_SUMMARY"
 

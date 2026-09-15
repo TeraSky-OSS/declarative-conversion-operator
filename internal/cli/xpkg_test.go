@@ -249,9 +249,12 @@ func TestStagePackageXRDs_CannotEscapeTheStagingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Rename the XRDs to hostile values, keeping everything else real.
-	pkg.XRDs[0].SetName("../../../../tmp/convctl-escape")
-	pkg.XRDs[1].SetName("../../../../tmp/convctl-escape")
+	// A target inside the test's own directory, so a failure cannot touch
+	// anything else on the machine and two runs cannot collide.
+	escape := filepath.Join(t.TempDir(), "escaped")
+	hostile := "../../../../" + strings.TrimPrefix(escape, "/")
+	pkg.XRDs[0].SetName(hostile)
+	pkg.XRDs[1].SetName(hostile)
 
 	staged, cleanup, err := stagePackageXRDsFrom(pkg, "hostile.xpkg")
 	if err != nil {
@@ -268,7 +271,7 @@ func TestStagePackageXRDs_CannotEscapeTheStagingDirectory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(abs, "/tmp/convctl-escape") {
+		if strings.Contains(abs, escape) {
 			t.Errorf("staged file escaped to %s", abs)
 		}
 		if !strings.Contains(abs, "convctl-package-") {
@@ -282,8 +285,7 @@ func TestStagePackageXRDs_CannotEscapeTheStagingDirectory(t *testing.T) {
 			t.Errorf("staged file is not readable: %v", err)
 		}
 	}
-	if _, err := os.Stat("/tmp/convctl-escape.yaml"); err == nil {
-		t.Error("a file was written outside the staging directory")
-		_ = os.Remove("/tmp/convctl-escape.yaml")
+	if _, err := os.Stat(escape + ".yaml"); err == nil {
+		t.Errorf("a file was written outside the staging directory, at %s.yaml", escape)
 	}
 }

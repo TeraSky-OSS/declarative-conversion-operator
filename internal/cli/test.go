@@ -182,8 +182,14 @@ func RunTest(opts TestOptions) (*Report, error) {
 	// the bound entirely and paginates the whole population into memory,
 	// and an unknown strategy keeps nothing and then fails the run for
 	// having no samples.
-	if err := ValidateSamplingOptions(opts.Sampling); err != nil {
-		return nil, err
+	//
+	// Only for a live run. Sampling is documented as live-only and is
+	// ignored for fixtures, so rejecting it there would newly break callers
+	// that set the field harmlessly.
+	if opts.Live {
+		if err := ValidateSamplingOptions(opts.Sampling); err != nil {
+			return nil, err
+		}
 	}
 	kind, err := PeekConfigKind(opts.ConfigPath)
 	if err != nil {

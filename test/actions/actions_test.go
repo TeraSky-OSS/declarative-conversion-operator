@@ -272,3 +272,29 @@ func TestSetupConvctl_ReExtractsWhenVerifying(t *testing.T) {
 		t.Error("the existing binary is not removed before extraction")
 	}
 }
+
+// The Actions that follow invoke the literal command `convctl`, so a
+// supplied binary named convctl-linux-amd64 — which is what a download or a
+// build matrix produces — has to be linked under the expected name rather
+// than having its directory put on PATH.
+func TestSetupConvctl_NormalisesTheSuppliedBinaryName(t *testing.T) {
+	def := loadActions(t)["setup-convctl"]
+	var supplied string
+	for _, s := range def.Runs.Steps {
+		if s.ID == "supplied" {
+			supplied = s.Run
+		}
+	}
+	if supplied == "" {
+		t.Fatal("no step handles the binary input")
+	}
+	if !strings.Contains(supplied, "name=convctl") {
+		t.Error("the supplied binary is not exposed under the name the other Actions invoke")
+	}
+	if !strings.Contains(supplied, "ln -s") && !strings.Contains(supplied, "cp ") {
+		t.Error("the supplied binary is neither linked nor copied into place")
+	}
+	if !strings.Contains(supplied, "convctl.exe") {
+		t.Error("the Windows binary name is not handled")
+	}
+}

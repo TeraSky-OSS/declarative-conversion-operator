@@ -304,26 +304,39 @@ func TestSampler_FirstUnderTheCapIsNotSampling(t *testing.T) {
 // a negative cap disables the bound and paginates everything into memory,
 // and an unknown strategy keeps nothing and then fails for having no
 // samples.
-func TestRunTest_ValidatesSamplingOptions(t *testing.T) {
-	base := TestOptions{
+func TestRunTest_ValidatesSamplingOptionsOnLiveRuns(t *testing.T) {
+	live := TestOptions{
+		XRDPath: "testdata/full/xrd.yaml", ConfigPath: "testdata/full/config.yaml",
+		Live: true, Quiet: true,
+	}
+
+	// The validation has to happen before any cluster work, so these fail
+	// with the sampling error rather than with "no kubeconfig" — which is
+	// also what makes the assertion runnable without a cluster.
+	live.Sampling = SamplingOptions{MaxSamples: -1}
+	if _, err := RunTest(live); err == nil || !strings.Contains(err.Error(), "--max-samples") {
+		t.Errorf("a negative cap was not rejected before cluster work: %v", err)
+	}
+
+	live.Sampling = SamplingOptions{MaxSamples: 10, Strategy: "newestish"}
+	if _, err := RunTest(live); err == nil || !strings.Contains(err.Error(), "--sample-strategy") {
+		t.Errorf("an unknown strategy was not rejected before cluster work: %v", err)
+	}
+}
+
+// Sampling is documented as live-only and ignored for fixtures, so a caller
+// that sets it harmlessly on a fixture run must not start failing.
+func TestRunTest_IgnoresSamplingOnFixtureRuns(t *testing.T) {
+	opts := TestOptions{
 		XRDPath: "testdata/full/xrd.yaml", ConfigPath: "testdata/full/config.yaml",
 		SamplesDir: "testdata/full/samples", Quiet: true,
+		Sampling: SamplingOptions{Strategy: SampleRandom},
 	}
-
-	bad := base
-	bad.Sampling = SamplingOptions{MaxSamples: -1}
-	if _, err := RunTest(bad); err == nil {
-		t.Error("a negative cap was accepted, which disables the bound entirely")
+	rep, err := RunTest(opts)
+	if err != nil {
+		t.Fatalf("a fixture run was rejected for a live-only field: %v", err)
 	}
-
-	bad = base
-	bad.Sampling = SamplingOptions{MaxSamples: 10, Strategy: "newestish"}
-	if _, err := RunTest(bad); err == nil {
-		t.Error("an unknown strategy was accepted")
-	}
-
-	// A fixture run with no sampling options is unaffected.
-	if _, err := RunTest(base); err != nil {
-		t.Errorf("an ordinary run was rejected: %v", err)
+	if rep.Meta.Sampling != nil {
+		t.Errorf("a fixture run reported sampling: %+v", rep.Meta.Sampling)
 	}
 }
