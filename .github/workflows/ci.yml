@@ -22,6 +22,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -89,6 +95,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -105,6 +117,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -129,6 +147,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -156,6 +180,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -263,6 +293,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # No job in this workflow pushes via git; they all run
+          # repository-controlled code (go test, benchmarks, linters, docker
+          # build, kind). checkout persists the job token in .git/config by
+          # default, where that code can read it.
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
