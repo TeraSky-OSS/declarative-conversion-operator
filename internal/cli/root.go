@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -57,7 +58,7 @@ cluster. Every command works against either resource type:
 		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
-		newCompatCmd(), newVersionsCmd(),
+		newCompatCmd(), newVersionsCmd(), newPlanCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -699,6 +700,89 @@ means the objects could not be listed at all.`,
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig file")
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context to use")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	cmd.MarkFlagsOneRequired("xrd", "crd")
+	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+func newPlanCmd() *cobra.Command {
+	var (
+		xrdPath, crdPath, configPath, to, output string
+		packageManaged, assumeVerified           bool
+	)
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Print the ordered, gated path from where a target is to where you want it",
+		Long: `A safe version migration is an ordered sequence: add a version, wire the
+spoke, verify, promote the hub, retarget Compositions, migrate storage, prune
+stored versions, stop serving, drop the block. Each step has a gate that must
+hold before the next one is safe.
+
+That sequence exists today only as prose spread across three documents and
+six example directories. plan determines where the target actually is and
+prints the path from there, with each step carrying:
+
+  run      the exact command
+  gate     the condition that must hold before the next step is safe
+  verify   the command that proves it
+  status   done / ready / blocked, and what is blocking
+
+Steps already satisfied are marked done rather than reprinted as work, and
+only the first outstanding step is offered: presenting five ready steps at
+once is how they get done out of order.
+
+Package-managed targets are ordered differently. For an XRD shipped in a
+Configuration the conversion config must be applied BEFORE the package
+upgrade lands, or the new version is served for a while with no conversion at
+all — reads then return stored objects relabelled but unconverted, with HTTP
+200 and no error. Detected from the XRD's ownerReferences, or forced with
+--package-managed.
+
+Retiring a version -- un-serving it, dropping its block -- is the one
+irreversible part of the sequence, and whether it is safe rests on the steps
+this command cannot check from files. Those steps are never offered until you
+pass --assume-verified, which is you saying you ran their verify commands.
+
+Read-only: it prints, you run the steps.
+
+Exit codes: 0 a plan was produced, 1 the target state is unreachable,
+2 usage error.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "table", "json":
+			default:
+				return fmt.Errorf("invalid --output value %q (want table or json)", output)
+			}
+			rep, err := RunPlan(PlanOptions{
+				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath,
+				To: to, PackageManaged: packageManaged, AssumeVerified: assumeVerified,
+			})
+			if err != nil {
+				// An unreachable target state is a result, not a usage
+				// error: the command worked, the answer is "you cannot get
+				// there from here".
+				if strings.Contains(err.Error(), "is not declared on") {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "error:", err)
+					exitCode = ExitTestFailure
+					return nil
+				}
+				return err
+			}
+			if output == "json" {
+				return writeJSON(cmd, rep)
+			}
+			rep.WriteTable(cmd.OutOrStdout())
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&xrdPath, "xrd", "x", "", "Path to the XRD")
+	cmd.Flags().StringVar(&crdPath, "crd", "", "Path to the CRD")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to the conversion config, so wired-up steps are marked done")
+	cmd.Flags().StringVar(&to, "to", "", "The version to make the hub (required)")
+	cmd.Flags().BoolVar(&packageManaged, "package-managed", false, "Force the package-managed ordering (normally detected from ownerReferences)")
+	cmd.Flags().BoolVar(&assumeVerified, "assume-verified", false, "Assert that the steps needing a cluster (Composition retarget, storage migration, storedVersions prune) have been confirmed with their verify commands, so the retirement steps can be planned")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")
+	_ = cmd.MarkFlagRequired("to")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
 	return cmd

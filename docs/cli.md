@@ -6,6 +6,9 @@
 convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json]
 convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [flags]
+convctl plan          --to v2 (--xrd xrd.yaml | --crd crd.yaml) [--config config.yaml] [-o table|json]
+convctl versions      --xrd xrd.yaml [--config config.yaml] [--check-unserve v1] [-o table|json]
+convctl compat        --base REV --head REV --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|markdown]
 convctl diff          --config a.yaml --config b.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json]
 convctl diff          --config config.yaml --live [-o json|table]
 convctl convert       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) --sample obj.yaml --to v2 [-o yaml|json]
@@ -18,7 +21,9 @@ convctl retarget      --xrd NAME --to v2 [--dry-run] [--canary N|N%] [flags]
 convctl crossplane status <xrd-name> [-o table|json]
 ```
 
-Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations.
+`plan` is the one to start from if you are mid-migration and unsure what comes next: it prints the ordered, gated path from the target's current state to the version you name, and marks the one step that is safe to do now.
+
+Roughly in the order you reach for them while authoring a mapping: `suggest` drafts rules for fields nothing covers yet, `validate` and `analyze` check the config statically, `convert` shows what a single object turns into, `test` grades fixtures or every live object, `diff` reports what a config edit changed, and `patch-preview` shows the exact patch the operator will apply once you commit. After a hub/storage-version promotion, `migrate-storage` rewrites live objects (critical for native CRDs; on XRDs the `compositionRef` retarget usually already did, and the remaining job is pruning `storedVersions`). For a GitOps hub flip, `generate kyverno` drafts MutatingPolicies that retarget existing XRs without a per-object name patch; on a cluster without Kyverno, `retarget` does the same job directly. `crossplane status` answers "where is my migration right now?" without assembling it from half a dozen `kubectl` invocations. Around all of it, `plan` sequences the migration, `versions` answers whether an old version can be retired yet, and `compat` gates config edits in review.
 
 ## `convctl validate`
 
@@ -328,6 +333,142 @@ Here is every threshold against every outcome:
 **Acknowledged loss alone never fails, at any threshold.** `acknowledgeLossy: true` is the config author stating on the record that a field is expected to be dropped or rounded; re-litigating that decision on every CI run would just train people to pass `--fail-on none`. What the default threshold catches is loss that *nobody* declared.
 
 `--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
+
+## `convctl plan`
+
+The ordered, gated path from where a target actually is to where you want it.
+
+A safe version migration is a sequence — add the version, wire the spoke,
+verify, promote the hub, retarget Compositions, migrate storage, prune
+`storedVersions`, stop serving, drop the block — and every step has a
+condition that has to hold before the next one is safe. That sequence exists
+in this repository as prose spread across three documents and six example
+directories. `plan` reads the target's current state and prints the path from
+there, with each step carrying the command, the gate, and the command that
+proves the gate.
+
+```console
+$ convctl plan --xrd xrd.yaml --config config.yaml --to v2
+
+XRD: xwidgets.example.org
+Config: xwidgets-conversion
+Hub: v1 → v2
+
+  1. [DONE] Serve v2 on the XRD
+     run:     edit xwidgets.example.org: set spec.versions[name=v2].served: true (leave referenceable on v1 for now)
+     gate:    v2 is served and the apiserver accepts reads at it
+     verify:  kubectl get compositeresourcedefinition xwidgets.example.org -o jsonpath='{.spec.versions[?(@.name=="v2")].served}'
+
+  2. [DONE] Wire v2 into the conversion config
+     run:     convctl suggest --xrd <xrd.yaml> --hub v1 --spoke v2  # then apply the config
+     gate:    the config declares a rule set covering v2, and `convctl validate` is clean
+     verify:  convctl validate --xrd <xrd.yaml> --config <config.yaml>
+
+▶ 3. [READY] Promote v2 to the hub
+     run:      edit xwidgets.example.org: move referenceable: true from v1 to v2, and set spec.hubVersion: v2 in the config
+     gate:     conversion is verified against real objects AND the webhook has reached the generated CRD. Applied is not the same as converting: until Crossplane re-renders the generated CRD, reads at a non-storage version return stored objects relabelled but UNCONVERTED, with HTTP 200 and no error
+     verify:   convctl test --xrd <xrd.yaml> --config <config.yaml> --live --validate-output --verify-propagation --version-pair v1:v2
+     blocked:  the hub is still v1
+
+  4. [UNKNOWN] Retarget Compositions at the new hub
+     run:      convctl retarget --xrd xwidgets.example.org --to v2
+     gate:     every Composition's compositeTypeRef.apiVersion names v2, and every XR's compositionRef points at a retargeted Composition
+     verify:   convctl retarget --xrd xwidgets.example.org --to v2 --dry-run
+     blocked:  cannot be determined from files alone; confirm against the cluster with the verify command
+
+  ...
+
+  7. [BLOCKED] Stop serving v1
+     run:      edit xwidgets.example.org: set spec.versions[name=v1].served: false (mark it deprecated first, with a deprecationWarning)
+     gate:     nothing is stored at v1, nothing is writing it, and no objects remain readable at it
+     verify:   convctl versions --xrd <xrd.yaml> --check-unserve v1
+     blocked:  step 3 (Promote v2 to the hub) has not been done yet
+
+NEXT: step 3 — Promote v2 to the hub
+```
+
+`plan` is read-only. It prints; you run the steps.
+
+### Why only one step is offered
+
+Steps already satisfied are marked `DONE` rather than reprinted as work, and
+exactly one outstanding step is ever marked `READY`. Everything after it is
+`BLOCKED`, naming the step that blocks it.
+
+That is deliberate. Presenting five satisfiable steps at once is how they get
+done out of order, and for this particular sequence, out of order means
+serving a version with no conversion behind it — which fails silently. The
+plan is a queue, not a checklist.
+
+### `UNKNOWN`, and why it is not `READY`
+
+Three steps — retargeting Compositions, migrating storage, pruning
+`storedVersions` — have no answer in a manifest. Whether every stored object
+has been rewritten is a fact about the cluster.
+
+Those steps are marked `UNKNOWN` rather than guessed at. `UNKNOWN` is neither
+offered as the next step nor allowed to block the ones after it:
+
+- Calling it `READY` would claim the tool checked something it did not.
+- Calling it `BLOCKED` would stall every later step behind a gate that can
+  never close from files, hiding the rest of the plan on a late-stage target.
+
+Each one carries the `verify` command that answers it against a live cluster.
+When no `READY` step remains, `plan` says so and reports how many steps still
+need a cluster:
+
+```console
+Nothing outstanding that can be determined from files. 3 step(s) need a cluster to confirm — run their verify commands.
+```
+
+### Package-managed XRDs are ordered differently
+
+For an XRD shipped inside a Crossplane Configuration, the conversion config
+must be applied **before** the package upgrade lands. That is the reverse of
+the hand-applied order, and getting it backwards leaves the new version served
+with no conversion at all — reads return stored objects relabelled but
+unconverted, `200 OK`, no error anywhere.
+
+`plan` detects this from the XRD's `ownerReferences` (a `ConfigurationRevision`
+owner) and reorders accordingly, or you can force it with `--package-managed`:
+
+```console
+$ convctl plan --xrd xrd.yaml --config config.yaml --to v2 --package-managed
+...
+PACKAGE-MANAGED: the conversion config must be applied BEFORE the package upgrade lands,
+                 or the new version is served with no conversion at all.
+```
+
+### Which versions get retirement steps
+
+A version gets "stop serving" and "drop the block" steps when it is the hub
+being replaced, when it is marked `deprecated`, or when it has already stopped
+being served.
+
+A served, undeprecated spoke gets neither. Keeping old versions readable is
+the entire point of a conversion webhook; retiring one is a separate decision,
+and you signal it by deprecating the version.
+
+### Native CRDs
+
+`--crd` plans the same sequence for a native CRD, where the hub is the
+`storage: true` version. There is no Composition-retargeting step, because
+nothing points a `compositeTypeRef` at a plain CRD.
+
+```console
+$ convctl plan --crd crd.yaml --config crdconversionconfig.yaml --to v2
+```
+
+### Output and exit codes
+
+`--output json` emits the whole plan — every step with its `run`, `gate`,
+`verify`, `status` and `blockedBy` — for a controller or a pipeline to consume.
+
+| Code | Meaning |
+|---|---|
+| 0 | a plan was produced |
+| 1 | the target state is unreachable (the version is not declared on the target) |
+| 2 | usage error |
 
 ## `convctl versions`
 
