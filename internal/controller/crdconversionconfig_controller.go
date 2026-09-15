@@ -86,11 +86,8 @@ func (r *CRDConversionConfigReconciler) Reconcile(ctx context.Context, req recon
 		return r.reconcileDelete(ctx, &cfg)
 	}
 
-	if !controllerutil.ContainsFinalizer(&cfg, teraskyv1alpha1.CRDConversionConfigFinalizer) {
-		controllerutil.AddFinalizer(&cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
-		if err := r.Update(ctx, &cfg); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
-		}
+	if err := addFinalizer(ctx, r.Client, &cfg, teraskyv1alpha1.CRDConversionConfigFinalizer); err != nil {
+		return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 	}
 
 	result, err := r.reconcileNormal(ctx, &cfg)
@@ -425,8 +422,7 @@ func (r *CRDConversionConfigReconciler) reconcileDelete(ctx context.Context, cfg
 }
 
 func (r *CRDConversionConfigReconciler) removeFinalizer(ctx context.Context, cfg *teraskyv1alpha1.CRDConversionConfig) error {
-	controllerutil.RemoveFinalizer(cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
-	return r.Update(ctx, cfg)
+	return removeFinalizer(ctx, r.Client, cfg, teraskyv1alpha1.CRDConversionConfigFinalizer)
 }
 
 func (r *CRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, cfg *teraskyv1alpha1.CRDConversionConfig) error {

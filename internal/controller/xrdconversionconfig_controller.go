@@ -85,11 +85,8 @@ func (r *XRDConversionConfigReconciler) Reconcile(ctx context.Context, req recon
 		return r.reconcileDelete(ctx, &cfg)
 	}
 
-	if !controllerutil.ContainsFinalizer(&cfg, teraskyv1alpha1.XRDConversionConfigFinalizer) {
-		controllerutil.AddFinalizer(&cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
-		if err := r.Update(ctx, &cfg); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
-		}
+	if err := addFinalizer(ctx, r.Client, &cfg, teraskyv1alpha1.XRDConversionConfigFinalizer); err != nil {
+		return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 	}
 
 	result, err := r.reconcileNormal(ctx, &cfg)
@@ -579,8 +576,7 @@ func countServedVersions(xrd *unstructured.Unstructured) int {
 }
 
 func (r *XRDConversionConfigReconciler) removeFinalizer(ctx context.Context, cfg *teraskyv1alpha1.XRDConversionConfig) error {
-	controllerutil.RemoveFinalizer(cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
-	return r.Update(ctx, cfg)
+	return removeFinalizer(ctx, r.Client, cfg, teraskyv1alpha1.XRDConversionConfigFinalizer)
 }
 
 func (r *XRDConversionConfigReconciler) patchStatus(ctx context.Context, orig, cfg *teraskyv1alpha1.XRDConversionConfig) error {

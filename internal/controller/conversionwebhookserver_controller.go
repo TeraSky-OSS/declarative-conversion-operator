@@ -110,11 +110,8 @@ func (r *ConversionWebhookServerReconciler) Reconcile(ctx context.Context, req r
 		return r.reconcileDelete(ctx, &server)
 	}
 
-	if !controllerutil.ContainsFinalizer(&server, teraskyv1alpha1.ConversionWebhookServerFinalizer) {
-		controllerutil.AddFinalizer(&server, teraskyv1alpha1.ConversionWebhookServerFinalizer)
-		if err := r.Update(ctx, &server); err != nil {
-			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
-		}
+	if err := addFinalizer(ctx, r.Client, &server, teraskyv1alpha1.ConversionWebhookServerFinalizer); err != nil {
+		return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 	}
 
 	return r.reconcileNormal(ctx, &server)
@@ -711,8 +708,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 		}
 	}
 
-	controllerutil.RemoveFinalizer(server, teraskyv1alpha1.ConversionWebhookServerFinalizer)
-	if err := r.Update(ctx, server); err != nil {
+	if err := removeFinalizer(ctx, r.Client, server, teraskyv1alpha1.ConversionWebhookServerFinalizer); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
