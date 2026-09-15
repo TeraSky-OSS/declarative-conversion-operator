@@ -58,6 +58,13 @@ type RetargetOptions struct {
 	// or a percentage ("10%"). Selection is deterministic — the listing
 	// order, which the apiserver returns sorted by name — so a second run
 	// with the same value touches the same objects.
+	//
+	// On a claim-offering XRD that order is every composite, then every
+	// claim, so a small canary lands entirely on composites. That is the
+	// right shape for proving a change (composites are what Crossplane
+	// re-selects) but it does mean a canary run is not a sample of both
+	// classes; the report's per-object CRD column makes which is which
+	// visible.
 	Canary string
 	// LabelKey is the Composition label the selector matches on. Defaults
 	// to the same key `generate kyverno` uses.
@@ -281,7 +288,11 @@ func RunRetarget(ctx context.Context, dyn dynamic.Interface, opts RetargetOption
 	owners = owners[:selected]
 	rep.Selected = selected
 	if selected < rep.Total {
-		rep.Warnings = append(rep.Warnings, fmt.Sprintf("--canary %s limited this run to the first %d of %d objects by name; re-run without --canary to finish", opts.Canary, selected, rep.Total))
+		note := fmt.Sprintf("--canary %s limited this run to the first %d of %d objects by name; re-run without --canary to finish", opts.Canary, selected, rep.Total)
+		if len(generated) > 1 {
+			note += " (objects are ordered composites first, then claims, so a small canary lands entirely on composites)"
+		}
+		rep.Warnings = append(rep.Warnings, note)
 	}
 
 	patchOpts := opts.patchOptions()
@@ -534,7 +545,7 @@ list/patch on the XR (and claim) types.`,
 	cmd.Flags().StringVar(&opts.KubeContext, "context", "", "Kubeconfig context to use (default: the kubeconfig's current-context)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Send the same patch with server-side dry-run (exercises conversion, does not persist)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 1, "Number of objects to patch in parallel")
-	cmd.Flags().StringVar(&opts.Canary, "canary", "", "Retarget only the first N objects, or N%% of them, by name (e.g. 25 or 10%%)")
+	cmd.Flags().StringVar(&opts.Canary, "canary", "", "Retarget only the first N objects, or N% of them, by name (e.g. 25 or 10%)")
 	cmd.Flags().StringVar(&opts.LabelKey, "label-key", defaultXRDAPIVersionLabel, "Composition label key the selector matches on")
 	cmd.Flags().StringVar(&opts.FieldManager, "field-manager", defaultRetargetFieldManager, "Field manager name recorded on the patch")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json")

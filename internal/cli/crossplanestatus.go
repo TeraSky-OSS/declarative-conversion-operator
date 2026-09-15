@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
@@ -125,9 +126,12 @@ func RunCrossplaneStatus(ctx context.Context, dyn dynamic.Interface, xrdName str
 	rep.Group, _, _ = unstructured.NestedString(xrd.Object, "spec", "group")
 	rep.Kind, _, _ = unstructured.NestedString(xrd.Object, "spec", "names", "kind")
 
-	cfg, err := FetchLiveXRDConversionConfig(ctx, dyn, conversionConfigNameForXRD(ctx, dyn, xrdName))
-	if err != nil {
-		rep.Warnings = append(rep.Warnings, "could not read the XRDConversionConfig: "+err.Error())
+	var cfg *teraskyv1alpha1.XRDConversionConfig
+	if cfgName := conversionConfigNameForXRD(ctx, dyn, xrdName); cfgName != "" {
+		var err error
+		if cfg, err = FetchLiveXRDConversionConfig(ctx, dyn, cfgName); err != nil {
+			rep.Warnings = append(rep.Warnings, "could not read the XRDConversionConfig: "+err.Error())
+		}
 	}
 	spokeVersions := map[string]bool{}
 	if cfg != nil {
