@@ -1,0 +1,7 @@
+apiVersion: validate.example.org/v2
+kind: XOutput
+metadata:
+  name: sample
+spec:
+  size: large
+  tier: bronze

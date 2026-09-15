@@ -169,7 +169,7 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		skipIdentity, strict, live, quiet, verifyPropagation                 bool
+		skipIdentity, strict, live, quiet, verifyPropagation, validateOutput bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext, kubeconfigDir                               string
 		contexts                                                             []string
@@ -208,6 +208,18 @@ cluster will actually use them. Until Crossplane re-renders the generated CRD,
 reads at a non-storage version come back relabelled but UNCONVERTED, with HTTP
 200 and no error anywhere.
 
+--validate-output additionally validates every converted object against the
+destination version's own OpenAPI schema, using the same structural-schema
+validator the apiserver uses. Without it a conversion that drops a required
+field, produces an out-of-enum value or overflows a maxLength is reported as
+PASS and then rejected in production, with an error naming the object rather
+than the rule that produced it. A violation counts as an error, so it fails at
+the default --fail-on threshold.
+
+It is off by default only so that upgrading does not turn existing green
+pipelines red without warning; the default is planned to flip in a later
+release. Turn it on now in new pipelines.
+
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
@@ -239,6 +251,7 @@ results are collected by sample index, never by completion order.`,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
 				VerifyPropagation: verifyPropagation,
+				ValidateOutput:    validateOutput,
 			}
 			targets, err := resolveLiveTargets(opts)
 			if err != nil {
@@ -295,6 +308,7 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
 	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
+	cmd.Flags().BoolVar(&validateOutput, "validate-output", false, "Validate every converted object against the destination version's OpenAPI schema, using the apiserver's own validator. A violation is an error, not a loss. Off by default this release; the default is planned to flip")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")

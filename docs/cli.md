@@ -89,6 +89,59 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 
 Each sample's asserted starting version is inferred from its own `apiVersion` — no separate index file needed.
 
+### Validating the converted output (`--validate-output`)
+
+`convctl test` round-trips every sample and diffs the result. That proves the
+rules agree **with each other**. It says nothing about whether what they
+produced is an object the apiserver will accept — and those are different
+questions.
+
+Without this flag, a conversion that drops a `required` field, produces a
+value outside an `enum`, violates a `pattern`, or overflows a `maxLength` is
+reported as **PASS**, and is then rejected in production with an error that
+names the object rather than the rule that produced it.
+
+```console
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples
+          v2→v1  PASS    4  16   v1:rule[1]:FieldRename,v1:rule[2]:FieldRename
+
+$ convctl test --xrd xrd.yaml --config config.yaml --samples ./samples --validate-output
+          v2→v1  ERROR   4  136  v1:rule[1]:FieldRename,v1:rule[2]:FieldRename
+
+ISSUES (2)
+SAMPLE    FIELD        FROM → TO  TYPE              DETAIL
+hub.yaml  spec.region  v2 → v1    schema-violation  spec.region: Required value (required) [v1:rule[2]:FieldRename]
+hub.yaml  spec.tier    v2 → v1    schema-violation  spec.tier: Unsupported value: "bronze": supported values: "gold", "silver" (enum) [v1:rule[1]:FieldRename]
+```
+
+Each violation carries the JSON path, the constraint that failed, and — when
+exactly one rule claims that destination path — the rule that produced it.
+Attribution is best-effort: a violation no single rule claims is still
+reported, because one nobody can explain matters more, not less.
+
+Validation uses the apiserver's own structural-schema validator
+(`k8s.io/apiextensions-apiserver/pkg/apiserver/validation`), not a
+reimplementation, so the verdict matches what the cluster will do rather than
+approximating it.
+
+**A violation is an error, not a loss.** It counts in `Summary.Errors` and
+fails at the default `--fail-on loss` threshold — an object the apiserver
+rejects is a failed conversion, not a lossy one.
+
+**Crossplane's injected fields do not produce violations.** Crossplane merges
+`spec.crossplane` (and, for `LegacyCluster`, `spec.claimRef`,
+`spec.writeConnectionSecretToRef` and the rest) into the CRD it generates,
+but those properties are absent from the XRD's authored schema — the only
+schema this tool has. They are removed before validation, per the target's
+resolved scope, so a real Crossplane object reports only violations its
+author actually caused.
+
+> [!NOTE]
+> **Off by default in this release, on in a later one.** Turning it on now
+> would make existing green pipelines red on upgrade without warning. New
+> pipelines should set it; the default is planned to flip in a future
+> release, and the change will be called out in the release notes.
+
 ### Parallelism and progress
 
 Samples are tested in parallel, one worker per available CPU by default. This matters most for `--live`, where the sample set is every object of the target type in the cluster rather than a handful of fixtures. Set `--concurrency N` to pin the worker count (`--concurrency 1` to go fully sequential).

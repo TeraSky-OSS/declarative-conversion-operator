@@ -64,6 +64,17 @@ type TestOptions struct {
 	// Quiet suppresses the progress line written to stderr.
 	Quiet bool
 
+	// ValidateOutput additionally validates every converted object against
+	// the destination version's own schema, using the apiextensions
+	// structural-schema validator. Without it, a conversion that drops a
+	// required field or produces an out-of-enum value is reported as PASS
+	// and then rejected by the apiserver in production, with an error that
+	// names the object rather than the rule that produced it.
+	//
+	// Off by default: turning it on would make existing green pipelines
+	// red on first upgrade. The default flips in a later release.
+	ValidateOutput bool
+
 	// VerifyPropagation additionally checks, against the same cluster,
 	// that every CRD Crossplane generates from the target XRD actually
 	// carries the conversion webhook the XRD points at. Samples passing
@@ -208,7 +219,11 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	rep, err := runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	// The injected set is what --validate-output must ignore: Crossplane
+	// merges these into the generated CRD, so they are present on a real
+	// object and absent from the XRD's authored schema — the only schema
+	// this tool has.
+	rep, err := runTestCommon(opts, "XRD", xrdName(xrd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, xrdadapter.New(xrd).PlatformInjectedPaths().Paths, start)
 	if err != nil {
 		return nil, err
 	}
@@ -269,14 +284,24 @@ func runTestCRD(opts TestOptions) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, start)
+	// A native CRD's authored schema is the whole schema — nothing is
+	// injected behind the author's back — so there is nothing to strip.
+	return runTestCommon(opts, "CRD", crdName(crd), cfg.Name, cfg.Spec.HubVersion, samples, versions, report, router, nil, start)
 }
 
 // runTestCommon is runTestXRD/runTestCRD's shared tail: exercising every
 // sample across every configured-version pair is entirely independent of
 // whether the target is an XRD or a native CRD, once a Router and an
 // AnalyzeReport already exist.
-func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, start time.Time) (*Report, error) {
+func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hubVersion string, samples []Sample, versions []engine.VersionSchema, report engine.AnalyzeReport, router *engine.Router, injected []engine.FieldPath, start time.Time) (*Report, error) {
+	var validator *outputValidator
+	if opts.ValidateOutput {
+		var err error
+		validator, err = newOutputValidator(versions, injected)
+		if err != nil {
+			return nil, err
+		}
+	}
 	served := servedVersions(versions)
 	configured := configuredVersions(hubVersion, report, served)
 	targets := configured
@@ -317,7 +342,7 @@ func runTestCommon(opts TestOptions, resourceKind, resourceName, configName, hub
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets)
+				sr, counts, usage := testOneSample(opts, router, hubVersion, lossyPaths, report, samples[i], configured, targets, validator)
 
 				mu.Lock()
 				results[i] = sr
@@ -372,7 +397,7 @@ type sampleCounts struct {
 // a sample stay sequential: they're cheap next to the coordination cost,
 // and keeping the unit of parallelism at the sample level is what makes
 // deterministic result ordering trivial.
-func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string) (SampleResult, sampleCounts, map[string]int) {
+func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, configured, targets []string, validator *outputValidator) (SampleResult, sampleCounts, map[string]int) {
 	sr := SampleResult{File: s.File, AssertedVersion: s.Version, CRD: s.CRD, CRDRole: s.CRDRole}
 	var counts sampleCounts
 	usage := map[string]int{}
@@ -395,7 +420,7 @@ func testOneSample(opts TestOptions, router *engine.Router, hubVersion string, l
 		if opts.SkipIdentity && target == s.Version {
 			continue
 		}
-		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage)
+		pr := testOnePath(router, hubVersion, lossyPaths, report, s, target, usage, validator)
 		sr.Paths = append(sr.Paths, pr)
 		counts.pathsTested++
 		switch pr.Result {
@@ -504,7 +529,7 @@ func touchedSpokes(from, to, hub string) []string {
 	return out
 }
 
-func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, target string, ruleUsage map[string]int) PathResult {
+func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[string]bool, report engine.AnalyzeReport, s Sample, target string, ruleUsage map[string]int, validator *outputValidator) PathResult {
 	start := time.Now()
 	pr := PathResult{From: s.Version, To: target}
 
@@ -531,6 +556,30 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		return pr
 	}
 
+	// Validate the forward result against the destination version's own
+	// schema before looking at round-trip fidelity. A round-trip diff says
+	// the rules agree with each other; this says the apiserver will accept
+	// what they produced, which is a different question and the one that
+	// bites in production.
+	if validator.knows(target) {
+		spoke := target
+		direction := "toSpoke"
+		if target == hub {
+			spoke = s.Version
+			direction = "toHub"
+		}
+		for _, v := range attributeViolations(validator.validate(forward, target), report, spoke, direction) {
+			pr.Issues = append(pr.Issues, Issue{
+				Field:  v.Path,
+				From:   s.Version,
+				To:     target,
+				Type:   "schema-violation",
+				Detail: v.String(),
+				Sample: s.File,
+			})
+		}
+	}
+
 	spokes := touchedSpokes(s.Version, target, hub)
 	diffs := diffLeaves(s.Object, back)
 	unacknowledged := 0
@@ -550,7 +599,17 @@ func testOnePath(router *engine.Router, hub string, lossyPaths map[string]map[st
 		}
 	}
 
+	schemaViolations := 0
+	for _, is := range pr.Issues {
+		if is.Type == "schema-violation" {
+			schemaViolations++
+		}
+	}
 	switch {
+	// A violation outranks a loss: an object the apiserver rejects is not
+	// a lossy conversion, it is a failed one.
+	case schemaViolations > 0:
+		pr.Result = "error"
 	case unacknowledged > 0:
 		pr.Result = "fail"
 	case len(diffs) > 0:

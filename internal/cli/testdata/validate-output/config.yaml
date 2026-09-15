@@ -1,0 +1,23 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: outputs-conversion
+spec:
+  targetXRD:
+    name: xoutputs.validate.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.size
+            spokePath: spec.size
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.tier
+            spokePath: spec.tier
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.region
+            spokePath: spec.region
