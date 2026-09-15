@@ -156,10 +156,15 @@ runs:
         # workflow at a tag, not to a wildcard: a signature from any other
         # workflow in any other repository is exactly what this is meant to
         # reject.
+        #
+        # The owner is matched case-insensitively. Fulcio records the
+        # canonical casing GitHub renders — TeraSky-OSS — and a lowercase
+        # pattern fails with "none of the expected identities matched",
+        # which reads like a bad signature rather than a typo.
         cosign verify-blob \
           --certificate checksums.txt.pem \
           --signature checksums.txt.sig \
-          --certificate-identity-regexp '^https://github\.com/terasky-oss/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
+          --certificate-identity-regexp '^https://github\.com/(?i:terasky-oss)/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
           --certificate-oidc-issuer https://token.actions.githubusercontent.com \
           checksums.txt
 

@@ -198,6 +198,13 @@ func TestSetupConvctl_VerifiesByDefaultAndPinsTheIdentity(t *testing.T) {
 	if !strings.Contains(verifyStep, "declarative-conversion-operator/\\.github/workflows/release\\.yml") {
 		t.Error("the certificate identity is not pinned to this repository's release workflow")
 	}
+	// Fulcio records the owner in GitHub's canonical casing (TeraSky-OSS).
+	// A lowercase pattern fails with "none of the expected identities
+	// matched", which reads like a bad signature rather than a typo — and
+	// did, in this action and in the release notes, until it was run.
+	if !strings.Contains(verifyStep, "(?i:terasky-oss)") {
+		t.Error("the owner is matched case-sensitively, so verification fails against the real certificate")
+	}
 	if !strings.Contains(verifyStep, "--certificate-oidc-issuer https://token.actions.githubusercontent.com") {
 		t.Error("the OIDC issuer is not pinned")
 	}

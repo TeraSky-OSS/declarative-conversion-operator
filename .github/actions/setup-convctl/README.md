@@ -36,6 +36,11 @@ The certificate identity is pinned to **this repository's release workflow at
 a tag**, not to a wildcard — a signature from any other workflow in any other
 repository is exactly what this rejects. The OIDC issuer is pinned too.
 
+The owner is matched case-insensitively: Fulcio records the casing GitHub
+renders (`TeraSky-OSS`), and a lowercase pattern fails with *"none of the
+expected identities matched"*, which reads like a bad signature rather than a
+typo.
+
 **A cache hit still verifies.** The cached branch is the one that runs in
 practice, and a poisoned cache that a cache hit could launder would make the
 whole thing decorative.

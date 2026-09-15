@@ -317,7 +317,7 @@ jobs:
             echo ""
             echo '```bash'
             echo "cosign verify \\"
-            echo "  --certificate-identity-regexp '^https://github.com/terasky-oss/declarative-conversion-operator/\\.github/workflows/release\\.yml@refs/tags/.*\$' \\"
+            echo "  --certificate-identity-regexp '^https://github.com/(?i:terasky-oss)/declarative-conversion-operator/\\.github/workflows/release\\.yml@refs/tags/.*\$' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
             echo "  <artifact>@<digest>"
             echo ""
@@ -330,7 +330,7 @@ jobs:
             echo "cosign verify-blob \\"
             echo "  --certificate checksums.txt.pem \\"
             echo "  --signature checksums.txt.sig \\"
-            echo "  --certificate-identity-regexp '^https://github.com/terasky-oss/declarative-conversion-operator/\\.github/workflows/release\\.yml@refs/tags/.*\$' \\"
+            echo "  --certificate-identity-regexp '^https://github.com/(?i:terasky-oss)/declarative-conversion-operator/\\.github/workflows/release\\.yml@refs/tags/.*\$' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
             echo "  checksums.txt"
             echo '```'
