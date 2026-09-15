@@ -116,7 +116,9 @@ nav:
       - Adding a strategy: contributing/adding-a-strategy.md
   - FAQ: faq.md
   - Limitations: limitations.md
-  - Roadmap: roadmap.md
+  - Roadmap:
+      - roadmap.md
+      - Review and proposed next phases: proposals/next-phases.md
   - Security:
       - Pod security: security/pod-security.md
       - Metrics trust boundary: security/metrics.md

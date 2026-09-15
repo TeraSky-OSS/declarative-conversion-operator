@@ -1,7 +1,7 @@
 # declarative-conversion-operator
 
-> [!WARNING]
-> **Alpha, under active development.** APIs (the CRDs, the Helm chart's values, and CLI flags) may still change without notice, and this hasn't yet been run in production. Expect rough edges; issues and feedback are welcome.
+> [!NOTE]
+> **Beta.** The conversion engine, both controllers, and `convctl` are feature-complete for the documented scope and covered by unit, e2e, and scale tests. The CRDs stay at API version `v1alpha1` (group `terasky.com`). The Helm chart's values and CLI flags may still change in a minor release; breaking changes are called out in the release notes. Issues and feedback are welcome.
 
 A Kubernetes operator that lets admins declare field-level conversions between [Crossplane](https://crossplane.io) XRD (`CompositeResourceDefinition`) versions, and between plain native Kubernetes CRD versions, using built-in strategies — no hand-written conversion webhook required.
 
