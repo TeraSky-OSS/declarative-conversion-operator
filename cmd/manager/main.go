@@ -112,11 +112,18 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "declarative-conversion-operator.terasky.com",
 		WebhookServer:          webhook.NewServer(webhook.Options{Port: 9443}),
+		// Without these two the manager's resident set scales with the
+		// cluster rather than with the number of conversion configs: a
+		// cluster-wide Secret informer plus cluster-wide Deployment,
+		// Service, HPA and PDB informers. See internal/controller/cacheopts.go.
+		Cache:  controller.ManagerCacheOptions(),
+		Client: controller.ManagerClientOptions(),
 	})
 	if err != nil {
 		logger.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
+	logger.Info("informer caches scoped", "scope", controller.CacheScopeDescription())
 
 	// The XRDConversionConfig controller watches Crossplane's
 	// CompositeResourceDefinition GVK, which doesn't exist at all on a

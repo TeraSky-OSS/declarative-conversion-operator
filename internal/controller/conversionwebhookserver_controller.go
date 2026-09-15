@@ -299,11 +299,15 @@ func (r *ConversionWebhookServerReconciler) reconcileService(ctx context.Context
 	return r.Apply(ctx, svc, client.ForceOwnership, client.FieldOwner(FieldOwner))
 }
 
+// podLabels is stamped on every child object this reconciler creates, at
+// the object level and not only on the pod template: ManagedByLabel is what
+// OwnedWorkloadSelector scopes the manager's informers by, so an object
+// without it would be invisible to this controller's own watches.
 func podLabels(server string) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/name":       "declarative-conversion-webhook-server",
-		"app.kubernetes.io/instance":   server,
-		"app.kubernetes.io/managed-by": "declarative-conversion-operator",
+		"app.kubernetes.io/name":     "declarative-conversion-webhook-server",
+		"app.kubernetes.io/instance": server,
+		ManagedByLabel:               ManagedByValue,
 	}
 }
 
@@ -519,6 +523,7 @@ func (r *ConversionWebhookServerReconciler) reconcileHPA(ctx context.Context, se
 		target = 75
 	}
 	hpa := applyautoscalingv2.HorizontalPodAutoscaler(cwsHPAName(server.Name), namespace).
+		WithLabels(podLabels(server.Name)).
 		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
 		WithSpec(applyautoscalingv2.HorizontalPodAutoscalerSpec().
 			WithScaleTargetRef(applyautoscalingv2.CrossVersionObjectReference().
@@ -549,6 +554,7 @@ func (r *ConversionWebhookServerReconciler) reconcilePDB(ctx context.Context, se
 		pdbSpec = pdbSpec.WithMaxUnavailable(*server.Spec.PodDisruptionBudget.MaxUnavailable)
 	}
 	pdb := applypolicyv1.PodDisruptionBudget(cwsPDBName(server.Name), namespace).
+		WithLabels(podLabels(server.Name)).
 		WithOwnerReferences(ownerReferenceApplyConfiguration(server)).
 		WithSpec(pdbSpec)
 	return r.Apply(ctx, pdb, client.ForceOwnership, client.FieldOwner(FieldOwner))
@@ -743,3 +749,4 @@ func enqueueAllServers(c client.Client) func(ctx context.Context, obj client.Obj
 		return reqs
 	}
 }
+

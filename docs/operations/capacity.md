@@ -75,6 +75,69 @@ and rejected: they would push compilation toward `O(N²)` spoke pairs for a
 gain that does not show up under the 1s p99 ConversionReview alert. Hub-and-
 spoke remains the only routing mode.
 
+## Memory: the manager
+
+The manager is an informer cache with some code attached, so its resident size
+is a property of **what it watches**, not of how much work it does.
+
+It no longer watches Secrets at all. A CA bundle is one key of one Secret per
+`ConversionWebhookServer`, read on the cold path of an apply; caching that cost
+a cluster-wide Secret informer, and Secrets are typically the largest object
+class in a cluster by total bytes. Reads go through to the API server, which
+also removes the staleness window on certificate rotation. The Deployments,
+Services, HPAs and PDBs it owns are label-scoped to
+`app.kubernetes.io/managed-by=declarative-conversion-operator`.
+
+The startup log line `informer caches scoped` states this on a running process,
+so it can be confirmed without reading the source.
+
+### How these numbers were taken
+
+`hack/measure-cache-memory.sh` builds two real images from two real commits,
+installs each in turn into the same loaded cluster, and reads
+`workingSetBytes` from the kubelet Summary API — the same number for both
+sides, and the one a container memory limit is enforced against. A single
+sample is not reproducible (it depends on where in its GC cycle the process
+is), so it takes seven samples 20 s apart after a 180 s settle.
+
+Cluster: kind v1.35, Crossplane 2.x, **2000 Secrets of ~3 KiB** across 20
+namespaces and **300 CRDs** carrying 200-property schemas across two versions
+each.
+
+| Process | Before | After | Change |
+|---|---:|---:|---:|
+| manager | 151 MiB | 151 MiB | ~0% |
+| webhook-server | 240 MiB | 121 MiB | **−50%** |
+
+Within a single run the spread across the seven samples was under 0.1 MiB.
+*Between* runs it is much wider — the same baseline build on a
+freshly-installed cluster came back 207 MiB — so compare a before and an after
+from **one** invocation of the script, which is what it is built to do, and do
+not compare a number here against one taken any other way.
+
+> [!IMPORTANT]
+> **The manager row does not measure what it looks like it measures.** At
+> ~3 KiB per Secret, 2000 Secrets are only ~8 MB — noise next to the 300 CRD
+> schemas the manager also caches and which this change does not touch. So the
+> flat result says the Secret informer was not the dominant term *on this
+> cluster*; it does not say removing it was worthless. The saving is linear in
+> total Secret bytes, which is exactly the quantity that varies most between
+> clusters and is unbounded on a busy one.
+>
+> To measure it on a cluster where it matters, raise the payload:
+>
+> ```bash
+> BASE_REF=main hack/measure-cache-memory.sh --secrets 2000 --secret-bytes 65536
+> ```
+>
+> The blast-radius argument stands on its own regardless: the ClusterRole has
+> to grant Secret access cluster-wide because the namespace is not knowable
+> ahead of time, and the process no longer holds the contents. See
+> [RBAC blast radius](../security/rbac.md).
+
+The webhook-server row is the unambiguous one, and it is the transform rather
+than the selector doing the work — no selector was set in this run.
+
 ## cacheSelector watch and memory reduction
 
 `ConversionWebhookServer.spec.cacheSelector` is implemented (Phase 6): webhook

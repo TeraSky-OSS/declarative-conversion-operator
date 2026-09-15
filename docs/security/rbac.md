@@ -22,7 +22,7 @@ resource type in scope (no name/namespace restriction in the ClusterRole).
 | API group | Resource | Verbs | Why |
 |---|---|---|---|
 | `""` | `events` | `create`, `patch` | Emit reconcile events. |
-| `""` | `secrets` | `get`, `list`, `watch` | Intended use: read cert-manager-issued TLS Secrets so the controller can refresh XRD/CRD `caBundle`s on rotation. **Granted scope:** all Secrets cluster-wide (not limited to cert-manager or operator-owned names). |
+| `""` | `secrets` | `get`, `list`, `watch` | Intended use: read cert-manager-issued TLS Secrets so the controller can refresh XRD/CRD `caBundle`s on rotation. **Granted scope:** all Secrets cluster-wide (not limited to cert-manager or operator-owned names) — the namespace of a `ConversionWebhookServer`'s Secret is not knowable when the ClusterRole is created. **The manager does not cache them:** Secrets are excluded from the informer cache entirely and read through to the API server on demand, so the process holds one Secret's bytes for the duration of one apply rather than every Secret in the cluster. See [Capacity planning](../operations/capacity.md#memory-what-each-process-holds). |
 | `""` | `services` | `create`, `delete`, `get`, `list`, `patch`, `update`, `watch` | Own the Service in front of each ConversionWebhookServer. |
 | `apiextensions.crossplane.io` | `compositeresourcedefinitions` | `get`, `list`, `patch`, `watch` | Read XRD schemas for validation; **patch** `spec.conversion` to attach/detach the conversion webhook. |
 | `apiextensions.k8s.io` | `customresourcedefinitions` | `get`, `list`, `patch`, `watch` | Same for native CRDs when native-CRD support is enabled. |
