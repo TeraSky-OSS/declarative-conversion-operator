@@ -333,6 +333,11 @@ pattern stops at the first step. Phase 13 exists to fix this properly.
 
 ### F8 — On a `LegacyCluster` XRD, the claim CRD is invisible to the tooling
 
+> **Delivered in phase 11.** `xrdadapter.GeneratedCRDNames` is now the one place
+> "which CRDs does this XRD generate" is answered; `test --live`,
+> `migrate-storage` and propagation verification all use it. A failure on either
+> CRD blocks the prune on both.
+
 Every path that resolves a target reads `spec.names.plural` and never
 `spec.claimNames.plural` (`internal/cli/live.go:78`,
 `internal/cli/migratestorage.go:373-386`). On a claim-offering XRD that is
@@ -354,6 +359,12 @@ This is a tooling gap, not an engine gap.
 
 ### F9 — An authored field that Crossplane will overwrite draws no diagnostic
 
+> **Delivered in phase 11.** Two new error diagnostics,
+> `AuthoredFieldShadowedByPlatform` and `RuleTargetsInjectedPath`, driven by a
+> scope-specific injected-path set the adapter supplies through an optional
+> `engine.PlatformAwareSource` interface — so `pkg/engine` still does not know
+> Crossplane exists, and every existing caller picked the check up unchanged.
+
 `genCrdVersion` copies the author's properties into the generated CRD first,
 then `ForCompositeResource` copies the injected properties over the top. So an
 XRD that declares, say, `spec.crossplane` on a `Namespaced` XR, or its own
@@ -367,18 +378,36 @@ reject a collision with the injected set for the XRD's scope.
 
 ### F10 — Scope read at `v2` may not be the scope Crossplane uses
 
+> **Not reproducible; corrected in phase 11.** The premise was checked on kind
+> v1.35.0 with Crossplane v2.4.0 before anything was built, exactly as the
+> finding asked. The differing defaults are real — `v1` defaults `spec.scope` to
+> `LegacyCluster`, `v2` to `Namespaced`, and the XRD CRD does serve both with
+> `strategy: None`. **But structural-schema defaulting runs on the WRITE path
+> and the defaulted value is persisted**, so an XRD applied at `v1` with
+> `spec.scope` omitted reads back as `LegacyCluster` at *both* versions. (The
+> `v2` read returns `LegacyCluster` even though it is outside `v2`'s own enum,
+> which confirms the stored value passes straight through rather than being
+> re-derived.) A live XRD's `spec.scope` is therefore authoritative and there is
+> no cross-read to do.
+>
+> What genuinely remains is the **offline** case, and it is the common one: a
+> hand-written XRD YAML that omits `spec.scope` has never been through
+> admission, so `convctl analyze --xrd ./xrd.yaml` cannot know which scope the
+> cluster will pick — it depends on the API version the manifest is applied at.
+> `xrdadapter.ResolveScope` reports that as `Indeterminate` rather than guessing,
+> and cross-checks `spec.claimNames` / `spec.connectionSecretKeys`, whose
+> presence Crossplane's own CEL rule ties to `LegacyCluster`. The measurement is
+> recorded in `pkg/xrdadapter/scope_test.go`.
+
+The original finding, for the record:
+
 The XRD CRD serves `v1` (storage) and `v2` with **no conversion webhook**
 (`strategy: None`), and the two versions default `spec.scope` differently:
 `v1` defaults to `LegacyCluster`, `v2` to `Namespaced`. An XRD persisted
 without an explicit `scope` — the shape a Crossplane 1.x cluster leaves behind
-after an upgrade — therefore defaults differently depending on which version
-you read it at, and this operator reads at `v2`
+after an upgrade — was expected to default differently depending on which
+version you read it at, and this operator reads at `v2`
 (`pkg/xrdadapter/xrdadapter.go:52`).
-
-Worth confirming against a genuinely upgraded cluster before treating it as a
-bug, but the adapter should not trust a defaulted `spec.scope` either way:
-cross-check `spec.claimNames`, whose presence Crossplane's own CEL rule ties to
-`LegacyCluster`.
 
 ### F11 — No `.golangci.yml`
 
@@ -404,6 +433,12 @@ object, or label the batch `mixed`.
 
 ### F14 — A package-managed XRD loses its conversion webhook roughly hourly
 
+> **Delivered in phase 11.** The mutating admission guard ships behind
+> `--enable-xrd-conversion-guard` (default on), alongside a `PackageManaged`
+> condition and a `dco_manager_conversion_reverts_total` counter that make the
+> hazard visible whether or not the guard is enabled. See
+> [Architecture](../architecture.md#the-xrd-conversion-guard).
+
 Crossplane's package establisher writes established objects with a full
 `client.Update` from the package contents, not a Server-Side Apply
 (`establisher.go:591-592`), and `Establish` runs on every revision reconcile —
@@ -419,6 +454,14 @@ fix is a mutating admission guard on XRD writes; both the mechanism and the
 design are in the [deep dive](#deep-dive-package-managed-xrds-are-reverted-repeatedly).
 
 ## Phase 11 — Crossplane integration depth
+
+> **Shipped.** Every deliverable below landed, with two deviations worth
+> recording: `status.generatedCRD` became `status.generatedCRDs`, a list,
+> because a claim-offering XRD has two CRDs and a singular block cannot express
+> a half-propagated pair; and F10 turned out not to be reproducible (see above),
+> so scope resolution is smaller than the design assumed. The package-managed
+> e2e leg replays the establisher's exact non-SSA write rather than installing a
+> real `Configuration` — see the note in `hack/e2e-test-package-managed.sh`.
 
 The theme: stop trusting that patching the XRD was enough, and cover the XRD
 shapes that are currently invisible.

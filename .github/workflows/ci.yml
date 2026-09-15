@@ -210,6 +210,41 @@ jobs:
             exit 1
           fi
 
+      - name: helm template (XRD conversion guard, enabled and disabled)
+        run: |
+          on="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+            --namespace declarative-conversion-system)"
+          echo "$on" | grep -q 'kind: MutatingWebhookConfiguration'
+          echo "$on" | grep -q 'name: gxrdconversion.terasky.com'
+          echo "$on" | grep -q 'path: /guard-xrd-conversion'
+          echo "$on" | grep -q -- '--enable-xrd-conversion-guard=true'
+          # failurePolicy is hard-coded to Ignore and must stay that way: a
+          # guard that can block XRD writes would make every Crossplane
+          # package install depend on this operator being up.
+          if ! echo "$on" | awk '/name: gxrdconversion.terasky.com/,/rules:/' | grep -q 'failurePolicy: Ignore'; then
+            echo "FAIL: the conversion guard must be failurePolicy: Ignore" >&2
+            exit 1
+          fi
+
+          off="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+            --namespace declarative-conversion-system \
+            --set features.crossplane.conversionGuard.enabled=false)"
+          if echo "$off" | grep -q 'kind: MutatingWebhookConfiguration'; then
+            echo "FAIL: the guard's MutatingWebhookConfiguration is still rendered when disabled" >&2
+            exit 1
+          fi
+          echo "$off" | grep -q -- '--enable-xrd-conversion-guard=false'
+
+          # Disabling Crossplane support entirely must take the guard with
+          # it: on a cluster with no Crossplane the type does not exist.
+          nocp="$(helm template declarative-conversion-operator charts/declarative-conversion-operator \
+            --namespace declarative-conversion-system \
+            --set features.crossplane.enabled=false)"
+          if echo "$nocp" | grep -q 'kind: MutatingWebhookConfiguration'; then
+            echo "FAIL: the guard is rendered with Crossplane support disabled" >&2
+            exit 1
+          fi
+
       - name: CRD upgrade helper prints chart CRDs
         run: |
           out="$(./hack/upgrade-crds.sh --chart charts/declarative-conversion-operator --print)"
