@@ -23,19 +23,19 @@ if one of them matters to you sooner.
 
 ## Proposed next phases
 
-Phases 0–10 are complete. The table below is a proposal, not a commitment —
-the detail, including the review that produced it and the `file:line` findings
-behind each entry, is in
-[Review and proposed next phases](proposals/next-phases.md).
+Phases 0–10 are complete. Each phase below has an epic with per-deliverable
+sub-issues carrying a priority label, a size label, and a full PRD. The detail —
+the review that produced the plan and the `file:line` findings behind each
+entry — is in [Review and proposed next phases](proposals/next-phases.md).
 
-| Phase | Intent |
-|---|---|
-| **11 — Crossplane integration depth** | Verify the conversion config actually propagated into Crossplane's generated CRD (a new `ConversionPropagated` condition); make `scope: LegacyCluster` and its claim CRD first-class (scope-aware regression tests for the exact injected-field set, `spec.claimNames` resolution in `test --live` and `migrate-storage`, a LegacyCluster e2e leg); Composition retarget without Kyverno (`convctl retarget`, `convctl crossplane status`); a mutating admission guard so an XRD shipped in a `Configuration` package stops losing its conversion webhook on every package resync (traced to a non-SSA `client.Update` in Crossplane's establisher); and Crossplane 2.x stated as the requirement it already is. |
-| **12 — XRD/CRD API evolution lifecycle** | `convctl plan` as the lifecycle state machine, golden-corpus conversion testing (`--record` / `--golden`), output validation against the destination schema plus required-field analysis, property-based round-trip fuzzing, a `convctl compat` gate between two git refs, and version/deprecation inventory. |
-| **13 — CI/CD: official GitHub Actions** | First-party composite Actions (`setup-convctl` with signature verification, `convctl-test`, `convctl-diff`, `convctl-fleet`) **with their own test workflow** — cross-runner matrix, a negative test proving verification fails on a tampered artifact, and assertions on annotations and job summaries, not just exit codes. Plus a published `convctl` image, CI-native output formats (GitHub annotations, SARIF, markdown), `convctl lint` over a whole repo, distribution via Homebrew / krew / deb / rpm, and a `--package` schema source so a Configuration's XRDs can be tested from a local `.xpkg`, a published image, or an installed `ConfigurationRevision`. |
-| **14 — Production readiness** | Scoped informer caches (the manager currently caches every Secret in the cluster), HTTP timeouts and body limits on the conversion endpoint, rollout safety for the webhook-server, a curated `.golangci.yml`, supply-chain scanning, a chart `values.schema.json`, and the `v1alpha1` → `v1beta1` graduation. |
-| **15 — Performance and scale** | Automatic sharding across `ConversionWebhookServer` instances, a measured cold-start budget, per-target memory numbers, a nightly scale run at a raised envelope, and workqueue observability. |
-| **16 — Engine and strategy expansion** | Required-field satisfaction analysis, `oneOf`/`anyOf` branch mapping, `$ref`/`allOf` flattening, and further strategies driven by real migrations. |
+| Phase | Epic | Intent |
+|---|---|---|
+| **11 — Crossplane integration depth** | [#113](https://github.com/terasky-oss/declarative-conversion-operator/issues/113) | Verify the conversion config actually propagated into Crossplane's generated CRD (a new `ConversionPropagated` condition); make `scope: LegacyCluster` and its claim CRD first-class (scope-aware regression tests for the exact injected-field set, `spec.claimNames` resolution in `test --live` and `migrate-storage`, a LegacyCluster e2e leg); Composition retarget without Kyverno (`convctl retarget`, `convctl crossplane status`); a mutating admission guard so an XRD shipped in a `Configuration` package stops losing its conversion webhook on every package resync (traced to a non-SSA `client.Update` in Crossplane's establisher); and Crossplane 2.x stated as the requirement it already is. |
+| **12 — XRD/CRD API evolution lifecycle** | [#125](https://github.com/terasky-oss/declarative-conversion-operator/issues/125) | `convctl plan` as the lifecycle state machine, golden-corpus conversion testing (`--record` / `--golden`), output validation against the destination schema plus required-field analysis, property-based round-trip fuzzing, a `convctl compat` gate between two git refs, and version/deprecation inventory. |
+| **13 — CI/CD: official GitHub Actions** | [#133](https://github.com/terasky-oss/declarative-conversion-operator/issues/133) | First-party composite Actions (`setup-convctl` with signature verification, `convctl-test`, `convctl-diff`, `convctl-fleet`) **with their own test workflow** — cross-runner matrix, a negative test proving verification fails on a tampered artifact, and assertions on annotations and job summaries, not just exit codes. Plus a published `convctl` image, CI-native output formats (GitHub annotations, SARIF, markdown), `convctl lint` over a whole repo, distribution via Homebrew / krew / deb / rpm, and a `--package` schema source so a Configuration's XRDs can be tested from a local `.xpkg`, a published image, or an installed `ConfigurationRevision`. |
+| **14 — Production readiness** | [#145](https://github.com/terasky-oss/declarative-conversion-operator/issues/145) | Scoped informer caches (the manager currently caches every Secret in the cluster), HTTP timeouts and body limits on the conversion endpoint, rollout safety for the webhook-server, a curated `.golangci.yml`, supply-chain scanning, a chart `values.schema.json`, and the `v1alpha1` → `v1beta1` graduation. |
+| **15 — Performance and scale** | [#156](https://github.com/terasky-oss/declarative-conversion-operator/issues/156) | Automatic sharding across `ConversionWebhookServer` instances, a measured cold-start budget, per-target memory numbers, a nightly scale run at a raised envelope, and workqueue observability. |
+| **16 — Engine and strategy expansion** | [#162](https://github.com/terasky-oss/declarative-conversion-operator/issues/162) | Required-field satisfaction analysis, `oneOf`/`anyOf` branch mapping, `$ref`/`allOf` flattening, and further strategies driven by real migrations. |
 
 ## Design seams worth knowing
 
