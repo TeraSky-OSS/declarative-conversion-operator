@@ -102,7 +102,7 @@ jobs:
       # distroless base would block every release until upstream moves,
       # which trains people to bypass the gate rather than fix anything.
       - name: Scan image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
           format: table
@@ -119,14 +119,14 @@ jobs:
           artifact-name: sbom-${{ matrix.component }}.spdx.json
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v4
         with:
           subject-name: ${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -207,7 +207,7 @@ jobs:
         run: cosign sign --yes "${{ steps.push.outputs.ref }}@${{ steps.push.outputs.digest }}"
 
       - name: Attest chart build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ steps.push.outputs.ref }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -258,7 +258,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest CLI artifact build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/*.tar.gz
@@ -273,13 +273,13 @@ jobs:
       contents: write # appends the signed-artifact summary to the GitHub release
     steps:
       - name: Download image/chart digests
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: digest-*
           path: digests
 
       - name: Download image SBOMs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: sbom-*
           path: sboms
@@ -323,7 +323,7 @@ jobs:
           } > addendum.md
 
       - name: Update release with signed-artifact details
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           append_body: true
