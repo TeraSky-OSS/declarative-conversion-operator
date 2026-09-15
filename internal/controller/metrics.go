@@ -37,6 +37,11 @@ type ManagerMetrics struct {
 	// overwritten it; the counter is what turns an invisible, silent,
 	// roughly-hourly hazard into a number.
 	ConversionReverts *prometheus.CounterVec
+	// PropagationLag measures apply -> observed in the generated CRD.
+	// Applied says the operator patched the XRD; this says Crossplane
+	// re-rendered the CRD with it, which is when conversion actually
+	// starts working.
+	PropagationLag *prometheus.HistogramVec
 }
 
 var (
@@ -66,12 +71,18 @@ func GetManagerMetrics() *ManagerMetrics {
 				Name: "dco_manager_conversion_reverts_total",
 				Help: "Times a previously-applied conversion stanza was found missing from the target (an out-of-band overwrite, typically Crossplane's package establisher).",
 			}, []string{"config_kind", "target"}),
+			PropagationLag: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+				Name:    "dco_manager_propagation_lag_seconds",
+				Help:    "Time from applying spec.conversion to the XRD until Crossplane's generated CRD was observed carrying it.",
+				Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60, 300, 900},
+			}, []string{"target"}),
 		}
 		crmetrics.Registry.MustRegister(
 			managerMetrics.AnalyzeFailures,
 			managerMetrics.ApplyDuration,
 			managerMetrics.PhaseTransitions,
 			managerMetrics.ConversionReverts,
+			managerMetrics.PropagationLag,
 		)
 	})
 	return managerMetrics

@@ -613,6 +613,36 @@ type SpokeConversionStatus struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
+// GeneratedCRDStatus records whether one CRD Crossplane renders from the
+// target XRD has actually picked up the conversion webhook this operator
+// applied.
+//
+// There is one entry per generated CRD. A scope: LegacyCluster XRD with
+// spec.claimNames renders two — the composite and the claim — and both
+// carry the same spec.conversion, so a single block could not express the
+// state of a claim-offering XRD.
+type GeneratedCRDStatus struct {
+	// Name is the generated CRD's metadata.name.
+	Name string `json:"name"`
+	// Role is "composite" or "claim".
+	// +optional
+	Role string `json:"role,omitempty"`
+	// Propagated is true when this CRD's spec.conversion.webhook matches
+	// what the operator applied to the XRD.
+	Propagated bool `json:"propagated"`
+	// ObservedCABundleHash is a sha256 of the caBundle found on this CRD,
+	// not the bundle itself — the status is for comparison, and a status
+	// field is the wrong place to duplicate a certificate.
+	// +optional
+	ObservedCABundleHash string `json:"observedCABundleHash,omitempty"`
+	// ObservedAt is when this CRD was last read.
+	// +optional
+	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
+	// Message explains a false Propagated.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
 // XRDConversionConfigStatus is the observed state of an XRDConversionConfig.
 type XRDConversionConfigStatus struct {
 	// +optional
@@ -642,6 +672,15 @@ type XRDConversionConfigStatus struct {
 	SpokeStatuses []SpokeConversionStatus `json:"spokeStatuses,omitempty"`
 	// +optional
 	LastAppliedPlanHash string `json:"lastAppliedPlanHash,omitempty"`
+	// GeneratedCRDs reports, per CRD Crossplane renders from the target
+	// XRD, whether the conversion webhook this operator applied has
+	// actually reached it. Patching the XRD is not the same as conversion
+	// working: nothing converts anything until Crossplane re-renders the
+	// generated CRD with that webhook block.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	GeneratedCRDs []GeneratedCRDStatus `json:"generatedCRDs,omitempty"`
 	// +optional
 	Message string `json:"message,omitempty"`
 }
@@ -661,10 +700,23 @@ const (
 	// Apply — so spec.conversion and this operator's annotations are
 	// stripped outright, roughly hourly, with no error anywhere.
 	ConditionPackageManaged = "PackageManaged"
+	// ConditionConversionPropagated is True when every CRD Crossplane
+	// generates from the target XRD carries the conversion webhook block
+	// the operator applied. Applied deliberately does not depend on it —
+	// that would make this operator's phase depend on a third party's
+	// reconcile speed — but until it is True, nothing is actually
+	// converting.
+	ConditionConversionPropagated = "ConversionPropagated"
 
 	// ConditionApplied reasons used by FailClosed drift handling.
 	ReasonReverted     = "Reverted"
 	ReasonRevertFailed = "RevertFailed"
+
+	// ConditionConversionPropagated reasons.
+	ReasonPropagated           = "Propagated"
+	ReasonNotPropagated        = "NotPropagated"
+	ReasonGeneratedCRDNotFound = "GeneratedCRDNotFound"
+	ReasonCABundleStale        = "CABundleStale"
 )
 
 // Phase constants for XRDConversionConfigStatus.Phase.

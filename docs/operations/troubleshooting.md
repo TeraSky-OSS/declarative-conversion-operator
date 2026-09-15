@@ -110,6 +110,32 @@ fixtures:
 convctl test --xrd xrd.yaml --config config.yaml --live
 ```
 
+## `Applied` but not `Propagated`
+
+**Symptom.** The config reports `Phase: Applied` and `Applied=True`, but reads at a non-storage version come back **relabelled and unconverted** — right `apiVersion`, old field layout, HTTP 200, no error.
+
+```console
+kubectl get xrdconversionconfig <name> \
+  -o jsonpath='{.status.conditions[?(@.type=="ConversionPropagated")]}{"\n"}'
+kubectl get xrdconversionconfig <name> -o jsonpath='{.status.generatedCRDs}{"\n"}' | jq
+```
+
+`Applied` means the operator patched `spec.conversion` onto the XRD. Nothing converts anything until **Crossplane** re-renders the generated CRD with that webhook block, and until it does the CRD sits on `strategy: None` — where the apiserver relabels stored objects rather than converting them. Normally that gap is seconds. It stops being seconds when Crossplane is not running, is unhealthy, has lost RBAC on `customresourcedefinitions`, or is reconciling a paused XRD.
+
+| Reason | What it means | Where to look |
+|---|---|---|
+| `GeneratedCRDNotFound` | Crossplane has not created the CRD at all. | Is Crossplane running? Is the XRD `Established`? Does a `crossplane.io/paused` annotation sit on it? |
+| `NotPropagated` | The CRD exists but does not carry the webhook, or carries a different one. The per-CRD `message` says which. | Crossplane's logs for the XRD definition controller; whether something else also writes this CRD. |
+| `CABundleStale` | The CRD's `caBundle` no longer matches the `ConversionWebhookServer`'s certificate. Conversion requests fail TLS verification. | A cert-manager rotation that Crossplane has not re-rendered yet. Resolves itself; if it does not, the XRD's own `spec.conversion` is the thing to check. |
+
+From outside the cluster, the same check:
+
+```console
+convctl test --xrd xrd.yaml --config config.yaml --live --verify-propagation
+```
+
+On a `scope: LegacyCluster` XRD with `claimNames` there are **two** CRDs, and `ConversionPropagated` is True only when both match — a half-propagated pair is how claims silently return wrong data while composites convert fine.
+
 ## My conversion keeps disappearing
 
 **Symptom.** Reads at a non-storage version intermittently return the stored object **relabelled but unconverted** — right `apiVersion`, old field layout, HTTP 200, no error anywhere. Minutes later it is fine again. The config still reports `Applied`.

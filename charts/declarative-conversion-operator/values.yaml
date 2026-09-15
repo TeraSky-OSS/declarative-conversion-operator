@@ -180,6 +180,13 @@ metrics:
   prometheusRule:
     enabled: false
     labels: {}
+    # How long "applied to the XRD but never observed in the generated
+    # CRD" has to hold before ConversionAppliedButNotPropagated fires.
+    # Crossplane normally re-renders in seconds; this is the budget for
+    # "Crossplane is wedged, paused, or has lost RBAC", so it should be
+    # comfortably longer than a healthy re-render and shorter than anyone's
+    # patience with silently-unconverted reads.
+    propagationLagFor: 5m
 
 # Grafana sidecar ConfigMaps (label grafana_dashboard: "1") for every JSON
 # file under files/dashboards/ (overview, per-target detail, platform

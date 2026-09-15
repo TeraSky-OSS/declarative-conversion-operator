@@ -167,7 +167,7 @@ are lossy in which direction, and whether every schema field is covered.`,
 func newTestCmd() *cobra.Command {
 	var (
 		xrdPath, crdPath, configPath, samplesDir, output, failOn, outputFile string
-		skipIdentity, strict, live, quiet                                    bool
+		skipIdentity, strict, live, quiet, verifyPropagation                 bool
 		versionPairs                                                         []string
 		kubeconfig, kubeContext, kubeconfigDir                               string
 		contexts                                                             []string
@@ -199,6 +199,13 @@ cluster and emit one aggregated JUnit report (one <testsuite> per cluster).
 A single context or a single kubeconfig file keeps the existing one-cluster
 report shape.
 
+--verify-propagation additionally reads the target XRD's generated CRDs from the
+same cluster and checks they carry the conversion webhook the XRD points at.
+Samples passing through the engine says the rules are right; this says the
+cluster will actually use them. Until Crossplane re-renders the generated CRD,
+reads at a non-storage version come back relabelled but UNCONVERTED, with HTTP
+200 and no error anywhere.
+
 --output selects table (default), json, or junit (for CI test-result reporters).
 --output-file writes the full report to a path instead of stdout; a short
 pass/loss/fail/error summary still prints to stdout either way.
@@ -220,12 +227,16 @@ results are collected by sample index, never by completion order.`,
 			if !live && (len(contexts) > 0 || kubeconfigDir != "") {
 				return fmt.Errorf("--contexts and --kubeconfig-dir require --live")
 			}
+			if verifyPropagation && !live {
+				return fmt.Errorf("--verify-propagation requires --live: it reads the target's generated CRDs from a cluster")
+			}
 			opts := TestOptions{
 				XRDPath: xrdPath, CRDPath: crdPath, ConfigPath: configPath, SamplesDir: samplesDir,
 				SkipIdentity: skipIdentity, RestrictVersionPairs: versionPairs,
 				Live: live, Kubeconfig: kubeconfig, KubeContext: kubeContext,
 				Contexts: contexts, KubeconfigDir: kubeconfigDir,
 				Concurrency: concurrency, Quiet: quiet,
+				VerifyPropagation: verifyPropagation,
 			}
 			targets, err := resolveLiveTargets(opts)
 			if err != nil {
@@ -281,6 +292,7 @@ results are collected by sample index, never by completion order.`,
 	cmd.Flags().StringSliceVar(&versionPairs, "version-pair", nil, "Restrict testing to these version(s), repeatable")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of samples to test in parallel (default: one per available CPU)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress the progress line written to stderr")
+	cmd.Flags().BoolVar(&verifyPropagation, "verify-propagation", false, "With --live on an XRD, also check that every CRD Crossplane generates from it actually carries the conversion webhook the XRD points at")
 	_ = cmd.MarkFlagRequired("config")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")

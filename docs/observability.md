@@ -91,6 +91,7 @@ and workqueue series.
 | `dco_manager_apply_duration_seconds` | Histogram | `config_kind`, `target`, `result` | Latency of SSA patches applying conversion webhook config onto the target XRD/CRD |
 | `dco_manager_phase_transitions_total` | Counter | `config_kind`, `from_phase`, `to_phase`, `reason` | Config status phase transitions (e.g. Applied→Stale, Applied→Failed) |
 | `dco_manager_conversion_reverts_total` | Counter | `config_kind`, `target` | A previously-applied `spec.conversion` was found **missing** from the target — an out-of-band overwrite. On an XRD owned by a Crossplane `ConfigurationRevision` this is the package establisher's non-SSA `client.Update`; see the `PackageManaged` condition on the config. |
+| `dco_manager_propagation_lag_seconds` | Histogram | `target` | Time from patching `spec.conversion` onto an XRD until Crossplane's generated CRD was observed carrying it. Observed **once per transition into propagated**, not on every reconcile. XRD targets only — a `CRDConversionConfig`'s target *is* the CRD, so there is nothing to propagate. |
 
 - **`config_kind`**: `xrd` or `crd`
 - **`to_phase` / `from_phase`**: `Pending`, `Applied`, `Stale`, `Failed`, …

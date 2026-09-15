@@ -89,7 +89,10 @@ type Report struct {
 		// trusts the answer. See pkg/xrdadapter.ResolveScope.
 		Scope *ScopeView `json:"scope,omitempty"`
 	} `json:"meta"`
-	Summary struct {
+	// Propagation is present only for --live --verify-propagation runs
+	// against an XRD.
+	Propagation *PropagationReport `json:"propagation,omitempty"`
+	Summary     struct {
 		Samples            int `json:"samples"`
 		PathsTested        int `json:"pathsTested"`
 		Pass               int `json:"pass"`
@@ -163,6 +166,10 @@ func (r *Report) WriteTable(w io.Writer) {
 				_, _ = fmt.Fprintf(w, "  %s\tmatched %d sample(s)\n", rc.RuleID, rc.MatchedSamples)
 			}
 		}
+	}
+
+	if r.Propagation != nil {
+		r.Propagation.WriteTable(w)
 	}
 
 	_, _ = fmt.Fprintln(w)

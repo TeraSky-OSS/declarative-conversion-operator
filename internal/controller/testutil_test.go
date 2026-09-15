@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,10 +64,17 @@ func newFakeClient(initObjs ...runtime.Object) *fake.ClientBuilder {
 // marking it Established — enough for xrdadapter.New/Established and
 // engine.Analyze to succeed end to end.
 func establishedXRD(name string) *unstructured.Unstructured {
+	// An XRD's metadata.name is always "{plural}.{group}", so the two can
+	// be derived rather than passed separately — and they have to be
+	// present, since that is how the generated CRD is addressed.
+	plural, group, _ := strings.Cut(name, ".")
+	kind := "X" + strings.Title(strings.TrimPrefix(plural, "x")) //nolint:staticcheck // fixture only
 	xrd := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": name, "generation": int64(1)},
 		"spec": map[string]any{
 			"scope": "Namespaced",
+			"group": group,
+			"names": map[string]any{"kind": kind, "plural": plural},
 			"versions": []any{
 				map[string]any{
 					"name": "v2", "served": true, "referenceable": true,

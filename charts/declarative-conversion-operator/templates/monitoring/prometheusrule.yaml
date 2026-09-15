@@ -66,6 +66,17 @@ spec:
           annotations:
             summary: "Manager analyze/compile failures for {{`{{ $labels.target }}`}}"
             description: "config_kind={{`{{ $labels.config_kind }}`}} reason={{`{{ $labels.reason }}`}}. Check the config status conditions and recent manager logs."
+        - alert: ConversionAppliedButNotPropagated
+          expr: |-
+            (sum by (target) (increase(dco_manager_apply_duration_seconds_count{config_kind="xrd",result="success"}[10m])) > 0)
+            unless
+            (sum by (target) (increase(dco_manager_propagation_lag_seconds_count[10m])) > 0)
+          for: {{ .Values.metrics.prometheusRule.propagationLagFor | default "5m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Conversion applied to XRD {{`{{ $labels.target }}`}} but never observed in the generated CRD"
+            description: "The operator patched spec.conversion onto the XRD, but Crossplane has not re-rendered {{`{{ $labels.target }}`}}'s generated CRD with that webhook block. Until it does, the generated CRD falls back to strategy: None and the apiserver serves stored objects relabelled but UNCONVERTED, with HTTP 200 and no error. Check the config's ConversionPropagated condition and status.generatedCRDs, then check whether Crossplane is running, healthy, and not paused on this XRD."
         - alert: ConversionRevertedOutOfBand
           expr: increase(dco_manager_conversion_reverts_total[1h]) > 0
           for: 1m

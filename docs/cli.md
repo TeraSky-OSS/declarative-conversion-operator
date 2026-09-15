@@ -71,6 +71,7 @@ convctl test --crd crd.yaml --config crdconversionconfig.yaml --samples ./sample
 | `-c, --config` | Path to an `XRDConversionConfig` or `CRDConversionConfig` YAML file. **Required.** |
 | `-s, --samples` | Path to a directory of sample objects — one file per sample (or multi-doc YAML). Mutually exclusive with `--live`; exactly one of the two is required. |
 | `--live` | Fetch samples from a live cluster instead — see [Pre-upgrade checks](#pre-upgrade-checks-testing-against-everything-that-already-exists) below. |
+| `--verify-propagation` | With `--live` on an XRD, also read every CRD Crossplane generates from it and check it carries the conversion webhook the XRD points at. Samples passing through the engine says the rules are right; this says the cluster will actually use them. Until Crossplane re-renders the generated CRD, reads at a non-storage version return stored objects relabelled but **unconverted**, with HTTP 200 and no error. |
 | `--kubeconfig` | Path to a kubeconfig file. Only used with `--live`. Falls back to `$KUBECONFIG`, then `~/.kube/config`, exactly like `kubectl`. Mutually exclusive with `--kubeconfig-dir`. |
 | `--context` | Kubeconfig context to use. Only used with `--live`. Falls back to the kubeconfig's `current-context`. Mutually exclusive with `--contexts`. |
 | `--contexts` | Repeatable / comma-separated kubeconfig context names. Runs `--live` once per context and aggregates the report. A single name keeps the one-cluster report shape. |

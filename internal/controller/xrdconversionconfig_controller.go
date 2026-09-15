@@ -21,9 +21,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,6 +69,7 @@ type XRDConversionConfigReconciler struct {
 // +kubebuilder:rbac:groups=terasky.com,resources=xrdconversionconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apiextensions.crossplane.io,resources=compositeresourcedefinitions,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -285,8 +288,38 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	})
 	meta.RemoveStatusCondition(&cfg.Status.Conditions, teraskyv1alpha1.ConditionStale)
 
+	// Applied means "we asked". Nothing converts anything until Crossplane
+	// re-renders the generated CRD with that webhook block, so check
+	// whether it has. Deliberately not a gate on Phase: making this
+	// operator's phase depend on a third party's reconcile speed would be
+	// a different kind of dishonesty.
+	//
+	// Re-read the XRD first. The one in hand predates our own patch, and
+	// on a claim-offering XRD this is also what decides how many CRDs
+	// there are to check.
+	verifyXRD := xrd
+	fresh := &unstructured.Unstructured{}
+	fresh.SetGroupVersionKind(xrdadapter.GroupVersionKind)
+	if err := r.Get(ctx, types.NamespacedName{Name: cfg.Spec.TargetXRD.Name}, fresh); err == nil {
+		verifyXRD = fresh
+	}
+	r.verifyPropagation(ctx, cfg, verifyXRD, expectedConversion{
+		ServiceName:      cwsServiceName(serverName),
+		ServiceNamespace: serverNamespace,
+		Path:             path,
+		Port:             port,
+		CABundle:         caBundle,
+		ReviewVersions:   reviewVersions,
+	})
+
 	if err := r.patchStatus(ctx, orig, cfg); err != nil {
 		return ctrl.Result{}, err
+	}
+	if !meta.IsStatusConditionTrue(cfg.Status.Conditions, teraskyv1alpha1.ConditionConversionPropagated) {
+		// Crossplane re-renders on its own schedule and the CRD watch
+		// below catches it, but a short requeue keeps the condition
+		// honest even if that event is missed entirely.
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 	// Periodic self-check safety net: re-validate against the live XRD
 	// even if no watched object changes in the meantime.
@@ -560,6 +593,11 @@ func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&teraskyv1alpha1.XRDConversionConfig{}).
 		Watches(xrdObj, handler.EnqueueRequestsFromMapFunc(r.mapXRDToConfigs)).
+		// Crossplane re-rendering the generated CRD is what makes
+		// conversion actually start working, so observe it on its own
+		// event rather than only on the 5-minute self-check. This informer
+		// already exists for CRDConversionConfig, so it costs nothing new.
+		Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapGeneratedCRDToConfigs)).
 		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
 		Named("xrdconversionconfig").
 		Complete(r)
@@ -654,4 +692,44 @@ func conversionIsOurs(xrd *unstructured.Unstructured, configName string) bool {
 		return false
 	}
 	return xrd.GetAnnotations()[conversionpatch.ManagedByAnnotation] == configName
+}
+
+// mapGeneratedCRDToConfigs enqueues the config whose target XRD generated
+// this CRD.
+//
+// Crossplane sets an owner reference from every generated CRD back to the
+// XRD, which is the signal used here: it identifies the claim CRD, whose
+// own name ({claimPlural}.{group}) has no relationship to the XRD's. The
+// name fallback covers the composite even where that owner reference is
+// absent, since an XRD's metadata.name IS {plural}.{group}.
+func (r *XRDConversionConfigReconciler) mapGeneratedCRDToConfigs(ctx context.Context, obj client.Object) []reconcile.Request {
+	names := []string{obj.GetName()}
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.Kind != xrdadapter.GroupVersionKind.Kind {
+			continue
+		}
+		if !strings.HasPrefix(ref.APIVersion, xrdadapter.GroupVersionKind.Group+"/") {
+			continue
+		}
+		if ref.Name != obj.GetName() {
+			names = append(names, ref.Name)
+		}
+	}
+
+	seen := map[string]bool{}
+	var reqs []reconcile.Request
+	for _, name := range names {
+		var list teraskyv1alpha1.XRDConversionConfigList
+		if err := r.List(ctx, &list, client.MatchingFields{TargetXRDNameIndex: name}); err != nil {
+			return watchmap.ListError(ctx, "xrdconversionconfig.mapGeneratedCRDToConfigs", err)
+		}
+		for _, c := range list.Items {
+			if seen[c.Name] {
+				continue
+			}
+			seen[c.Name] = true
+			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: c.Name}})
+		}
+	}
+	return reqs
 }

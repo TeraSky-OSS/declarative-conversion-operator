@@ -62,6 +62,15 @@ type TestOptions struct {
 	Concurrency int
 	// Quiet suppresses the progress line written to stderr.
 	Quiet bool
+
+	// VerifyPropagation additionally checks, against the same cluster,
+	// that every CRD Crossplane generates from the target XRD actually
+	// carries the conversion webhook the XRD points at. Samples passing
+	// through the engine says the rules are right; this says the cluster
+	// will use them. Requires Live, and is XRD-only — a
+	// CRDConversionConfig's target *is* the CRD, so there is nothing to
+	// propagate.
+	VerifyPropagation bool
 }
 
 // effectiveConcurrency clamps Concurrency to at least one worker, and to
@@ -134,10 +143,20 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 	// making an author infer it, and say so when the manifest does not
 	// settle the question.
 	scope := xrdadapter.ResolveScope(xrd)
+	var (
+		propagation *PropagationReport
+		perr        error
+	)
 	if opts.Live {
 		dyn, err := buildDynamicClient(KubeOptions{Kubeconfig: opts.Kubeconfig, Context: opts.KubeContext})
 		if err != nil {
 			return nil, err
+		}
+		if opts.VerifyPropagation {
+			propagation, perr = VerifyPropagation(context.Background(), dyn, xrdName(xrd))
+			if perr != nil {
+				return nil, fmt.Errorf("verifying conversion propagation: %w", perr)
+			}
 		}
 		samples, err = FetchLiveSamples(context.Background(), dyn, xrd, cfg.Spec.HubVersion)
 		if err != nil {
@@ -180,6 +199,7 @@ func runTestXRD(opts TestOptions) (*Report, error) {
 		return nil, err
 	}
 	rep.Meta.Scope = scopeView(scope)
+	rep.Propagation = propagation
 	return rep, nil
 }
 

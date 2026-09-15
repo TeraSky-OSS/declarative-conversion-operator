@@ -364,3 +364,38 @@ tests:
       - eval_time: 70m
         alertname: ConversionRevertedOutOfBand
         exp_alerts: []
+
+  # --- ConversionAppliedButNotPropagated ---
+  - name: applied with no propagation sample fires
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_apply_duration_seconds_count{config_kind="xrd",target="xfoos.example.org",result="success"}'
+        values: "0+1x40"
+      # No dco_manager_propagation_lag_seconds_count series at all — which
+      # is exactly what a wedged Crossplane looks like: the operator keeps
+      # applying, nothing ever observes the generated CRD carrying it.
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              target: xfoos.example.org
+            exp_annotations:
+              summary: "Conversion applied to XRD xfoos.example.org but never observed in the generated CRD"
+              description: "The operator patched spec.conversion onto the XRD, but Crossplane has not re-rendered xfoos.example.org's generated CRD with that webhook block. Until it does, the generated CRD falls back to strategy: None and the apiserver serves stored objects relabelled but UNCONVERTED, with HTTP 200 and no error. Check the config's ConversionPropagated condition and status.generatedCRDs, then check whether Crossplane is running, healthy, and not paused on this XRD."
+
+  - name: applied and propagated stays silent
+    interval: 1m
+    input_series:
+      - series: 'dco_manager_apply_duration_seconds_count{config_kind="xrd",target="xfoos.example.org",result="success"}'
+        values: "0+1x40"
+      - series: 'dco_manager_propagation_lag_seconds_count{target="xfoos.example.org"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ConversionAppliedButNotPropagated
+        exp_alerts: []

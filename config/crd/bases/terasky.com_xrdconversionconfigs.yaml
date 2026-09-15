@@ -902,6 +902,56 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              generatedCRDs:
+                description: |-
+                  GeneratedCRDs reports, per CRD Crossplane renders from the target
+                  XRD, whether the conversion webhook this operator applied has
+                  actually reached it. Patching the XRD is not the same as conversion
+                  working: nothing converts anything until Crossplane re-renders the
+                  generated CRD with that webhook block.
+                items:
+                  description: |-
+                    GeneratedCRDStatus records whether one CRD Crossplane renders from the
+                    target XRD has actually picked up the conversion webhook this operator
+                    applied.
+
+                    There is one entry per generated CRD. A scope: LegacyCluster XRD with
+                    spec.claimNames renders two — the composite and the claim — and both
+                    carry the same spec.conversion, so a single block could not express the
+                    state of a claim-offering XRD.
+                  properties:
+                    message:
+                      description: Message explains a false Propagated.
+                      type: string
+                    name:
+                      description: Name is the generated CRD's metadata.name.
+                      type: string
+                    observedAt:
+                      description: ObservedAt is when this CRD was last read.
+                      format: date-time
+                      type: string
+                    observedCABundleHash:
+                      description: |-
+                        ObservedCABundleHash is a sha256 of the caBundle found on this CRD,
+                        not the bundle itself — the status is for comparison, and a status
+                        field is the wrong place to duplicate a certificate.
+                      type: string
+                    propagated:
+                      description: |-
+                        Propagated is true when this CRD's spec.conversion.webhook matches
+                        what the operator applied to the XRD.
+                      type: boolean
+                    role:
+                      description: Role is "composite" or "claim".
+                      type: string
+                  required:
+                  - name
+                  - propagated
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               lastAppliedPlanHash:
                 type: string
               message:
