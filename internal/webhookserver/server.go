@@ -216,7 +216,11 @@ func (s *Server) handleDebugRegistry(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	xrdName := strings.TrimPrefix(r.URL.Path, "/convert/")
-	direction := "unknown"
+	// batchDirection accumulates the per-object directions so the
+	// request-level metrics can say "mixed" instead of silently
+	// attributing a whole batch to whichever object happened to be last.
+	batchDirection := &directionTracker{label: "unknown"}
+	direction := batchDirection.label
 
 	ctx, span := Tracer.Start(r.Context(), "ConversionReview",
 		trace.WithAttributes(attribute.String("target", xrdName)))
@@ -317,6 +321,11 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 
 	toVersion := versionOf(review.Request.DesiredAPIVersion)
 	converted := make([]runtime.RawExtension, 0, len(review.Request.Objects))
+	if s.Metrics != nil {
+		// Batch size is the missing input for sizing --max-request-bytes:
+		// without it an operator raising the limit is guessing.
+		s.Metrics.BatchSize.WithLabelValues(xrdName).Observe(float64(len(review.Request.Objects)))
+	}
 	for _, raw := range review.Request.Objects {
 		if err := ctx.Err(); err != nil {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf(
@@ -334,7 +343,10 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fromVersion := versionOf(stringField(obj, "apiVersion"))
-		direction = fromVersion + "->" + toVersion
+		objDirection := fromVersion + "->" + toVersion
+		batchDirection.add(objDirection)
+		direction = batchDirection.label
+		objStart := time.Now()
 		_, objSpan := Tracer.Start(ctx, "Convert",
 			trace.WithAttributes(
 				attribute.String("target", xrdName),
@@ -358,6 +370,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			span.SetStatus(codes.Error, err.Error())
 			if s.Metrics != nil {
 				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "error").Inc()
+				s.Metrics.ObjectDuration.WithLabelValues(xrdName, objDirection, "error").Observe(time.Since(objStart).Seconds())
 			}
 			return
 		}
@@ -375,6 +388,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		converted = append(converted, runtime.RawExtension{Raw: b})
 		if s.Metrics != nil {
 			s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "success").Inc()
+			s.Metrics.ObjectDuration.WithLabelValues(xrdName, objDirection, "success").Observe(time.Since(objStart).Seconds())
 		}
 	}
 
@@ -517,4 +531,34 @@ func sniffRequestUID(prefix []byte) types.UID {
 // tests, and a panic path is not hot enough for the lookup to matter.
 func logger() logr.Logger {
 	return ctrllog.Log.WithName("webhook-server")
+}
+
+// directionTracker resolves the request-level `direction` label for a
+// ConversionReview.
+//
+// A review may carry objects converting in different directions — the
+// apiserver batches by desired version, not by source version, so a LIST
+// spanning two stored versions arrives as one request. The per-request
+// histogram previously took whichever direction the last object happened to
+// have, which quietly skewed exactly the per-direction latency numbers that
+// capacity planning and the HPA-on-QPS guidance are read from.
+//
+// "mixed" is deliberately not a real direction: it cannot collide with
+// "v1->v2" and it is self-explanatory on a dashboard. Per-object accuracy
+// lives in the separate ObjectDuration metric, so nothing is lost by
+// collapsing here.
+// The zero value is not useful: construct it with label "unknown", which
+// is what a failure before any object was inspected is labelled as.
+type directionTracker struct {
+	label string
+	seen  string
+}
+
+func (d *directionTracker) add(dir string) {
+	switch {
+	case d.seen == "":
+		d.seen, d.label = dir, dir
+	case d.seen != dir:
+		d.label = "mixed"
+	}
 }

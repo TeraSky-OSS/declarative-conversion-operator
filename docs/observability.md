@@ -37,6 +37,8 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 | `dco_webhook_conversion_review_duration_seconds` | Histogram | `target`, `direction`, `result` | End-to-end ConversionReview latency |
 | `dco_webhook_conversion_review_requests_total` | Counter | `target`, `result` | ConversionReview requests handled |
 | `dco_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `result` | Individual objects converted inside reviews |
+| `dco_webhook_conversion_object_duration_seconds` | Histogram | `target`, `direction`, `result` | Per-object conversion latency. Prefer this over the review histogram for anything sliced by `direction` — see the note below |
+| `dco_webhook_conversion_batch_size` | Histogram | `target` | Objects carried by one ConversionReview. The input for sizing `--max-request-bytes` |
 | `dco_webhook_conversion_panics_total` | Counter | `target` | Panics recovered while serving a review. Always a bug in this operator; alert on any increase |
 | `dco_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy |
 | `dco_webhook_registry_size` | Gauge | — | Registry entries on this replica (includes error-only placeholders) |
@@ -45,6 +47,26 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 | `dco_webhook_registry_reload_total` | Counter | `target`, `result` | Attempted (re)compiles |
 | `dco_webhook_registry_compile_errors_total` | Counter | `target`, `reason` | Compile failures that left a stale-or-absent plan in place |
 | `dco_webhook_ready` | Gauge | — | `1` after this replica's registry completed initial sync |
+
+### `direction` on the two latency histograms
+
+A ConversionReview is batched by the version the apiserver *wants*, not by
+the version each object currently *is*, so one request can legitimately
+carry objects converting `v1->v3` and `v2->v3` at the same time. There is no
+honest single `direction` for such a request, and
+`dco_webhook_conversion_review_duration_seconds` labels it `mixed` rather
+than picking one.
+
+That makes the review histogram the right measure of **request** latency and
+the wrong measure of per-direction cost. Use
+`dco_webhook_conversion_object_duration_seconds` for the latter: its
+`direction` is always exactly the conversion that was timed. Both are
+exported; neither replaces the other.
+
+Sizing `--max-request-bytes` from
+`dco_webhook_conversion_batch_size` is more reliable than guessing from
+object size alone, because the limit applies to the encoded review and
+therefore scales with batch size as well as with object size.
 
 ### Common label values
 

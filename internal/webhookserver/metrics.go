@@ -30,6 +30,8 @@ type Metrics struct {
 	ReviewDuration      *prometheus.HistogramVec
 	ReviewRequestsTotal *prometheus.CounterVec
 	ObjectsTotal        *prometheus.CounterVec
+	ObjectDuration      *prometheus.HistogramVec
+	BatchSize           *prometheus.HistogramVec
 	LossyTotal          *prometheus.CounterVec
 	PanicsTotal         *prometheus.CounterVec
 	RegistrySize        prometheus.Gauge
@@ -64,6 +66,19 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 			Name: "dco_webhook_conversion_objects_total",
 			Help: "Total individual objects converted.",
 		}, []string{"target", "from_version", "to_version", "result"}),
+		ObjectDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "dco_webhook_conversion_object_duration_seconds",
+			Help: "Latency of converting one object, excluding request decode. Unlike the review-level histogram this metric's direction label is always exact, so it is the one to use for per-direction capacity planning.",
+			// Shifted one decade lower than the review histogram: a single
+			// object is routinely tens of microseconds, and the review
+			// buckets would put almost every observation in the first one.
+			Buckets: []float64{0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+		}, []string{"target", "direction", "result"}),
+		BatchSize: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "dco_webhook_conversion_batch_size",
+			Help:    "Number of objects carried by one ConversionReview. The input for sizing --max-request-bytes from observed traffic rather than by guess.",
+			Buckets: []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 5000},
+		}, []string{"target"}),
 		LossyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "dco_webhook_lossy_conversion_total",
 			Help: "Total conversions performed in a direction statically known to be lossy.",
@@ -98,7 +113,7 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 		}),
 		gatherer: gatherer,
 	}
-	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
+	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.ObjectDuration, m.BatchSize, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
 	return m
 }
 
