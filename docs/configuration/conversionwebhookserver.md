@@ -44,7 +44,7 @@ spec:
 | `podAnnotations` | Set on the webhook-server pod template. |
 | `extraArgs` | Additional container arguments appended after operator-managed flags (`--webhook-server-name`, `--tls-cert-dir`, bind addresses, feature toggles, `--cache-label-selector`). For optional webhook-server flags (e.g. `--cert-reload-interval`, zap options). Admission and reconcile reject ExtraArgs that name those managed flags. |
 | `extraEnv`, `extraVolumes`, `extraVolumeMounts` | Appended after the operator-managed environment / `tls`+`tmp` volumes. Use for custom CA bundles, proxies, or tenant env. |
-| `cacheSelector` | Optional `metav1.LabelSelector`. When set, webhook-server replicas watch only matching `XRDConversionConfig` / `CRDConversionConfig` objects. Unset (the default) watches every config. |
+| `cacheSelector` | Optional `metav1.LabelSelector`. When set, webhook-server replicas watch only matching `XRDConversionConfig` / `CRDConversionConfig` objects **and** only matching `CustomResourceDefinition` / `CompositeResourceDefinition` objects — so the targets have to carry the label too. Unset (the default) watches everything. See [Capacity planning](../operations/capacity.md#memory-what-each-process-holds). |
 | `certificate.issuerRef` | The cert-manager `Issuer`/`ClusterIssuer` for this instance's webhook TLS certificate. `certificate.dnsNames`, `.duration`, `.renewBefore` are also available. |
 | `service.{type,port,annotations}` | The `Service` fronting this instance's pods. |
 | `podDisruptionBudget.{minAvailable,maxUnavailable}` | Creates a `PodDisruptionBudget` for this instance. |

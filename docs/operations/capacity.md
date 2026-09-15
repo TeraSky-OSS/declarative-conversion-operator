@@ -91,6 +91,43 @@ Services, HPAs and PDBs it owns are label-scoped to
 The startup log line `informer caches scoped` states this on a running process,
 so it can be confirmed without reading the source.
 
+## Memory: the webhook-server
+
+Every replica holds the schemas it might have to convert against. Before this,
+that was every CRD and every XRD on the cluster, unscoped, with `managedFields`
+and the kubectl last-applied annotation included — none of which the engine
+reads.
+
+Two levers, one of which is on by default:
+
+- A cache transform, always applied, strips `managedFields` and
+  `kubectl.kubernetes.io/last-applied-configuration` before an object enters
+  the store. This is what produced the 50% above, and it needs no
+  configuration.
+- `ConversionWebhookServer.spec.cacheSelector` narrows *which* objects are held
+  at all — and it now narrows the schema informers as well as the config
+  informers, so the target XRDs and CRDs have to carry the label too.
+
+### Why the transform does not prune schemas
+
+Stripping `managedFields` is safe because nothing reads them. Pruning the
+schemas of versions no config targets would save more — schemas are the bulk of
+a CRD object — and is deliberately not done. The cache is built before any
+config has been read, configs are added and retargeted at runtime, and
+controller-runtime informers are not re-scopable. A version pruned at startup
+would be silently missing when a config later named it, and a conversion
+against a truncated schema does not fail: it returns wrong data. The memory is
+the cheaper side of that trade. See [Limitations](../limitations.md).
+
+### Sizing
+
+Scale a replica's memory with the **number and size of cached schemas**, not
+with conversion QPS. Replica count multiplies whatever each replica holds;
+every replica is symmetric and caches the same set. The chart's default limit
+is 256 MiB, which the cluster above fits with room to spare after this change
+and did not before. A cluster with substantially more or larger CRDs should
+raise it or set a `cacheSelector`.
+
 ### How these numbers were taken
 
 `hack/measure-cache-memory.sh` builds two real images from two real commits,

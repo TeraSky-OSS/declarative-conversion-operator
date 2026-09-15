@@ -47,6 +47,25 @@ edit a recoverable non-event rather than an outage.
 
 ## Upgrading the chart
 
+> [!IMPORTANT]
+> **If you set `conversionWebhookServer.cacheSelector`, label your targets
+> before upgrading.** The selector used to scope only the
+> `XRDConversionConfig` / `CRDConversionConfig` informers. It now also scopes
+> the `CustomResourceDefinition` / `CompositeResourceDefinition` informers,
+> because that is where a replica's memory actually goes — so a target XRD or
+> CRD that does not carry the label becomes invisible to the replicas serving
+> it, and conversions for it stop.
+>
+> Check first, then label:
+>
+> ```console
+> # Which targets are configured, and which of them carry the label?
+> kubectl get xrdconversionconfig -o jsonpath='{range .items[*]}{.spec.targetXRD.name}{"\n"}{end}'
+> kubectl get compositeresourcedefinition -l <your-selector> -o name
+> ```
+>
+> Installs that leave `cacheSelector` unset — the default — are unaffected.
+
 ### 1. Record what you're running
 
 ```console

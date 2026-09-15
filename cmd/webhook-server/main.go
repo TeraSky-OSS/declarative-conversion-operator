@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -77,7 +78,7 @@ func main() {
 	flag.StringVar(&otelEndpoint, "otel-exporter-otlp-endpoint", "", "Optional OTLP/gRPC endpoint for conversion-path tracing (empty = tracing disabled).")
 	flag.Float64Var(&otelSampleRatio, "otel-trace-sample-ratio", 0.1, "Trace sampling ratio when --otel-exporter-otlp-endpoint is set (0.0–1.0).")
 	flag.BoolVar(&otelInsecure, "otel-exporter-otlp-insecure", false, "Disable TLS when exporting traces (trusted in-cluster collectors only).")
-	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping XRDConversionConfig and CRDConversionConfig informers. Empty watches every config.")
+	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping this replica's informers. It covers the XRDConversionConfig and CRDConversionConfig objects AND the CustomResourceDefinition/CompositeResourceDefinition objects holding their schemas, so targets must carry the label too. Empty watches everything.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -129,6 +130,17 @@ func main() {
 
 	registry := webhookserver.NewRegistry()
 	metricsReg := prometheus.NewRegistry()
+	// A dedicated registry starts empty — unlike the process-wide default
+	// one, it has no Go runtime or process collectors. Without these,
+	// /metrics exposes this operator's own counters and nothing about the
+	// process serving them: no resident memory, no goroutine count, no GC
+	// behaviour. That makes the replica's memory footprint — the thing
+	// --cache-label-selector exists to control — unmeasurable from outside
+	// the pod.
+	metricsReg.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
 	metrics := webhookserver.NewMetrics(metricsReg, metricsReg)
 
 	reconciler := &webhookserver.Reconciler{
