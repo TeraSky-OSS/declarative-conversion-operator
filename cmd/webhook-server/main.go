@@ -69,6 +69,7 @@ func main() {
 		cacheSelector    string
 		maxRequestBytes  int64
 		requestTimeout   time.Duration
+		shutdownTimeout  time.Duration
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -83,6 +84,7 @@ func main() {
 	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping this replica's informers. It covers the XRDConversionConfig and CRDConversionConfig objects AND the CustomResourceDefinition/CompositeResourceDefinition objects holding their schemas, so targets must carry the label too. Empty watches everything.")
 	flag.Int64Var(&maxRequestBytes, "max-request-bytes", webhookserver.DefaultMaxRequestBytes, "Maximum ConversionReview request body size. A larger body is answered with a ConversionReview failure rather than being read. Raise it if legitimate batches are being rejected.")
 	flag.DurationVar(&requestTimeout, "request-timeout", webhookserver.DefaultRequestTimeout, "Maximum time one ConversionReview may occupy a worker. Must stay below the apiserver's own fixed 30s conversion timeout plus this server's write timeout.")
+	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", webhookserver.DefaultShutdownTimeout, "How long to let in-flight ConversionReviews finish after a termination signal. This value plus the pod's preStop sleep must stay below terminationGracePeriodSeconds, or the kubelet SIGKILLs mid-review and the apiserver reports a failed write.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
@@ -232,8 +234,20 @@ func main() {
 		}
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Stop advertising readiness first: a replica that is going away should
+	// fail its readiness probe rather than keep being an Endpoint while it
+	// drains. The preStop sleep is what actually buys the time for that to
+	// propagate; this makes the state honest in the meantime.
+	server.SetReady(false)
+
+	// One deadline shared by both servers, sized by --shutdown-timeout.
+	// It is deliberately long enough for an in-flight ConversionReview to
+	// finish (the apiserver's own conversion timeout is a fixed 30s): a
+	// shutdown that cuts a review short turns a routine rollout into a
+	// failed write.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
+	logger.Info("draining", "shutdownTimeout", shutdownTimeout)
 	_ = conversionSrv.Shutdown(shutdownCtx)
 	_ = plainSrv.Shutdown(shutdownCtx)
 }

@@ -74,6 +74,10 @@ test-e2e-legacy-claims: ## Run the e2e test for scope: LegacyCluster with claims
 test-e2e-package-managed: ## Run the e2e test for the XRD conversion guard: replays the package establisher's full non-SSA replace and asserts no read ever comes back unconverted — then repeats with the guard off and asserts the test CAN see the failure. Same prerequisites as test-e2e, plus python3.
 	./hack/e2e-test-package-managed.sh
 
+.PHONY: test-e2e-soak
+test-e2e-soak: ## Roll the webhook-server repeatedly under sustained reads/writes and assert zero failed and zero WRONG conversions. Slow (~15 min); also runs nightly in CI.
+	./hack/e2e-soak.sh
+
 .PHONY: test-e2e-load
 test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
 	./hack/e2e-load.sh
@@ -144,6 +148,7 @@ helm-template: ## Render the Helm chart with default values.
 
 PROMTOOL ?= $(LOCALBIN)/promtool
 PROMTOOL_VERSION ?= 2.54.1
+
 
 .PHONY: promtool
 promtool: $(LOCALBIN) ## Download promtool into bin/ if not already on PATH or in LOCALBIN.

@@ -1,0 +1,75 @@
+name: Soak
+
+# The soak rolls the webhook-server under sustained load and asserts zero
+# failed and zero *wrong* conversions. It takes ~15 minutes, so it runs
+# nightly rather than on every PR — but it is the only thing in CI that
+# would notice a rollout regression, so it runs unattended rather than by
+# hand.
+on:
+  schedule:
+    # 02:30 UTC daily. Off-peak for GitHub's hosted runners, and far enough
+    # from the release workflow that the two never contend.
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Seconds of sustained traffic"
+        required: false
+        default: "480"
+      restarts:
+        description: "Rolling restarts performed during the soak"
+        required: false
+        default: "4"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  soak:
+    name: Rolling-update soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install kind
+        run: |
+          sudo curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64
+          sudo chmod +x /usr/local/bin/kind
+
+      - name: Install kubectl
+        run: |
+          KUBECTL_VERSION="$(curl -sSL https://dl.k8s.io/release/stable.txt)"
+          sudo curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo chmod +x /usr/local/bin/kubectl
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run the soak
+        run: |
+          ./hack/e2e-soak.sh \
+            --duration "${{ github.event.inputs.duration || '480' }}" \
+            --restarts "${{ github.event.inputs.restarts || '4' }}"
+
+      # Published whether the soak passed or failed: a pass is the evidence
+      # that the rollout mitigations still work, and a failure is useless
+      # without the per-request samples.
+      - name: Upload soak result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soak-result
+          path: /tmp/e2e-soak-result.json*
+          if-no-files-found: warn

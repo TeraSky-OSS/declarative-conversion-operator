@@ -184,6 +184,18 @@ conversionWebhookServer:
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
+  # How a replica leaves service. These four values are one set — see the
+  # RolloutSpec docs (`kubectl explain conversionwebhookserver.spec.rollout`)
+  # and docs/operations/ha-checklist.md. Leave a key null to take the CRD's
+  # default, which is what makes a rollout cause zero failed conversions:
+  #   preStopSleepSeconds 5, terminationGracePeriodSeconds 45,
+  #   maxUnavailable 0, maxSurge 1, defaultTopologySpread true.
+  rollout:
+    preStopSleepSeconds: null
+    terminationGracePeriodSeconds: null
+    maxUnavailable: null
+    maxSurge: null
+    defaultTopologySpread: null
   resources:
     requests:
       cpu: 50m

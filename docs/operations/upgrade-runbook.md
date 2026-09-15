@@ -66,6 +66,14 @@ edit a recoverable non-event rather than an outage.
 >
 > Installs that leave `cacheSelector` unset — the default — are unaffected.
 
+> [!NOTE]
+> The webhook-server's rolling-update behaviour changed in this release:
+> replicas now carry a `preStop` sleep and a 45s termination grace period so
+> a rollout causes no failed conversions. Nothing is required of you; the
+> defaults apply to existing `ConversionWebhookServer` objects on the next
+> reconcile. See the [HA checklist](ha-checklist.md#rolling-updates) if you
+> override any of them.
+
 ### 1. Record what you're running
 
 ```console

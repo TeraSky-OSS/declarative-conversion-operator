@@ -40,6 +40,8 @@ import (
 
 	"github.com/go-logr/logr"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
+	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 )
 
 // Server is the webhook server's HTTP surface: the conversion endpoint on
@@ -114,6 +116,14 @@ const (
 	// of headroom and still a fixed, small allocation.
 	uidSniffBytes = 8 << 10 // 8 KiB
 )
+
+// DefaultShutdownTimeout is how long in-flight ConversionReviews are given
+// to finish after a termination signal. It must fit, together with the
+// pod's preStop sleep, inside terminationGracePeriodSeconds — so it is
+// defined once, in api/v1alpha1, where the ConversionWebhookServer
+// validating webhook checks that inequality, and aliased here rather than
+// restated.
+const DefaultShutdownTimeout = teraskyv1alpha1.DefaultWebhookServerShutdownTimeout
 
 func (s *Server) maxRequestBytes() int64 {
 	if s.MaxRequestBytes == 0 {

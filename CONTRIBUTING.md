@@ -22,6 +22,7 @@ make test       # generate + manifests + fmt + vet + go test -race
 make bench      # pkg/engine + webhook-server microbenchmarks (see docs/operations/capacity.md)
 ```
 
+
 Useful extras:
 
 ```console
@@ -32,6 +33,7 @@ make test-e2e-legacy-claims   # kind + a scope: LegacyCluster XRD with claims (b
 make test-e2e-package-managed # kind + the XRD conversion guard, including a guard-off run that must fail
 make test-e2e-load      # kind + synthetic ConversionReview batches (see docs/operations/capacity.md)
 make test-e2e-scale     # kind + generated CRD fleet + parallel Get/List (TARGETS/INSTANCES)
+make test-e2e-soak      # kind + rolling restarts under load; asserts zero failed and zero wrong conversions
 make dev-up             # kind + cert-manager + Crossplane + operator (+ monitoring + Kyverno)
 make dev-up DEV_MONITORING=false DEV_KYVERNO=false   # skip those extras
 make dev-down           # delete the kind cluster from dev-up
