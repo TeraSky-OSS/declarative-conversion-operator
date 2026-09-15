@@ -21,6 +21,14 @@ inputs:
       Token for the GitHub releases API, to avoid anonymous rate limits.
     required: false
     default: ${{ github.token }}
+  cache:
+    description: >-
+      Restore and save the binary through actions/cache. Turn it off for a
+      runner where the cache is not wanted — or where a deterministic
+      download is, as in this repository's own tamper test, since a cache
+      restore would overwrite the archive the test deliberately corrupted.
+    required: false
+    default: "true"
   binary:
     description: >-
       Path to a convctl that already exists, used instead of downloading
@@ -120,7 +128,7 @@ runs:
 
     - name: Restore cached binary
       id: cache
-      if: inputs.binary == ''
+      if: inputs.binary == '' && inputs.cache == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ steps.resolve.outputs.dir }}
@@ -144,10 +152,18 @@ runs:
         if [ "$VERIFY" = "true" ]; then
           assets+=(checksums.txt.sig checksums.txt.pem)
         fi
+        # An asset already in the directory is kept rather than re-fetched:
+        # the download is not what makes an archive trustworthy, the
+        # verification below is, and re-downloading would quietly repair
+        # exactly the tampering that step exists to catch.
         for asset in "${assets[@]}"; do
+          if [ -f "$asset" ]; then
+            echo "$asset is already present"
+            continue
+          fi
           gh release download "$VERSION" \
             --repo TeraSky-OSS/declarative-conversion-operator \
-            --pattern "$asset" --clobber
+            --pattern "$asset"
         done
 
     # Cosign is only installed when it is going to be used, so verify: false
@@ -176,12 +192,13 @@ runs:
         cd "$DIR"
 
         # A cache holds the archive but not necessarily the signature
-        # material, so fetch whatever is missing before verifying.
+        # material, so fetch whatever is missing before verifying. Present
+        # files are left alone, for the same reason as above.
         for asset in checksums.txt checksums.txt.sig checksums.txt.pem "$ARCHIVE"; do
           if [ ! -f "$asset" ]; then
             gh release download "$VERSION" \
               --repo TeraSky-OSS/declarative-conversion-operator \
-              --pattern "$asset" --clobber
+              --pattern "$asset"
           fi
         done
 

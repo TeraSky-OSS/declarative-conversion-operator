@@ -102,23 +102,30 @@ jobs:
           convctl version
           convctl validate --help >/dev/null
 
-      # The cached branch is the one that runs in practice and the one that
-      # silently rots, so it is exercised explicitly — including that it
-      # still verified.
-      - name: Install again (cache hit)
+  # actions/cache saves in the job's post step, so a second install inside
+  # one job can never hit it. The cached path is a LATER job or run — which
+  # is also the one that runs in practice, and the one that silently rots.
+  cache:
+    name: setup-convctl uses the cache and still verifies
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install, expecting the cache populated by the matrix job
         id: cached
         uses: ./.github/actions/setup-convctl
-        with:
-          version: ${{ steps.latest.outputs.version }}
 
-      - name: The second install came from the cache and still verified
+      - name: It was a cache hit, and it verified anyway
         shell: bash
         env:
           CACHE_HIT: ${{ steps.cached.outputs.cache-hit }}
         run: |
           set -euo pipefail
           if [ "$CACHE_HIT" != "true" ]; then
-            echo "second install was not a cache hit; the cached path is untested" >&2
+            echo "::error::not a cache hit, so the cached path is still untested" >&2
             exit 1
           fi
           convctl version
@@ -134,11 +141,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install once to populate the cache directory
+      - name: Install once, so a real archive is on disk to corrupt
         id: real
         uses: ./.github/actions/setup-convctl
+        with:
+          cache: "false"
 
-      - name: Corrupt the cached archive
+      - name: Corrupt the downloaded archive
         shell: bash
         env:
           VERSION: ${{ steps.real.outputs.version }}
@@ -149,16 +158,23 @@ jobs:
           archive="$(find "$dir" -name '*.tar.gz' | head -1)"
           test -n "$archive"
           # Same size, different bytes: a length check would not catch this,
-          # which is the point of checking the hash.
+          # which is the point of checking the hash. The second install
+          # keeps the archive that is already there, so the corruption
+          # survives to be verified rather than being repaired by a fresh
+          # download.
           printf 'tampered' | dd of="$archive" bs=1 seek=0 conv=notrunc status=none
           echo "corrupted $archive"
 
+      # cache: false, so a warm cache cannot restore the good archive over
+      # the corrupted one — which would leave this job green while testing
+      # nothing at all, the exact failure it exists to prevent one level up.
       - name: Verification must reject it
         id: tampered
         continue-on-error: true
         uses: ./.github/actions/setup-convctl
         with:
           version: ${{ steps.real.outputs.version }}
+          cache: "false"
 
       - name: Assert the step failed
         shell: bash

@@ -16,6 +16,7 @@ Installs a **verified** `convctl` onto `PATH`.
 | `version` | `latest` | a release tag, or `latest` |
 | `verify` | `true` | verify the cosign signature on `checksums.txt`, then the archive's checksum against it |
 | `token` | `${{ github.token }}` | for the releases API, to avoid anonymous rate limits |
+| `cache` | `true` | restore and save through `actions/cache` |
 | `binary` | — | path to a `convctl` that already exists, used instead of downloading one |
 
 ## Outputs
