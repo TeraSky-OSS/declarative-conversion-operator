@@ -3,6 +3,7 @@
 `convctl` runs the exact same `pkg/engine` code the operator and webhook server use, entirely offline against local YAML files — so you can validate and test a conversion mapping before it ever touches a cluster. Most commands work identically against an `XRDConversionConfig` (pass `--xrd`) or a `CRDConversionConfig` (pass `--crd`) — which one applies is determined by the config file's own `kind`, not by which flag you happen to type, so passing the wrong one is a clear error rather than a silent mismatch. `migrate-storage` is the exception: it is a live, mutating housekeeping command that takes cluster resource names (not files) and does not need a conversion config.
 
 ```console
+convctl lint          [path...] [--schema-dir dir] [--exclude glob] [-o table|json|github|sarif|markdown]
 convctl validate      --config config.yaml [--xrd xrd.yaml | --crd crd.yaml] [-o table|json|github|sarif|markdown]
 convctl analyze       --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) [-o table|json|github|sarif|markdown]
 convctl test          --config config.yaml (--xrd xrd.yaml | --crd crd.yaml) (--samples ./samples/ | --live) [-o table|json|junit|github|sarif|markdown] [flags]
@@ -410,6 +411,91 @@ Here is every threshold against every outcome:
 **Acknowledged loss alone never fails, at any threshold.** `acknowledgeLossy: true` is the config author stating on the record that a field is expected to be dropped or rounded; re-litigating that decision on every CI run would just train people to pass `--fail-on none`. What the default threshold catches is loss that *nobody* declared.
 
 `--strict` escalates coverage gaps exactly the way `--fail-on warn` does — a declared rule that no sample exercised becomes a failure. So `--fail-on loss --strict` behaves identically to `--fail-on warn`, and `--strict` changes nothing when `--fail-on warn` is already set. `--fail-on none` overrides `--strict` entirely: it is the explicit "report, never gate" switch, and always exits `0`.
+
+## `convctl lint`
+
+One command, one exit code, over a whole tree.
+
+```console
+$ convctl lint ./platform/
+
+convctl lint: 12 config(s), 12 schema(s)
+
+STATUS  CONFIG                                  TARGET                  SCHEMA                        FINDINGS
+OK      platform/apis/buckets/conversion.yaml   xbuckets.example.org    platform/apis/buckets/xrd.yaml  0
+OK      platform/apis/widgets/conversion.yaml   widgets.example.org     platform/apis/widgets/crd.yaml  0
+
+SUMMARY: 0 error(s), 0 warning(s), 0 unpaired, 0 duplicate
+```
+
+A repository with fifty XRDs otherwise needs fifty invocations, each pairing a
+config with its schema by hand and each producing an exit code the caller has
+to aggregate — which in practice means a bash loop in every consumer's CI,
+written slightly differently each time.
+
+`lint` walks the paths given (default `.`), recognises every
+`XRDConversionConfig` and `CRDConversionConfig` **by its own `apiVersion` and
+`kind`** rather than by filename — including multi-document files — pairs each
+with the XRD or CRD whose `metadata.name` it targets, and runs the checks
+`validate` and `analyze` run.
+
+### Unpaired and duplicate configs are errors, never skips
+
+A config paired with nothing looks exactly like a config that passed. So an
+unpaired config is an **error** naming the target it looked for:
+
+```console
+ERROR  platform/apis/orders/conversion.yaml  xorders.example.org  —  1
+  error  platform/apis/orders/conversion.yaml:1  no XRD named "xorders.example.org" was found in the tree, so this
+                                                 config could not be checked against a schema; pass --schema-dir if
+                                                 its schema lives elsewhere
+```
+
+A second config targeting the same resource is reported the same way. The
+operator enforces one config per target, and finding that out from an
+admission rejection after merge is what this command exists to prevent.
+
+A manifest that is neither — a Deployment, a kustomization — is ignored rather
+than rejected. A platform tree is full of files that are none of this
+command's business.
+
+### Offline by design
+
+`lint` constructs **no Kubernetes client at all**. It is the fast check that
+runs on every commit; [`test --live`](#convctl-test) is the slow one that runs
+before merge.
+
+### As a pre-commit hook
+
+A [`.pre-commit-hooks.yaml`](https://github.com/TeraSky-OSS/declarative-conversion-operator/blob/main/.pre-commit-hooks.yaml)
+ships in the repository:
+
+```yaml
+repos:
+  - repo: https://github.com/TeraSky-OSS/declarative-conversion-operator
+    rev: v0.5.0
+    hooks:
+      - id: convctl-lint
+```
+
+The hook runs once over the tree rather than once per changed file: pairing a
+config with its schema needs to see both, and a per-file hook would report
+every config as unpaired.
+
+### Flags and exit codes
+
+| Flag | Meaning |
+|---|---|
+| `--schema-dir` | additional trees to search for XRDs and CRDs, when schemas live apart from configs (repeatable) |
+| `--exclude` | glob patterns to skip, matched against the path and its base name (repeatable) |
+| `--concurrency` | parallel workers (default one per CPU); the report order is the walk order regardless |
+| `--fail-on` | `none` \| `warn` \| `loss` (default), the same matrix as `test` |
+
+| Code | Meaning |
+|---|---|
+| 0 | clean at the chosen threshold |
+| 1 | findings at or above it, or any unpaired/duplicate config |
+| 2 | usage error |
 
 ## `convctl plan`
 

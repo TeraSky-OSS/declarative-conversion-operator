@@ -14,6 +14,23 @@ cluster that will apply that YAML:
 Neither command writes to the cluster. The invoking identity only needs
 `get`/`list` on the target XRD/CRD and its instances.
 
+## Lint on commit, test before merge
+
+Two checks, two speeds. `convctl lint` is offline — it constructs no
+Kubernetes client — so it belongs on every commit, as a pre-commit hook and as
+the first job in CI:
+
+```console
+convctl lint ./platform/
+```
+
+It pairs every conversion config in the tree with the XRD or CRD it targets
+and reports an unpaired or duplicated config as an error rather than skipping
+it. See [`convctl lint`](../cli.md#convctl-lint).
+
+`convctl test --live` is the slow one, and the one that needs credentials for
+every cluster. Run it before merge, not on every commit.
+
 ## Built-in: `convctl test --live --contexts`
 
 Once you have more than one context in a single kubeconfig:

@@ -58,7 +58,7 @@ cluster. Every command works against either resource type:
 		newRetargetCmd(), newCrossplaneCmd(),
 		newConvertCmd(), newSuggestCmd(), newRehubCmd(), newGenerateCmd(),
 		newPatchPreviewCmd(), newMigrateStorageCmd(), newVersionCmd(),
-		newCompatCmd(), newVersionsCmd(), newPlanCmd(),
+		newCompatCmd(), newVersionsCmd(), newPlanCmd(), newLintCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -814,5 +814,79 @@ Exit codes: 0 a plan was produced, 1 the target state is unreachable,
 	_ = cmd.MarkFlagRequired("to")
 	cmd.MarkFlagsOneRequired("xrd", "crd")
 	cmd.MarkFlagsMutuallyExclusive("xrd", "crd")
+	return cmd
+}
+
+func newLintCmd() *cobra.Command {
+	var (
+		schemaDirs, exclude []string
+		output, failOn      string
+		concurrency         int
+	)
+	cmd := &cobra.Command{
+		Use:   "lint [path...]",
+		Short: "Validate every conversion config in a tree against the schema it targets",
+		Long: `Check a whole repository in one run.
+
+A platform repo with fifty XRDs otherwise needs fifty invocations, each one
+pairing a config with its schema by hand and each producing an exit code the
+caller has to aggregate — which in practice means a bash loop in every
+consumer's CI, written slightly differently each time.
+
+lint walks the given paths (default "."), finds every XRDConversionConfig and
+CRDConversionConfig by its own apiVersion and kind rather than by filename,
+pairs each with the XRD or CRD whose metadata.name it targets, runs the same
+checks validate and analyze run, and reports once.
+
+An unpaired config is an ERROR naming what it looked for, never a silent
+skip: a config nothing checked looks exactly like a config that passed, and a
+tool that cannot tell you the difference is not worth running. A second
+config targeting the same resource is reported the same way — the operator
+enforces one config per target, and finding that out from an admission
+rejection after merge is what this command exists to prevent.
+
+Deliberately offline: it constructs no Kubernetes client at all. This is the
+check that runs on every commit; test --live is the slow one that runs before
+merge.
+
+Exit codes follow the same matrix as test: 0 clean, 1 findings at or above
+the --fail-on threshold, 2 usage error.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkOutputFormat(output, "table", "json", "github", "sarif", "markdown"); err != nil {
+				return err
+			}
+			switch failOn {
+			case failOnNone, failOnWarn, failOnLoss:
+			default:
+				return fmt.Errorf("invalid --fail-on value %q (want none, warn, or loss)", failOn)
+			}
+			rep, err := RunLint(LintOptions{
+				Paths: args, SchemaDirs: schemaDirs, Exclude: exclude, Concurrency: concurrency,
+			})
+			if err != nil {
+				return err
+			}
+			switch {
+			case output == "json":
+				if err := writeJSON(cmd, rep); err != nil {
+					return err
+				}
+			case isCIFormat(output):
+				if err := writeFindings(cmd, output, rep.Findings(), "convctl lint"); err != nil {
+					return err
+				}
+			default:
+				rep.WriteTable(cmd.OutOrStdout())
+			}
+			exitCode = decideLintExitCode(rep, failOn)
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&schemaDirs, "schema-dir", nil, "Additional directories to search for XRDs and CRDs (repeatable)")
+	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "Glob patterns to skip, matched against the path and its base name (repeatable)")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format: table|json|github|sarif|markdown")
+	cmd.Flags().StringVar(&failOn, "fail-on", failOnLoss, "Failure threshold: none|warn|loss")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Parallel workers (default one per CPU)")
+	registerOutputCompletions(cmd, "table", "json", "github", "sarif", "markdown")
 	return cmd
 }
