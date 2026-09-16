@@ -382,9 +382,20 @@ then drop-the-block sequence.
 
 ## GitOps: retarget without naming every XR
 
-The patches in this walkthrough (`patches/retarget-v2.json`) are the honest
-Crossplane default: `compositionRef` is pinned at create time and
-`defaultCompositionRef` does not move existing objects.
+`compositionRef` is pinned at create time and `defaultCompositionRef` does not
+move existing objects, so something has to rewrite every XR when the hub moves.
+There are three ways, and the walkthrough shows all of them:
+
+- **`convctl retarget --xrd <name> --to <version>`** — what `--demo-mode
+  patches` runs. It clears `compositionRef` and `compositionRevisionRef` and
+  sets `compositionSelector.matchLabels` on every object of the XRD, and
+  `--dry-run` sends the same patch server-side without persisting. That write
+  also re-persists each object at the new referenceable version, which is
+  usually what makes the following `migrate-storage` pass a no-op.
+- **The raw patch** (`patches/retarget-v2.json`) — the same edit as a JSON
+  patch, shown alongside so the mechanism is not hidden behind a command.
+- **Kyverno**, below, for platforms where app-team YAML must never name a
+  Composition.
 
 [`gitops/`](gitops/) is the platform-repo shape of the same lifecycle.
 `convctl generate kyverno` emits a per-XRD Composition labeler (admission

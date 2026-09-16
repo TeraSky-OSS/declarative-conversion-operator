@@ -274,6 +274,18 @@ pe_fail() {
   echo -e "${CYAN}${2:-# ↑ rejected before apply. That is why we run convctl first.}${COLOR_RESET}"
 }
 
+# pe_soft runs a command whose VERDICT is the point, not its exit code —
+# a gate being demonstrated rather than enforced. Neither outcome aborts
+# the demo, because which one you get depends on the state of the cluster
+# you are running against.
+pe_soft() {
+  p "$1"
+  eval "$1" || true
+  echo
+  [[ -n "${2:-}" ]] && echo -e "${CYAN}${2}${COLOR_RESET}"
+  return 0
+}
+
 DEMO_PROMPT="${GREEN}➜ ${CYAN}demo ${COLOR_RESET}${BOLD}\$ ${COLOR_RESET}"
 
 section() {
@@ -441,6 +453,8 @@ fi
 pe "kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.example.org"
 kyverno_refresh_if_stale
 pe "kubectl wait --for=condition=Applied --timeout=120s xrdconversionconfig/xwidgets-conversion"
+note "Applied is not the same as converting. Applied means the operator patched the XRD; Crossplane then re-renders the generated CRD asynchronously, and until it does a read at a non-storage version comes back relabelled but UNCONVERTED — HTTP 200, no error. ConversionPropagated is the condition that says the webhook actually reached the generated CRD, so it is the one to gate on before reading at another version."
+pe "kubectl wait --for=condition=ConversionPropagated --timeout=120s xrdconversionconfig/xwidgets-conversion"
 pe "kubectl get compositeresourcedefinition xwidgets.example.org -o jsonpath='{range .spec.versions[*]}{.name}  served={.served}  referenceable={.referenceable}{\"\\n\"}{end}'"
 
 note "Create an XR at v2 (spec.capacity). Storage and the Composition still see v1 (spec.size) — the webhook converts at the apiserver."
@@ -463,6 +477,9 @@ fi
 # ---------------------------------------------------------------------------
 if demo_stage 3; then
 section "3 — promote v2 to the hub"
+note "Those five steps are not prose any more. convctl plan reads where the target actually is and prints the ordered, gated path to the hub you name — each step with the command that performs it, the gate that must hold before the next one is safe, and the command that proves it. Steps already satisfied are marked done; the three that genuinely need a cluster say UNKNOWN rather than guessing."
+pe "convctl plan --xrd 02-add-v2/xrd.yaml --config 02-add-v2/xrdconversionconfig.yaml --to v2"
+
 note "Five steps: (1) referenceable v1→v2  (2) convctl rehub — rewrite the config from v2's POV  (3) a NEW Composition — compositeTypeRef is immutable  (4) retarget every existing XR  (5) convctl migrate-storage — rewrite etcd at the new storage version."
 
 note "The copy-paste trap: keep hubPath spec.size after the hub is v2. size is not on the hub anymore."
@@ -495,6 +512,10 @@ fi
 pe "kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.example.org"
 kyverno_refresh_if_stale
 pe "kubectl wait --for=condition=Applied --timeout=120s xrdconversionconfig/xwidgets-conversion"
+pe "kubectl wait --for=condition=ConversionPropagated --timeout=120s xrdconversionconfig/xwidgets-conversion"
+
+note "The same check from the CLI side, against every live object rather than the condition alone: --verify-propagation reads the CRDs Crossplane generated from this XRD and confirms each one carries the webhook the XRD points at."
+pe "convctl test --config 03-promote-v2/xrdconversionconfig.yaml --xrd 03-promote-v2/xrd.yaml --live --verify-propagation"
 
 note "Do NOT skip the retarget. Crossplane pins compositionRef at create time. Watch existing XRs go Synced=False:"
 pe "kubectl get xwidgets.example.org -n ${NS}"
@@ -507,9 +528,11 @@ elif [[ "${DEMO_MODE}" == gitops ]]; then
   pe "convctl generate kyverno --xrd 03-promote-v2/xrd.yaml --from v1 --to v2"
   pe "kubectl apply -f gitops/policies/from-v1-to-v2.yaml"
 else
-  note "Retarget every XR onto xwidgets-v2.example.org and drop the pinned revision:"
+  note "Retarget every XR onto xwidgets-v2.example.org and drop the pinned revision. convctl retarget does this for every object of the XRD: it clears the pinned compositionRef and compositionRevisionRef and sets compositionSelector.matchLabels to the target version, so Crossplane re-selects. --dry-run sends the same patch server-side without persisting."
+  pe "convctl retarget --xrd xwidgets.example.org --to v2 --dry-run"
+  pe "convctl retarget --xrd xwidgets.example.org --to v2"
+  note "The equivalent raw patch, for anyone who would rather not add convctl to the loop — and what retarget is doing underneath:"
   pe "cat patches/retarget-v2.json"
-  pe 'for xr in $(kubectl get xwidgets.example.org -n '"${NS}"' -o name); do kubectl patch "$xr" -n '"${NS}"' --type=json --patch-file patches/retarget-v2.json; done'
 fi
 if [[ "${DEMO_MODE}" == gitops ]]; then
   note "Kyverno 1.18.1 never runs MutatingPolicy mutateExisting (kyverno#16255). Admission needs a write."
@@ -570,6 +593,7 @@ fi
 pe "kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.example.org"
 kyverno_refresh_if_stale
 pe "kubectl wait --for=condition=Applied --timeout=120s xrdconversionconfig/xwidgets-conversion"
+pe "kubectl wait --for=condition=ConversionPropagated --timeout=120s xrdconversionconfig/xwidgets-conversion"
 pe "kubectl get compositeresourcedefinition xwidgets.example.org -o jsonpath='{range .spec.versions[*]}{.name}  served={.served}  referenceable={.referenceable}{\"\\n\"}{end}'"
 
 note "Create at v3 (spec.name). Read back at v2 and v1 — spoke-to-spoke hops through the hub."
@@ -616,6 +640,7 @@ fi
 pe "kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.example.org"
 kyverno_refresh_if_stale
 pe "kubectl wait --for=condition=Applied --timeout=120s xrdconversionconfig/xwidgets-conversion"
+pe "kubectl wait --for=condition=ConversionPropagated --timeout=120s xrdconversionconfig/xwidgets-conversion"
 
 note "Existing XRs are still pinned to xwidgets-v2.example.org — incompatible once v3 is referenceable."
 pe "kubectl get xwidgets.example.org -n ${NS}"
@@ -626,8 +651,11 @@ elif [[ "${DEMO_MODE}" == gitops ]]; then
   pe "convctl generate kyverno --xrd 05-promote-v3/xrd.yaml --from v2 --to v3"
   pe "kubectl apply -f gitops/policies/from-v2-to-v3.yaml"
 else
+  note "convctl retarget does this for every object of the XRD: it clears the pinned compositionRef and compositionRevisionRef and sets compositionSelector.matchLabels to the target version, so Crossplane re-selects. --dry-run sends the same patch server-side without persisting."
+  pe "convctl retarget --xrd xwidgets.example.org --to v3 --dry-run"
+  pe "convctl retarget --xrd xwidgets.example.org --to v3"
+  note "The equivalent raw patch, for anyone who would rather not add convctl to the loop — and what retarget is doing underneath:"
   pe "cat patches/retarget-v3.json"
-  pe 'for xr in $(kubectl get xwidgets.example.org -n '"${NS}"' -o name); do kubectl patch "$xr" -n '"${NS}"' --type=json --patch-file patches/retarget-v3.json; done'
 fi
 if [[ "${DEMO_MODE}" == gitops ]]; then
   note "Same as stage 3: mutateExisting is a no-op on 1.18.1, so write each XR."
@@ -664,6 +692,12 @@ note "The mistake: XRD already has served:false on v1, but the config still list
 pe "cat mistakes/06-spoke-not-served.yaml"
 pe_fail "convctl validate --config mistakes/06-spoke-not-served.yaml --xrd 06-deprecate-v1/xrd.yaml"
 
+note "First, the question nobody can answer from the XRD alone: is anything still USING v1? convctl versions aggregates it — LAST WRITTEN AT comes from each object\'s managedFields, so it names the managers still writing the version rather than guessing from object counts."
+pe "convctl versions --xrd 05-promote-v3/xrd.yaml --config 05-promote-v3/xrdconversionconfig.yaml"
+
+note "--check-unserve turns that table into a gate that exits non-zero with reasons — the form to put in CI. It blocks on three things: the version is still the hub, it still appears in status.storedVersions, or managedFields show somebody still writing it. Note what it does NOT block on: a live object count, because a list at a served version returns every object converted to it, so one XR anywhere would block un-serving every spoke forever."
+pe_soft "convctl versions --xrd 05-promote-v3/xrd.yaml --check-unserve v1" "# ↑ if it objects about storedVersions, that is the prune at the end of this stage — convctl plan puts that step BEFORE the un-serve for exactly this reason."
+
 note "Correct order: conversion config without v1, then XRD with served: false."
 pe "cat 06-deprecate-v1/xrdconversionconfig.yaml"
 
@@ -690,6 +724,7 @@ else
 fi
 pe "kubectl wait --for=condition=Established --timeout=60s crd/xwidgets.example.org"
 kyverno_refresh_if_stale
+pe "kubectl wait --for=condition=ConversionPropagated --timeout=120s xrdconversionconfig/xwidgets-conversion"
 
 pe "kubectl get compositeresourcedefinition xwidgets.example.org -o jsonpath='{range .spec.versions[*]}{.name}  served={.served}  referenceable={.referenceable}{\"\\n\"}{end}'"
 pe "kubectl get xwidgets.v2.example.org from-v3 -n ${NS} -o yaml | sed -n '/^spec:/,/^status:/p'"
@@ -708,6 +743,9 @@ pe "convctl migrate-storage --xrd xwidgets.example.org --prune-stored-versions"
 note "After: etcd root apiVersion v3, storedVersions [v3]. Leftover v2 in managedFields is normal."
 pe "./show-storage.sh"
 pe "kubectl get crd xwidgets.example.org -o jsonpath='{.status.storedVersions}{\"\\n\"}'"
+
+note "And the gate from the top of this stage, now that the prune has run — the storedVersions blocker is gone. Anything it still reports is a manager whose managedFields record a v1 write, which is the thing to chase before the version block leaves."
+pe_soft "convctl versions --xrd 06-deprecate-v1/xrd.yaml --check-unserve v1"
 
 note "Now the v1 block can actually leave the XRD:"
 pe "cat 06-deprecate-v1/xrd-drop-v1.yaml"
