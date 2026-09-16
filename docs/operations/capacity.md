@@ -128,6 +128,97 @@ is 256 MiB, which the cluster above fits with room to spare after this change
 and did not before. A cluster with substantially more or larger CRDs should
 raise it or set a `cacheSelector`.
 
+There are three terms, and they are not the same size:
+
+| Term | What it scales with | Measured |
+|---|---|---|
+| **Informer cache** | every CRD and XRD the replica watches, schemas included | the 121 MiB above, for 300 two-version 200-property CRDs — **the dominant term** |
+| **Compiled registry** | number of targets × their schema size | ~18 KiB per target (see below) |
+| **Cold-start transient** | allocation churn while compiling, not anything retained | up to ~8× the steady registry — **what an OOM kill is decided against** |
+
+#### Bytes per compiled plan
+
+`make bench-mem`, `BenchmarkCompiledPlanRetained` in `pkg/engine`. Live heap
+either side of building N plans and holding them all — not `-benchmem`'s
+`B/op`, which counts the garbage a compile produces as well as what survives
+it:
+
+| Leaves (per version) | Retained per plan | Churned per compile | Ratio |
+|---|---:|---:|---:|
+| 10 | 2.5 KiB | 47 KiB | 19× |
+| 100 | 21 KiB | 467 KiB | 22× |
+| 1000 | 234 KiB | 4.7 MiB | 20× |
+
+Retained cost is linear in leaf count, about **240 bytes per leaf**. The
+number that matters operationally is the third column: **a compile churns
+roughly twenty times what it keeps.**
+
+#### Registry footprint
+
+`BenchmarkRegistryRetained` in `internal/webhookserver`, over a fleet of
+two-version targets of 50 leaves each with one `FieldRename` rule per leaf —
+so each target carries one compiled plan:
+
+| Targets | Retained per target | Registry total |
+|---|---:|---:|
+| 10 | 83 KiB | 0.8 MiB |
+| 100 | 18.6 KiB | 1.8 MiB |
+| 1000 | 18.4 KiB | 18 MiB |
+
+The 10-target row is fixed per-replica overhead divided by ten, not a real
+per-target cost; from a hundred targets up the figure is flat at ~18 KiB.
+**A thousand targets is 18 MiB of registry** — small enough that the registry
+is never the reason a replica needs a bigger limit.
+
+#### Peak versus steady state
+
+`BenchmarkInitialSyncPeak`, sampling live heap every 2 ms through the cold
+start:
+
+| Targets | Steady registry | Peak during sync | Ratio |
+|---|---:|---:|---:|
+| 100 | 1.8 MiB | 23–26 MiB | ~13× |
+| 1000 | 18 MiB | 140 MiB | ~8× |
+
+This is the finding worth acting on. The peak is not memory the replica
+needs; it is memory the garbage collector has not reclaimed yet, because
+with the default `GOGC` the heap is allowed to double the live set before a
+collection — and a cold start allocates twenty times what it keeps, as fast
+as it can, across every core.
+
+The kernel enforcing a container memory limit does not wait for the GC.
+**`GOMEMLIMIT` is what makes the GC aware of the same number**, so the
+operator sets it on every webhook-server container at 90% of
+`spec.resources.limits.memory` whenever a limit is set. With it, the same
+thousand-target run peaks at 61 MiB instead of 140 MiB, taking 1.6 s instead
+of 0.45 s — which is the trade a memory limit is asking for. Set
+`GOMEMLIMIT` yourself in `spec.extraEnv` to override the derived value; the
+operator leaves an explicit one alone.
+
+#### Worked example
+
+A cluster with **1000 targets averaging 200 leaves per version**, on the
+chart's default 256 MiB limit:
+
+- Registry: 200 leaves × 240 B ≈ 48 KiB per plan, ×1000 ≈ **48 MiB**.
+- Informer cache: the schemas those targets live in. Extrapolating the
+  measured 121 MiB for 300 two-version 200-property CRDs gives roughly
+  **400 MiB** — this term alone blows the default limit.
+- Cold-start transient: without `GOMEMLIMIT`, several hundred MiB on top.
+
+So: **set `cacheSelector`, or raise the limit to ~1 GiB.** The registry is
+not the problem at any plausible scale; the informer cache is, and it is the
+one term this operator can only narrow, never shrink. `GOMEMLIMIT` then
+keeps the cold start inside whatever limit you chose rather than spiking
+past it.
+
+The chart's 256 MiB default was reviewed against these numbers and left
+alone. It is right for the cluster it is a default for — a few dozen
+targets, a few hundred CRDs — and raising it would silently raise the
+scheduling floor for every install to serve the minority that need it. What
+was wrong was that nothing made the Go runtime respect it, which is what
+`GOMEMLIMIT` fixes.
+
 ### How these numbers were taken
 
 `hack/measure-cache-memory.sh` builds two real images from two real commits,

@@ -56,9 +56,20 @@ live in [`pkg/engine/*_bench_test.go`](https://github.com/TeraSky-OSS/declarativ
 and are summarized in [Capacity planning](operations/capacity.md). Extremely
 large or deeply nested schemas beyond the published 1000-leaf / 1000-element
 points are still unvalidated against a live apiserver. Re-run `make bench`
-locally; `make test-e2e-load` posts synthetic ConversionReview batches at a
-live webhook-server; `make test-e2e-scale` drives real Get/List through the
-apiserver conversion path against a generated CRD fleet (up to 100×100).
+locally; `make bench-mem` reproduces the memory-per-target numbers (bytes
+retained per compiled plan, registry footprint, and the transient peak
+during initial sync); `make test-e2e-load` posts synthetic ConversionReview
+batches at a live webhook-server; `make test-e2e-scale` drives real Get/List
+through the apiserver conversion path against a generated CRD fleet (up to
+100×100).
+
+The published memory figures come from Go benchmarks, not from a loaded
+cluster: they measure the compiled registry and the cold-start transient
+accurately, and say nothing directly about the informer cache, which is the
+dominant term and is measured separately by
+`hack/measure-cache-memory.sh`. The worked sizing example in
+[Capacity planning](operations/capacity.md#worked-example) extrapolates the
+informer term from one 300-CRD cluster; treat it as an order of magnitude.
 
 What the beta label promises about the surfaces above — and how a Helm value
 or a CLI flag is removed once it exists — is in the
