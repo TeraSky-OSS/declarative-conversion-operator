@@ -113,9 +113,17 @@ and a comment on every push is noise for repos that do not want one. Turn it
 on where the report *is* the review artifact — a platform repo where the
 person approving the change is not the person who ran the tool.
 
+The comment carries the **full report** — the run header, the per-path
+table, rule coverage and the summary line — the same thing you would read in
+a terminal. (`convctl test --output markdown` is deliberately not what gets
+posted: it renders findings only, so a clean run would comment "No findings"
+and tell a reviewer nothing about what was covered.)
+
 A config that does not compile exits before any conversion is attempted and
-has no report to render. That run still comments, with the tool's own error,
-because it is the one a reviewer most needs to read.
+writes its reason to stderr. That run still comments, with the tool's own
+error, because it is the one a reviewer most needs to read. Set
+`comment-title` when one workflow runs the Action twice, so the fixture run
+and the live run do not produce two identically-headed comments.
 
 Both this and `convctl-diff` talk to the REST API with `curl` and `jq`
 rather than the `gh` CLI, so they work on a slim self-hosted runner image —

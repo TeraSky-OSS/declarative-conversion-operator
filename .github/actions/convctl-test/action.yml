@@ -98,6 +98,13 @@ inputs:
       configuration.
     required: false
     default: ""
+  comment-title:
+    description: >-
+      Heading for the comment. Set it when one workflow runs this Action
+      more than once — "fixtures" and "live objects" read better than the
+      same heading twice.
+    required: false
+    default: convctl test
   token:
     description: Token used to upsert the comment.
     required: false
@@ -258,12 +265,17 @@ runs:
         path: ${{ steps.run.outputs.report-path }}
         if-no-files-found: warn
 
-    # Rendered only when it is going to be posted. convctl is run again
-    # rather than reformatting the JUnit file in bash: the tool already
-    # knows how to render its own report, and a second renderer would
-    # drift from the first. The cost is another pass, which is why this
-    # is behind `comment` rather than always on.
-    - name: Render the report as markdown
+    # The comment carries the full report — the run header, the per-path
+    # table, rule coverage and the summary line — which is what a reviewer
+    # reads in a terminal. `--output markdown` is deliberately NOT used:
+    # it renders findings only, so a clean run comments "No findings",
+    # which says nothing about what was actually covered.
+    #
+    # stdout and stderr together, with the exit code kept as data: a
+    # config that does not compile exits before any conversion is
+    # attempted and writes its reason to stderr, and that run is the one a
+    # reviewer most needs to read.
+    - name: Render the report for the comment
       id: markdown
       if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
       shell: bash
@@ -282,9 +294,13 @@ runs:
         STRICT: ${{ inputs.strict }}
         VALIDATE_OUTPUT: ${{ inputs.validate-output }}
         CONCURRENCY: ${{ inputs.concurrency }}
+        TITLE: ${{ inputs.comment-title }}
       run: |
         set -euo pipefail
         md="$RUNNER_TEMP/convctl-test-report.md"
+        log="$RUNNER_TEMP/convctl-test-output.txt"
+        fence='```'
+
         args=(--config "$CONFIG" --fail-on "$FAIL_ON")
         if [ -n "$XRD" ];             then args+=(--xrd "$XRD"); fi
         if [ -n "$CRD" ];             then args+=(--crd "$CRD"); fi
@@ -298,32 +314,29 @@ runs:
         if [ "$STRICT" = "true" ];    then args+=(--strict); fi
         if [ "$VALIDATE_OUTPUT" = "true" ]; then args+=(--validate-output); fi
         if [ -n "$CONCURRENCY" ];     then args+=(--concurrency "$CONCURRENCY"); fi
-        # The exit code is the run's verdict and was already captured by
-        # the run step; here it decides nothing, so do not let it abort
-        # the render.
-        log="$RUNNER_TEMP/convctl-test-render.log"
+
         set +e
-        convctl test "${args[@]}" --output markdown --output-file "$md" --quiet > "$log" 2>&1
+        convctl test "${args[@]}" --quiet > "$log" 2>&1
         rc=$?
         set -e
 
-        # A config that does not compile against the schema exits before
-        # any conversion is attempted, so there is no report to render —
-        # and that is precisely the run a reviewer most needs to see. Fall
-        # back to the tool's own message so the comment exists either way.
-        if [ ! -s "$md" ]; then
-          {
-            echo "### convctl test: no conversions were attempted"
-            echo
-            echo "\`convctl test\` exited $rc without producing a report."
-            echo "That normally means the configuration is not valid against"
-            echo "the schema, so nothing could be converted."
-            echo
-            echo '```'
-            head -c 50000 "$log"
-            echo '```'
-          } > "$md"
-        fi
+        if [ "$rc" -eq 0 ]; then result="passed"; else result="failed (exit $rc)"; fi
+
+        {
+          echo "## ${TITLE}"
+          echo
+          echo "**Result:** ${result}"
+          echo
+          echo "<details open>"
+          echo "<summary>output</summary>"
+          echo
+          echo "$fence"
+          # A fence inside the output would close this one early.
+          head -c 60000 "$log" | sed "s/$fence/'''/g"
+          echo "$fence"
+          echo
+          echo "</details>"
+        } > "$md"
         echo "markdown-path=$md" >> "$GITHUB_OUTPUT"
 
     - name: Upsert the pull-request comment
