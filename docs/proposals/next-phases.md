@@ -973,6 +973,71 @@ apiserver's write path".
 
 ## Phase 15 — Scale
 
+> **Shipped.** Every deliverable below landed. Seven things are worth
+> recording, four of them deviations and three of them defects the work
+> turned up rather than confirmed:
+>
+> - **The cold-start work found a defect, not just a missing metric.** A
+>   webhook-server replica does not listen on any port until its registry
+>   is populated, so both probes fail with connection-refused until then —
+>   which made the liveness probe's own 3 × 10 s the *entire* cold-start
+>   budget. A replica holding enough targets to exceed thirty seconds would
+>   have been killed and restarted forever, reading as a crash loop rather
+>   than as a slow start. `spec.startupProbe` closes it, and the plain HTTP
+>   endpoint now comes up before the cache sync so a cold replica is
+>   visibly alive.
+> - **The memory work found a second one.** The steady registry is small —
+>   about 18 KiB per target — but compiling churns roughly twenty times
+>   what it retains, and with the default `GOGC` a thousand-target cold
+>   start peaks around 140 MiB against 18 MiB of steady state. The kernel
+>   enforcing a container limit does not wait for the collector, so the
+>   operator now sets `GOMEMLIMIT` from `resources.limits.memory`. The
+>   chart's 256 MiB default was reviewed and left alone: it was not wrong,
+>   it was unenforceable.
+> - **`--registry-ready-timeout` was considered and deliberately not
+>   added** (15.2 raises it as an open question). An unavailable replica
+>   degrades throughput; a half-loaded one corrupts the answer. Recorded in
+>   [Capacity planning](../operations/capacity.md) so it does not have to be
+>   re-argued.
+> - **The reassignment e2e paid for itself on its first clean run.** Three
+>   moves under load produced exactly one failed write in 9,456. The
+>   apiserver refreshes a CRD's conversion configuration asynchronously
+>   after the write that changed it, so for a moment after a repoint it is
+>   still calling the source — and a replica that dropped its plan the
+>   instant the object changed answered that call with a 503. Replicas now
+>   drain for thirty seconds after a target stops naming them, which is the
+>   same race and the same treatment as the pod's `preStop` sleep one layer
+>   down.
+> - **Sharding needed a prerequisite the issue predicted, and it changed
+>   the webhook-server too.** Per-target readiness is published rather than
+>   queried — each replica writes its servable set into a Lease, and
+>   `status.servedTargets` is the intersection — because the operator's
+>   reconcile loop must not call pods. The half that is not obvious is on
+>   the *losing* side: a replica now holds a plan while either the resolver
+>   assigns the target to it **or** the live target still names its Service.
+>   Without that, waiting for the destination would itself be the outage.
+>   It also fixes a race that predates sharding: editing `webhookServerRef`
+>   by hand always had this window.
+> - **Rendezvous hashing, not the "consistent hashing" the issue names.**
+>   Same intent, better disruption property and no virtual-node count to
+>   tune. See the design note on
+>   [#157](https://github.com/terasky-oss/declarative-conversion-operator/issues/157).
+> - **The nightly scale run is 300 CRDs, not the 1000 named here.** A
+>   standard hosted runner is four shared vCPUs hosting an entire
+>   single-node control plane, and applying CRDs is apiserver-CPU-bound.
+>   300 × 20 completes in ~25 minutes with real headroom; an aspirational
+>   number that always fails would be worth less than a smaller one that
+>   always runs. The envelope is a workflow input so the ceiling can be
+>   raised on evidence, and a run at a different envelope skips the
+>   comparison rather than reporting a false regression.
+>
+> One item was widened. 15.5 says "no new metrics need registering"; that
+> is true of the manager, which serves controller-runtime's registry
+> directly, and false of the webhook-server, which deliberately serves a
+> dedicated one — so its registry reconciler was the only controller in the
+> system with no queue-depth signal anywhere. Its `/metrics` now gathers
+> both registries.
+
 - **Automatic sharding.** `assign.ResolveAssignment` supports explicit and
   default assignment; add a policy that balances N targets across M
   `ConversionWebhookServer` instances, with a `spec.shardCount` and rebalance
