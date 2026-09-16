@@ -89,9 +89,39 @@ rather than silently skipped.
 | Action | Does |
 |---|---|
 | [`setup-convctl`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/setup-convctl) | installs a cosign-verified `convctl` |
-| [`convctl-test`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-test) | one cluster or fixtures: JUnit artifact, job summary, diff annotations |
+| [`convctl-test`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-test) | one cluster or fixtures: JUnit artifact, job summary, diff annotations, and — with `comment: true` — a sticky pull-request comment |
 | [`convctl-diff`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-diff) | the coverage delta as a sticky pull-request comment |
 | [`convctl-fleet`](https://github.com/TeraSky-OSS/declarative-conversion-operator/tree/main/.github/actions/convctl-fleet) | every cluster, one aggregated report |
+
+### Putting the report on the pull request
+
+`convctl-test` writes annotations and a job summary by default; set
+`comment: true` to also upsert the report as a sticky comment, updated in
+place on each push rather than appended:
+
+```yaml
+- uses: TeraSky-OSS/declarative-conversion-operator/.github/actions/convctl-test@main
+  with:
+    config: conversion/conversion.yaml
+    xrd: platform/xrd.yaml
+    live: "true"
+    comment: "true"
+```
+
+It is off by default because annotations already put a failure on the diff,
+and a comment on every push is noise for repos that do not want one. Turn it
+on where the report *is* the review artifact — a platform repo where the
+person approving the change is not the person who ran the tool.
+
+A config that does not compile exits before any conversion is attempted and
+has no report to render. That run still comments, with the tool's own error,
+because it is the one a reviewer most needs to read.
+
+Both this and `convctl-diff` talk to the REST API with `curl` and `jq`
+rather than the `gh` CLI, so they work on a slim self-hosted runner image —
+`ghcr.io/actions/actions-runner` ships those two and not `gh`. A comment
+that cannot be posted (a fork's read-only token, or a workflow without
+`pull-requests: write`) is a warning, not a failed job.
 
 [`convctl-fleet.gha.yml`](convctl-fleet.gha.yml) is the full reference
 workflow, built on those Actions. It runs as written — the only things to
