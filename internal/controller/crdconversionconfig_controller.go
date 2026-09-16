@@ -259,7 +259,7 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	// write of the resource for the duration, and waiting is safe because
 	// the old instance keeps serving a target that still names it.
 	if movingServers {
-		verdict, err := checkHandover(ctx, r.Client, &server, r.DefaultServerNamespace, cfg.Spec.TargetCRD.Name)
+		verdict, err := checkHandover(ctx, r.Client, &server, r.DefaultServerNamespace, cfg.Spec.TargetCRD.Name, orig.Status.Conditions, time.Now())
 		if err != nil {
 			return ctrl.Result{}, err
 		}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -209,12 +210,38 @@ func TestXRDHandover_ProceedsUnverifiedWhenNobodyPublishes(t *testing.T) {
 	applyOnce(t, r)
 	got := moveTo(t, r, "srv-b")
 
+	// First it waits. "Nobody has published" is indistinguishable from
+	// "nobody has published *yet*", and the second is the common case, so
+	// the move does not go through on the strength of silence alone.
 	cond := meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionHandoverReady)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "HandoverAwaitingReports" {
+		t.Fatalf("HandoverReady = %+v, want False/HandoverAwaitingReports", cond)
+	}
+	if strings.Contains(got.Status.WebhookURL, "srv-b") {
+		t.Fatalf("webhook URL is %q; the move must not happen while the grace period is still running", got.Status.WebhookURL)
+	}
+
+	// Backdate the refusal past the grace period — the fleet structurally
+	// cannot report, so no amount of further waiting will change it.
+	cond.LastTransitionTime = metav1.NewTime(time.Now().Add(-UnreportedGracePeriod - time.Second))
+	// Assigned rather than passed through meta.SetStatusCondition, which
+	// deliberately will not restamp LastTransitionTime while the status is
+	// unchanged — the very property blockedFor relies on.
+	got.Status.Conditions = []metav1.Condition{*cond}
+	if err := r.Status().Update(context.Background(), got); err != nil {
+		t.Fatalf("backdating the handover condition: %v", err)
+	}
+	if _, err := reconcileXRD(t, r, "cfg"); err != nil {
+		t.Fatalf("reconcile after the grace period: %v", err)
+	}
+	got = getXRDConfig(t, r, "cfg")
+
+	cond = meta.FindStatusCondition(got.Status.Conditions, teraskyv1alpha1.ConditionHandoverReady)
 	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != "HandoverUnverified" {
-		t.Fatalf("HandoverReady = %+v, want True/HandoverUnverified", cond)
+		t.Fatalf("HandoverReady = %+v, want True/HandoverUnverified once the grace period has passed", cond)
 	}
 	if !strings.Contains(got.Status.WebhookURL, "srv-b") {
-		t.Fatalf("webhook URL is %q; an unverifiable handover must still proceed, as it did before", got.Status.WebhookURL)
+		t.Fatalf("webhook URL is %q; an unverifiable handover must still proceed eventually, as it did before", got.Status.WebhookURL)
 	}
 }
 

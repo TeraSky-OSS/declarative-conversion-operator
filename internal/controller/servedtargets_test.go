@@ -97,16 +97,34 @@ func TestCanServeTarget(t *testing.T) {
 		reporting     int32
 		readyReplicas int32
 		truncated     bool
+		blockedFor    time.Duration
 		wantOK        bool
 		wantReason    string
 	}{{
-		// Nothing published at all: a fleet mid-upgrade, or an instance in
-		// a namespace whose Lease Role was never created. Blocking every
-		// move forever would be a regression against every previous
-		// release, so the move proceeds and says it was not verified.
-		name:      "nothing published proceeds unverified",
+		// Nothing published *yet*. This looks identical to a fleet that
+		// cannot publish, and is far more often a destination whose
+		// replicas have not processed the config update. Waiting first is
+		// what tells the two apart.
+		name:      "nothing published yet waits",
 		reporting: 0, readyReplicas: 2,
+		wantOK: false, wantReason: "HandoverAwaitingReports",
+	}, {
+		// Still nothing after the grace period: a fleet mid-upgrade, or an
+		// instance in a namespace whose Lease Role was never created.
+		// Blocking those forever would be a regression against every
+		// previous release, so the move proceeds and says it was not
+		// verified.
+		name:      "nothing published after the grace period proceeds unverified",
+		reporting: 0, readyReplicas: 2, blockedFor: UnreportedGracePeriod,
 		wantOK: true, wantReason: "HandoverUnverified",
+	}, {
+		// The grace period must not become a blanket timeout that
+		// approves anything. A replica that HAS reported and does not
+		// serve the target is a definite no, however long we have waited.
+		name:   "waiting does not expire into approving a definite no",
+		served: []string{"afoos.example.org"}, reporting: 2, readyReplicas: 2,
+		blockedFor: 10 * UnreportedGracePeriod,
+		wantOK:     false, wantReason: "HandoverPending",
 	}, {
 		name:   "all reporting replicas serve it",
 		served: []string{"afoos.example.org", target}, reporting: 2, readyReplicas: 2,
@@ -129,7 +147,7 @@ func TestCanServeTarget(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := canServeTarget(tc.served, tc.reporting, tc.readyReplicas, tc.truncated, target, "srv-b")
+			v := canServeTarget(tc.served, tc.reporting, tc.readyReplicas, tc.truncated, target, "srv-b", tc.blockedFor)
 			if v.OK != tc.wantOK || v.Reason != tc.wantReason {
 				t.Fatalf("got OK=%v reason=%q, want OK=%v reason=%q (message: %s)", v.OK, v.Reason, tc.wantOK, tc.wantReason, v.Message)
 			}
@@ -145,11 +163,44 @@ func TestCanServeTarget(t *testing.T) {
 // objects". Repointing a target at an instance with nothing running is the
 // outage the whole sequence exists to avoid.
 func TestCanServeTarget_NoReadyReplicasNeverApproves(t *testing.T) {
-	v := canServeTarget(nil, 0, 0, false, "xfoos.example.org", "srv-b")
-	if v.OK {
-		t.Fatalf("approved a handover to an instance with no ready replicas: %+v", v)
+	for _, blocked := range []time.Duration{0, 10 * UnreportedGracePeriod} {
+		v := canServeTarget(nil, 0, 0, false, "xfoos.example.org", "srv-b", blocked)
+		if v.OK {
+			t.Fatalf("approved a handover to an instance with no ready replicas after %s: %+v", blocked, v)
+		}
+		if v.Reason != "HandoverPending" {
+			t.Fatalf("reason = %q, want HandoverPending", v.Reason)
+		}
 	}
-	if v.Reason != "HandoverPending" {
-		t.Fatalf("reason = %q, want HandoverPending", v.Reason)
+}
+
+// blockedFor reads the clock off the HandoverReady condition, so the
+// grace period has to start when the move was first refused and keep
+// running across the reason changing between waiting states — which is
+// exactly when meta.SetStatusCondition does NOT restamp the timestamp.
+func TestBlockedFor(t *testing.T) {
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	cond := func(status metav1.ConditionStatus, age time.Duration) []metav1.Condition {
+		return []metav1.Condition{{
+			Type:               teraskyv1alpha1.ConditionHandoverReady,
+			Status:             status,
+			LastTransitionTime: metav1.NewTime(now.Add(-age)),
+		}}
+	}
+	for _, tc := range []struct {
+		name       string
+		conditions []metav1.Condition
+		want       time.Duration
+	}{
+		{"no condition is a fresh refusal", nil, 0},
+		{"a satisfied handover is not blocked", cond(metav1.ConditionTrue, time.Hour), 0},
+		{"a refused handover counts from its transition", cond(metav1.ConditionFalse, 20*time.Second), 20 * time.Second},
+		{"a clock that went backwards does not go negative", cond(metav1.ConditionFalse, -time.Minute), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := blockedFor(tc.conditions, now); got != tc.want {
+				t.Fatalf("blockedFor = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }

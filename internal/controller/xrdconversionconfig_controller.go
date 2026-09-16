@@ -281,7 +281,7 @@ func (r *XRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	// Only on a move: a first apply has no previous server to hand over
 	// from, so gating it would just delay every new config for no gain.
 	if movingServers {
-		verdict, err := checkHandover(ctx, r.Client, &server, r.DefaultServerNamespace, cfg.Spec.TargetXRD.Name)
+		verdict, err := checkHandover(ctx, r.Client, &server, r.DefaultServerNamespace, cfg.Spec.TargetXRD.Name, orig.Status.Conditions, time.Now())
 		if err != nil {
 			return ctrl.Result{}, err
 		}

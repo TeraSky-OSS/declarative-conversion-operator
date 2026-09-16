@@ -119,8 +119,9 @@ default instance runs in, so an instance isolated in its own namespace
 leaves this grant reaching nothing else. A `ConversionWebhookServer`
 created outside the chart needs the same `Role` and `RoleBinding` in its
 own namespace; without them the replicas still serve conversions, and what
-is lost is the verified handover — a move onto that instance proceeds with
-`HandoverReady` reason `HandoverUnverified` rather than failing.
+is lost is the verified handover — a move onto that instance waits 30
+seconds for a report that cannot come, then proceeds with `HandoverReady`
+reason `HandoverUnverified` rather than failing.
 
 No access to Secrets, and no ability to patch XRDs or CRDs.
 

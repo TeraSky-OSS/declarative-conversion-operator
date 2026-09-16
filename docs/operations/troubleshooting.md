@@ -116,9 +116,13 @@ convctl test --xrd xrd.yaml --config config.yaml --live
 
 `HandoverReady=True` with reason `HandoverUnverified` is not a failure: the
 move completed and the target is patched. What it says is that the
-destination published no served-target Leases, so the operator could not
-confirm the instance was ready before repointing — it proceeded the way
-every release before this feature did.
+destination published no served-target Leases *within the 30-second grace
+period*, so the operator could not confirm the instance was ready before
+repointing — it proceeded the way every release before this feature did.
+
+Seeing `HandoverReady=False` with reason `HandoverAwaitingReports` instead
+means that wait is still running. It resolves on its own within thirty
+seconds, either into a verified move or into the unverified one below.
 
 | Cause | Fix |
 |---|---|
@@ -133,7 +137,9 @@ kubectl get conversionwebhookserver <instance> -o jsonpath='{.status.reportingRe
 
 Until it is fixed, a move onto that instance is unverified — which is the
 pre-existing behaviour, not a new hazard, but it is the one window in which
-a rebalance could briefly fail conversions.
+a rebalance could briefly fail conversions. The grace period narrows that
+window to fleets that genuinely cannot publish, rather than every fleet
+whose replicas had not got round to it.
 
 ## `Applied` but not `Propagated`
 

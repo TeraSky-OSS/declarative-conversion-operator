@@ -219,10 +219,16 @@ the target:
   503. Same shape as the `preStop` sleep, same treatment.
 
 An instance whose replicas publish nothing at all — a fleet mid-upgrade, or
-one in a namespace with no Lease `Role` — cannot be verified. The move then
-proceeds as every earlier release did, and says so: `HandoverReady=True`
-with reason `HandoverUnverified`. See
-[RBAC](../security/rbac.md) for the Role the replicas need.
+one in a namespace with no Lease `Role` — cannot be verified. That case is
+indistinguishable from a destination whose replicas simply have not
+reported *yet*, and the second is much the more common, so the move waits
+**30 seconds** for a first report (`HandoverReady=False`, reason
+`HandoverAwaitingReports`) before concluding that none is coming. Only then
+does it proceed as every earlier release did, and say so:
+`HandoverReady=True` with reason `HandoverUnverified`. A healthy replica
+publishes in well under a second, so the wait is only ever paid by a fleet
+that genuinely cannot report. See [RBAC](../security/rbac.md) for the Role
+the replicas need.
 
 ## Deletion safety
 
