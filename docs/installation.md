@@ -171,6 +171,10 @@ drops conversions while the schema and config reconcile independently.
 
 Every archive's checksum is covered by the cosign-signed `checksums.txt`; see
 the signed-artifact section of any release for the verification commands.
+Verifying needs **cosign v3 or newer** — from v0.4.0 the signature is a
+Sigstore bundle, and cosign v3 also reads the detached signatures earlier
+releases used. The [`setup-convctl`](gitops/configuration-ci.md) action does this for you,
+and handles both shapes.
 
 ### `convctl version`
 

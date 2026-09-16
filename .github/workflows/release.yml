@@ -105,7 +105,23 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Sign image (cosign keyless)
+        # cosign v3's default: the signature goes into a Sigstore bundle.
+        # Verifying it needs cosign v3, which also verifies every earlier
+        # release's detached signatures with the same command — so this
+        # raises the floor without stranding anything already published.
         run: cosign sign --yes "${{ matrix.image }}@${{ steps.build.outputs.digest }}"
+
+      # Verify what we just signed, with the exact command the release
+      # notes tell users to run. The bundle-format regression that this
+      # step exists to catch did not fail signing — it succeeded, and
+      # produced a signature no cosign v2 client could find. A signing
+      # step that never reads its own output cannot notice that.
+      - name: Verify the image signature the way the release notes say to
+        run: |
+          cosign verify \
+            --certificate-identity-regexp '^https://github\.com/(?i:terasky-oss)/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${{ matrix.image }}@${{ steps.build.outputs.digest }}" > /dev/null
 
       # Scan the image that was just pushed, by digest. A signed artifact
       # built from a vulnerable base is still vulnerable, and the release is
@@ -219,6 +235,13 @@ jobs:
       - name: Sign chart (cosign keyless)
         run: cosign sign --yes "${{ steps.push.outputs.ref }}@${{ steps.push.outputs.digest }}"
 
+      - name: Verify the chart signature the way the release notes say to
+        run: |
+          cosign verify \
+            --certificate-identity-regexp '^https://github\.com/(?i:terasky-oss)/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${{ steps.push.outputs.ref }}@${{ steps.push.outputs.digest }}" > /dev/null
+
       - name: Attest chart build provenance
         uses: actions/attest-build-provenance@v4
         with:
@@ -310,7 +333,9 @@ jobs:
             echo ""
             echo "## Signed artifacts"
             echo ""
-            echo "The container images and Helm chart below are signed keylessly with [cosign](https://github.com/sigstore/cosign) using this workflow's GitHub OIDC identity, and carry a [GitHub build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds). The container images additionally carry an SBOM attestation (the Helm chart does not — it has no dependency graph of its own). The CLI \`checksums.txt\` (covering all archives) is likewise cosign-signed and carries a build provenance attestation; each archive has an accompanying SBOM."
+            echo "Verification requires **cosign v3 or newer**, which reads both the Sigstore bundle format used from v0.4.0 on and the detached signatures of earlier releases."
+            echo ""
+            echo "The container images and Helm chart below are signed keylessly with [cosign](https://github.com/sigstore/cosign) using this workflow's GitHub OIDC identity, and carry a [GitHub build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds). The container images additionally carry an SBOM attestation (the Helm chart does not — it has no dependency graph of its own). The CLI \`checksums.txt\` (covering all archives) is likewise cosign-signed, into \`checksums.txt.bundle\`, and carries a build provenance attestation; each archive has an accompanying SBOM."
             echo ""
             echo "| Artifact | Digest |"
             echo "|---|---|"
@@ -334,8 +359,7 @@ jobs:
             echo ""
             echo '```bash'
             echo "cosign verify-blob \\"
-            echo "  --certificate checksums.txt.pem \\"
-            echo "  --signature checksums.txt.sig \\"
+            echo "  --bundle checksums.txt.bundle \\"
             echo "  --certificate-identity-regexp '^https://github.com/(?i:terasky-oss)/declarative-conversion-operator/\\.github/workflows/release\\.yml@refs/tags/.*\$' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
             echo "  checksums.txt"

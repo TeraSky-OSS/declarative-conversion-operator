@@ -106,14 +106,23 @@ signs:
   # identity (needs id-token: write and cosign on PATH). Verifying the
   # checksum file's signature and matching an archive's hash against it
   # verifies that archive, so we don't need to sign every archive individually.
+  # Signs checksums.txt into a Sigstore bundle — the format cosign v3
+  # produces by default. The bundle carries the signature, the Fulcio
+  # certificate and the Rekor inclusion proof in one file, so verification
+  # needs no Rekor round-trip and there is one asset instead of two.
+  #
+  # This requires cosign v3 to verify. That is a deliberate floor, not an
+  # oversight: cosign v3 verifies BOTH formats with the same command, so
+  # nobody verifying earlier releases is affected, and the detached
+  # --output-signature/--output-certificate flags are already deprecated
+  # and warn on every run. setup-convctl handles both, picking by which
+  # assets a release actually has.
   - cmd: cosign
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.bundle"
     args:
       - sign-blob
       - "--yes"
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - "--bundle=${signature}"
       - "${artifact}"
     artifacts: checksum
 
@@ -141,5 +150,5 @@ release:
     Container images: `ghcr.io/terasky-oss/declarative-conversion-operator:{{ .Tag }}` and `ghcr.io/terasky-oss/declarative-conversion-webhook-server:{{ .Tag }}`.
     Helm chart: `oci://ghcr.io/terasky-oss/charts/declarative-conversion-operator --version {{ .Version }}`.
 
-    `checksums.txt` below is signed keylessly with [cosign](https://github.com/sigstore/cosign) (`checksums.txt.sig` / `checksums.txt.pem`) using this workflow's GitHub OIDC identity, and each archive has an accompanying CycloneDX SBOM (`*.sbom`). See the "Signed artifacts" section further down for verification commands and container image/Helm chart digests.
+    `checksums.txt` below is signed keylessly with [cosign](https://github.com/sigstore/cosign) into a Sigstore bundle (`checksums.txt.bundle`, which needs cosign v3+ to verify) using this workflow's GitHub OIDC identity, and each archive has an accompanying CycloneDX SBOM (`*.sbom`). See the "Signed artifacts" section further down for verification commands and container image/Helm chart digests.
   prerelease: auto

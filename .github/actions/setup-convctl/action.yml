@@ -164,7 +164,18 @@ runs:
 
         assets=("$ARCHIVE" checksums.txt)
         if [ "$VERIFY" = "true" ]; then
-          assets+=(checksums.txt.sig checksums.txt.pem)
+          # Releases from v0.4.0 on sign checksums.txt into a Sigstore
+          # bundle; earlier ones emit a detached .sig/.pem pair. Which one
+          # to fetch is a property of the release being installed, not of
+          # this action, so ask the release.
+          if gh release view "$VERSION" \
+               --repo TeraSky-OSS/declarative-conversion-operator \
+               --json assets --jq '.assets[].name' \
+             | grep -qx 'checksums.txt.bundle'; then
+            assets+=(checksums.txt.bundle)
+          else
+            assets+=(checksums.txt.sig checksums.txt.pem)
+          fi
         fi
         # An asset already in the directory is kept rather than re-fetched:
         # the download is not what makes an archive trustworthy, the
@@ -208,7 +219,23 @@ runs:
         # A cache holds the archive but not necessarily the signature
         # material, so fetch whatever is missing before verifying. Present
         # files are left alone, for the same reason as above.
-        for asset in checksums.txt checksums.txt.sig checksums.txt.pem "$ARCHIVE"; do
+        #
+        # Two shapes, decided by the release rather than by this action:
+        # a Sigstore bundle from v0.4.0 on, a detached .sig/.pem pair
+        # before that. cosign v3 verifies both, so supporting the old one
+        # costs a branch and keeps every published release installable.
+        if gh release view "$VERSION" \
+             --repo TeraSky-OSS/declarative-conversion-operator \
+             --json assets --jq '.assets[].name' \
+           | grep -qx 'checksums.txt.bundle'; then
+          sig_assets=(checksums.txt.bundle)
+          cosign_args=(--bundle checksums.txt.bundle)
+        else
+          sig_assets=(checksums.txt.sig checksums.txt.pem)
+          cosign_args=(--certificate checksums.txt.pem --signature checksums.txt.sig)
+        fi
+
+        for asset in checksums.txt "${sig_assets[@]}" "$ARCHIVE"; do
           if [ ! -f "$asset" ]; then
             gh release download "$VERSION" \
               --repo TeraSky-OSS/declarative-conversion-operator \
@@ -226,8 +253,7 @@ runs:
         # pattern fails with "none of the expected identities matched",
         # which reads like a bad signature rather than a typo.
         cosign verify-blob \
-          --certificate checksums.txt.pem \
-          --signature checksums.txt.sig \
+          "${cosign_args[@]}" \
           --certificate-identity-regexp '^https://github\.com/(?i:terasky-oss)/declarative-conversion-operator/\.github/workflows/release\.yml@refs/tags/.*$' \
           --certificate-oidc-issuer https://token.actions.githubusercontent.com \
           checksums.txt
