@@ -146,6 +146,18 @@ jobs:
           command -v convctl
           convctl version
 
+      # A supplied binary is never verified — there is no release to check
+      # it against — so installing cosign for one is pure cost, and on a
+      # minimal self-hosted runner it is a hard failure: cosign-installer
+      # shells out to envsubst, which a slim container image does not ship.
+      - name: cosign was not installed, because nothing needed verifying
+        run: |
+          set -euo pipefail
+          if [ -e "$HOME/.cosign/cosign" ]; then
+            echo "::error::setup-convctl installed cosign for a supplied binary" >&2
+            exit 1
+          fi
+
   # actions/cache saves in the job's post step, so a second install inside
   # one job can never hit it. The cached path is a LATER job or run — which
   # is also the one that runs in practice, and the one that silently rots.

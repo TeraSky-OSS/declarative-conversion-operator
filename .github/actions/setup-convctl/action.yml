@@ -203,10 +203,16 @@ runs:
             --pattern "$asset"
         done
 
-    # Cosign is only installed when it is going to be used, so verify: false
-    # costs nothing beyond the download.
+    # Cosign is only installed when it is going to be used — which means
+    # matching the verify step's condition below, `binary` included. A
+    # supplied binary is never verified (there is no release to check it
+    # against), so installing cosign for one was pure cost. On a minimal
+    # self-hosted runner it is worse than cost: cosign-installer shells out
+    # to envsubst, and a slim container image does not ship gettext, so the
+    # install died at "envsubst: command not found" for a job that was
+    # never going to run cosign at all.
     - name: Install cosign
-      if: inputs.verify == 'true'
+      if: inputs.binary == '' && inputs.verify == 'true'
       # Pinned to an exact version: sigstore publishes a floating v3 tag but
       # no v4, so `@v4` resolves to nothing and the step fails with "unable
       # to find version" rather than anything about cosign.
