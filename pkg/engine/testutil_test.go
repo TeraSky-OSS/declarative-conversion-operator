@@ -61,3 +61,6 @@ func diagMessages(diags []Diagnostic, sev Severity) []string {
 	}
 	return out
 }
+
+// jsonRaw wraps a raw JSON literal for an enum entry.
+func jsonRaw(s string) extv1.JSON { return extv1.JSON{Raw: []byte(s)} }

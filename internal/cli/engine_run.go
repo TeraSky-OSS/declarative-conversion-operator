@@ -33,7 +33,12 @@ import (
 // and admission webhook use, against a locally loaded XRD and config.
 func runAnalyze(xrd *unstructured.Unstructured, cfg *teraskyv1alpha1.XRDConversionConfig) (engine.AnalyzeReport, []engine.VersionSchema, error) {
 	source := xrdadapter.New(xrd)
-	versions, err := source.Versions()
+	// NormalizedVersions, not Versions: these schemas are handed to
+	// callers that flatten them themselves (suggest, rehub), and Analyze
+	// reports against the normalised shape. Handing out the raw one would
+	// have those callers see a different field set from the report they
+	// are reading.
+	versions, err := engine.NormalizedVersions(source)
 	if err != nil {
 		return engine.AnalyzeReport{}, nil, fmt.Errorf("reading XRD versions: %w", err)
 	}
@@ -64,7 +69,7 @@ func buildRouter(cfg *teraskyv1alpha1.XRDConversionConfig, report engine.Analyze
 // of pkg/xrdadapter.
 func runAnalyzeCRD(crd *extv1.CustomResourceDefinition, cfg *teraskyv1alpha1.CRDConversionConfig) (engine.AnalyzeReport, []engine.VersionSchema, error) {
 	source := crdadapter.New(crd)
-	versions, err := source.Versions()
+	versions, err := engine.NormalizedVersions(source)
 	if err != nil {
 		return engine.AnalyzeReport{}, nil, fmt.Errorf("reading CRD versions: %w", err)
 	}

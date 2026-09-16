@@ -95,11 +95,9 @@ func TestWhen_PathMustExistOnBothSchemas(t *testing.T) {
 	}
 }
 
-func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
-	ref := "#/definitions/Payload"
+func TestUncovered_NamesOneOfAndAnyOfConstructs(t *testing.T) {
 	hub := objSchema(map[string]extv1.JSONSchemaProps{
 		"payload": {OneOf: []extv1.JSONSchemaProps{strSchema(), {Type: "object"}}},
-		"blob":    {Ref: &ref},
 		"choice":  {AnyOf: []extv1.JSONSchemaProps{strSchema(), intSchema()}},
 	})
 	spoke := objSchema(map[string]extv1.JSONSchemaProps{
@@ -110,13 +108,10 @@ func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	errs := diagMessages(diags, SeverityError)
-	var sawOneOf, sawRef, sawAnyOf bool
+	var sawOneOf, sawAnyOf bool
 	for _, msg := range errs {
 		if strings.Contains(msg, "oneOf") && strings.Contains(msg, "payload") {
 			sawOneOf = true
-		}
-		if strings.Contains(msg, "$ref") && strings.Contains(msg, "blob") {
-			sawRef = true
 		}
 		if strings.Contains(msg, "anyOf") && strings.Contains(msg, "choice") {
 			sawAnyOf = true
@@ -125,11 +120,29 @@ func TestUncovered_NamesOneOfAndRefConstructs(t *testing.T) {
 	if !sawOneOf {
 		t.Fatalf("expected uncovered diagnostic naming oneOf for payload, got %v", errs)
 	}
-	if !sawRef {
-		t.Fatalf("expected uncovered diagnostic naming $ref for blob, got %v", errs)
-	}
 	if !sawAnyOf {
 		t.Fatalf("expected uncovered diagnostic naming anyOf for choice, got %v", errs)
+	}
+}
+
+// $ref used to be reported the same way, as "an uncovered field sitting
+// inside a construct". It is now resolved before anything reaches the
+// coverage scan, so an unresolvable one is an authoring error with a
+// message that says which reference and why — which is what an author can
+// act on, where the old diagnostic was not.
+func TestRef_UnresolvableIsASchemaError(t *testing.T) {
+	ref := "#/definitions/Payload"
+	hub := objSchema(map[string]extv1.JSONSchemaProps{"blob": {Ref: &ref}})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{"blob": strSchema()})
+
+	_, _, err := Compile(RuleSet{Rules: nil}, &hub, &spoke)
+	if err == nil {
+		t.Fatal("expected an unresolvable $ref to be an error")
+	}
+	for _, want := range []string{"$ref", "Payload", "blob"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
 	}
 }
 

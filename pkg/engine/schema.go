@@ -99,6 +99,10 @@ type LeafField struct {
 // Exported for tooling that has to reason about uncovered fields in the
 // same terms Analyze does — notably convctl's rule-stub suggester, which
 // needs a leaf's FieldKind to tell a rename apart from a type coercion.
+//
+// It expects an already-normalised schema. Callers reading schemas
+// straight from an adapter should go through NormalizedVersions, or they
+// will flatten a schema differently from the way Analyze reported on it.
 func FlattenSchema(schema *extv1.JSONSchemaProps) []LeafField {
 	return flattenSchema(schema)
 }
@@ -203,6 +207,14 @@ func classify(schema *extv1.JSONSchemaProps) (FieldKind, bool) {
 
 // schemaConstruct reports a JSON Schema combinator the engine does not
 // flatten through. Empty means an ordinary typed node.
+//
+// `$ref` and `allOf` are absent from this list because NormalizeSchema
+// resolves and merges them before anything here sees a schema — a node
+// that still carries one has been reached without going through
+// normalisation, which is a programming error rather than a schema the
+// engine must be careful around. They are still reported so that path
+// produces a legible diagnostic instead of silently flattening a node
+// whose real field set has not been worked out.
 func schemaConstruct(schema *extv1.JSONSchemaProps) string {
 	if schema == nil {
 		return ""

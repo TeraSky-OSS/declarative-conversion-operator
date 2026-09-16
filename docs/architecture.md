@@ -61,6 +61,22 @@ type SchemaSource interface {
 
 `pkg/xrdadapter` is the package that knows Crossplane XRDs exist — it implements `SchemaSource` by reading an XRD's `spec.versions[]`. `pkg/crdadapter` is its sibling for plain native `CustomResourceDefinition`s, reading `spec.versions[].{name,served,storage,schema}` directly (CRDs already use the exact vendored Go types this package needs, so no unstructured conversion is required the way it is for Crossplane). Neither adapter changes anything about `pkg/engine` itself — that's the point of the seam.
 
+**Schemas are normalised once, at the seam.** Before anything flattens a
+schema, `NormalizeSchema` folds each `allOf` branch into its parent and
+resolves local `#/...` references, so `flattenSchema`, every resolver, the
+leftover-field scan and the passthrough tree all see one ordinary,
+junctor-free shape and none of them has to know those constructs existed.
+The result is an analysis artifact and is never written back to a cluster,
+which is what lets the merge keep exactly what the engine reads — the field
+set, types, required-ness, enum vocabularies, opacity — and drop the value
+validations it never looks at.
+
+That the merge cannot *discover* a field is a fact about CRDs, not an
+assumption: the apiserver requires every property named inside a junctor to
+be declared outside it as well. `pkg/engine/structural_facts_test.go` pins
+that, and four related facts, against the apiserver's own validator, so the
+engine's model cannot drift away from what a cluster actually accepts.
+
 **Two entry points, both operating on a precompiled `Plan`:**
 
 - `Compile(rules, hubSchema, spokeSchema) (*Plan, []Diagnostic, error)` — flattens both schemas to leaf paths, resolves every rule's declared path(s) against them, computes per-rule, per-direction losslessness, and fails the whole compile if any hub or spoke leaf path is left unclaimed and isn't structurally identical on both sides. A `Plan` only ever comes out of a successful compile with zero errors.

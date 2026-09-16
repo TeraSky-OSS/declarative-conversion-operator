@@ -33,7 +33,11 @@ type AnalyzeInput struct {
 // last known-good plan on a failed re-validation" trivial for callers: a
 // failing re-analysis simply never yields a replacement Plan.
 func Analyze(in AnalyzeInput) (AnalyzeReport, error) {
-	versions, err := in.Source.Versions()
+	// Normalised once, here, at the only boundary where schemas enter the
+	// engine — so flattenSchema, every resolver, the leftover scan and the
+	// passthrough tree all see the same ordinary, junctor-free shape and
+	// none of them has to know that $ref or allOf ever existed.
+	versions, err := NormalizedVersions(in.Source)
 	if err != nil {
 		return AnalyzeReport{}, fmt.Errorf("analyze: reading versions: %w", err)
 	}

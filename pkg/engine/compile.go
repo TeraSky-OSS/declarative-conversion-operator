@@ -39,11 +39,28 @@ import (
 // callers that want the fail-closed default behavior ("never execute a
 // plan derived from an invalid analysis") must check for errors themselves
 // (see Analyze, which enforces this). Compile returns a non-nil error only
-// for structural Go-level problems (nil schema), never for validation
-// findings — those are reported as Diagnostics.
+// when the schemas themselves cannot be made sense of — a nil schema, or
+// one whose $ref or allOf cannot be normalised — never for a validation
+// finding about the rules, which are reported as Diagnostics. The
+// distinction is that a rule finding is about this config, while an
+// unresolvable schema construct means there is no field set to judge any
+// config against.
 func Compile(rules RuleSet, hub, spoke *extv1.JSONSchemaProps) (*Plan, []Diagnostic, error) {
 	if hub == nil || spoke == nil {
 		return nil, nil, errors.New("compile: hub and spoke schemas must both be non-nil")
+	}
+	// Analyze normalises at the SchemaSource boundary; Compile is also a
+	// public entry point taking raw schemas, so it normalises its own two.
+	// Doing it twice is a no-op — normalisation is idempotent — and not
+	// doing it here would make the lower-level API behave differently from
+	// the higher-level one on the same input.
+	hub, err := NormalizeSchema(hub)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile: hub schema: %w", err)
+	}
+	spoke, err = NormalizeSchema(spoke)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile: spoke schema: %w", err)
 	}
 	h2s, s2h, _, diags, _ := resolveAndBuildOps(rules.Rules, hub, spoke, effectivePolicy(rules.UnmappedFieldPolicy), 0)
 	return &Plan{HubVersion: rules.HubVersion, SpokeVersion: rules.SpokeVersion, HubToSpoke: h2s, SpokeToHub: s2h}, diags, nil

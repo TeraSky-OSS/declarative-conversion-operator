@@ -204,7 +204,7 @@ func stripStatus(obj any) (map[string]any, error) {
 }
 
 func versionLeafSetsXRD(xrd *unstructured.Unstructured) (map[string]map[string]bool, error) {
-	versions, err := xrdadapter.New(xrd).Versions()
+	versions, err := engine.NormalizedVersions(xrdadapter.New(xrd))
 	if err != nil {
 		return nil, fmt.Errorf("reading XRD versions: %w", err)
 	}
@@ -212,7 +212,7 @@ func versionLeafSetsXRD(xrd *unstructured.Unstructured) (map[string]map[string]b
 }
 
 func versionLeafSetsCRD(crd *extv1.CustomResourceDefinition) (map[string]map[string]bool, error) {
-	versions, err := crdadapter.New(crd).Versions()
+	versions, err := engine.NormalizedVersions(crdadapter.New(crd))
 	if err != nil {
 		return nil, fmt.Errorf("reading CRD versions: %w", err)
 	}
