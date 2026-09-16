@@ -150,6 +150,82 @@ covers it; enabling the XRD conversion guard closes the window entirely.
 
 ---
 
+## Controller health: the leading indicator
+
+controller-runtime exports workqueue and reconcile metrics for **every**
+controller in both processes. They are not this operator's own metrics, and
+they are the ones that move first.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `workqueue_depth` | Gauge | `name`, `controller`, `priority` | Items waiting to be reconciled |
+| `workqueue_adds_total` | Counter | `name`, `controller` | Enqueues |
+| `workqueue_queue_duration_seconds` | Histogram | `name`, `controller` | How long an item waited before a worker picked it up |
+| `workqueue_work_duration_seconds` | Histogram | `name`, `controller` | How long one reconcile took |
+| `workqueue_retries_total` | Counter | `name`, `controller` | Requeues after a failed reconcile |
+| `controller_runtime_reconcile_total` | Counter | `controller`, `result` | Reconciles, by outcome |
+| `controller_runtime_reconcile_errors_total` | Counter | `controller` | Reconciles that returned an error |
+| `controller_runtime_reconcile_time_seconds` | Histogram | `controller` | Reconcile latency |
+| `controller_runtime_active_workers` | Gauge | `controller` | Workers currently busy |
+| `controller_runtime_max_concurrent_reconciles` | Gauge | `controller` | The ceiling `--max-concurrent-reconciles` sets |
+
+Both processes export them. The manager serves controller-runtime's
+registry directly; the webhook-server serves its own dedicated registry
+*and* controller-runtime's from one handler, so a replica's registry
+reconcile loop is visible on the same panels as the manager's controllers.
+
+### Why depth is the metric to watch
+
+The causal chain runs in one direction, and every link is slower to notice
+than the one before it:
+
+```
+workqueue_depth rises
+  → reconciles are queued longer than they take to run
+    → a config's status.phase goes Stale
+      → the XRD keeps an old spec.conversion, or never gets one
+        → ConversionPropagated lags, and reads come back unconverted
+```
+
+By the time `dco_manager_conversion_propagated` drops to 0 the backlog has
+already been there for a while. Depth is the only signal in that chain that
+moves *before* anything is wrong for a user, which is what makes the panels
+worth having rather than decorative.
+
+What matters is a depth that **stays** up. A bulk apply of two hundred
+configs legitimately spikes the queue and then drains it; that is the
+shape the alert's `for:` exists to tolerate.
+
+```promql
+# Backlog, per controller, in both processes
+sum by (job, controller) (workqueue_depth)
+
+# Is the backlog "lots of work" or "slow work"? High adds + flat depth is the
+# first; low adds + rising depth is the second.
+sum by (job, controller) (rate(workqueue_adds_total[5m]))
+
+# Reconcile latency
+histogram_quantile(0.99, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket[5m])))
+
+# Saturation: workers busy against the configured ceiling
+sum by (controller) (controller_runtime_active_workers)
+  / sum by (controller) (controller_runtime_max_concurrent_reconciles)
+```
+
+### The lever
+
+`--max-concurrent-reconciles` (Helm: `manager.maxConcurrentReconciles`)
+sets how many objects each controller reconciles at once. It defaults to
+1 — controller-runtime's own default — and is worth raising when depth is
+persistently non-zero *and* work duration is not the problem. The cost is
+apiserver QPS, which is why it is not raised by default.
+
+Correctness does not depend on it: controller-runtime guarantees a given
+object key is never reconciled by two workers simultaneously, and nothing
+in these reconcile paths shares mutable state across keys.
+
+---
+
 ## Watch-map metric
 
 When a secondary watch map function fails to `List` related configs (API
@@ -220,12 +296,16 @@ The chart ships:
 
 - **PrometheusRule** (`metrics.prometheusRule.enabled`) — compile errors,
   fleet/replica not-ready, high latency, lossy rate, error ratio, manager
-  analyze failures, and Stale/Failed phase transitions. Expressions are
-  unit-tested under `hack/prometheus/` (`make test-prometheus`).
+  analyze failures, Stale/Failed phase transitions, and the two
+  controller-health alerts (`ControllerWorkqueueBacklog`,
+  `ControllerReconcileErrors`) whose thresholds are
+  `metrics.prometheusRule.workqueueDepthThreshold`,
+  `.workqueueBacklogFor` and `.reconcileErrorRateThreshold`. Expressions
+  are unit-tested under `hack/prometheus/` (`make test-prometheus`).
 - **Grafana dashboard ConfigMaps** (`dashboards.enabled`) — labeled
   `grafana_dashboard: "1"` for the Grafana sidecar; JSON under
   `charts/declarative-conversion-operator/files/dashboards/`:
-  - [`conversion-overview.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-overview.json) — fleet-wide overview
+  - [`conversion-overview.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-overview.json) — fleet-wide overview, plus a **Controller health** row (workqueue depth, add rate, work duration p50/p99, reconcile error rate) for both processes
   - [`conversion-target-detail.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-target-detail.json) — one XRD/CRD via the `target` dropdown (`target` label)
   - [`conversion-stability.json`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/charts/declarative-conversion-operator/files/dashboards/conversion-stability.json) — platform stability deep dive: conversions/s, failure rate, latency, registry, manager control plane, and webhook/manager pod CPU/memory/restarts (kubelet cAdvisor + kube-state-metrics)
 
@@ -233,9 +313,11 @@ The chart ships:
   between them. Resource panels on the stability dashboard need kubelet
   cAdvisor and kube-state-metrics (kube-prometheus-stack provides both);
   conversion/manager panels only need this chart's `ServiceMonitor`s.
-  Webhook process Go collectors are **not** on `/metrics` (dedicated
-  registry) — use cAdvisor for webhook CPU/memory. The manager scrape
-  still exposes `go_goroutines` / `process_*`.
+  Both scrapes expose `go_goroutines` / `process_*`: the webhook-server's
+  `/metrics` gathers controller-runtime's registry alongside its own, and
+  that registry carries the Go and process collectors. cAdvisor is still
+  the better source for container-level memory, because it measures the
+  same working set the kernel enforces a limit against.
 
 ---
 

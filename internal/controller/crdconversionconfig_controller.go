@@ -64,6 +64,11 @@ type CRDConversionConfigReconciler struct {
 	// DefaultServerNamespace is used for instances that don't set
 	// spec.namespace — normally the operator's own install namespace.
 	DefaultServerNamespace string
+
+	// MaxConcurrentReconciles bounds how many objects this controller
+	// reconciles at once. Zero leaves controller-runtime's own default
+	// (1) in place. See internal/controller/concurrency.go.
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=terasky.com,resources=crdconversionconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -459,6 +464,7 @@ func (r *CRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 		For(&teraskyv1alpha1.CRDConversionConfig{}).
 		Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapCRDToConfigs)).
 		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
+		WithOptions(controllerOptions(r.MaxConcurrentReconciles)).
 		Named("crdconversionconfig").
 		Complete(r)
 }

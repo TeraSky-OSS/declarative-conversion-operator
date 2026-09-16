@@ -85,6 +85,12 @@ manager:
   replicaCount: 1
   leaderElection:
     enabled: true
+  # How many objects each controller reconciles at once. The shipped
+  # dashboard's "Controller health" row plots workqueue depth, which is the
+  # leading indicator of a backlog; raise this when depth is persistently
+  # non-zero and the apiserver has the QPS headroom. A given object is
+  # never reconciled by two workers at once regardless of this value.
+  maxConcurrentReconciles: 1
   image: {}
   resources:
     requests:
@@ -248,6 +254,18 @@ metrics:
     # comfortably longer than a healthy re-render and shorter than anyone's
     # patience with silently-unconverted reads.
     propagationLagFor: 5m
+    # Workqueue depth is the leading indicator of a reconcile backlog: it
+    # rises before phases go stale and before ConversionPropagated lags. A
+    # healthy controller drains its queue between bursts, so the alert is
+    # about a depth that STAYS up — tune the threshold to your fleet size
+    # (a bulk apply of two hundred configs legitimately spikes it) and the
+    # duration to how long a backlog may last before it is a problem.
+    workqueueDepthThreshold: 10
+    workqueueBacklogFor: 15m
+    # Reconciles returning an error, per second, sustained for 15m. Counts
+    # infrastructure failures as well as config ones, so it is noisier than
+    # dco_manager_analyze_failures_total and set above zero on purpose.
+    reconcileErrorRateThreshold: 0.1
 
 # Grafana sidecar ConfigMaps (label grafana_dashboard: "1") for every JSON
 # file under files/dashboards/ (overview, per-target detail, platform

@@ -21,7 +21,29 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
+
+// CombinedGatherer pairs this binary's dedicated metric registry with
+// controller-runtime's package-global one.
+//
+// cmd/webhook-server deliberately does not use controller-runtime's own
+// metrics server — the conversion path must not share a listener with
+// anything else — which used to mean the registry reconciler was the one
+// controller in the system with no workqueue depth, no queue latency and
+// no reconcile error counter exposed anywhere. Gathering both registries
+// from the one handler fixes that without giving controller-runtime a
+// listener of its own.
+//
+// The two registries do not overlap: the dedicated one carries the
+// dco_webhook_* series plus the Go and process collectors, and
+// controller-runtime's carries workqueue_*, controller_runtime_* and
+// rest_client_*. prometheus.Gatherers fails the whole scrape on a
+// duplicate metric name, so that separation is asserted by a test rather
+// than assumed.
+func CombinedGatherer(own prometheus.Gatherer) prometheus.Gatherer {
+	return prometheus.Gatherers{own, ctrlmetrics.Registry}
+}
 
 // Metrics is the webhook server's Prometheus metric set, registered on a
 // dedicated registry (not the global default) so cmd/webhook-server has

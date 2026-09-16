@@ -62,6 +62,11 @@ type XRDConversionConfigReconciler struct {
 	// resources live when spec.namespace is unset — normally the
 	// operator's own install namespace.
 	DefaultServerNamespace string
+
+	// MaxConcurrentReconciles bounds how many objects this controller
+	// reconciles at once. Zero leaves controller-runtime's own default
+	// (1) in place. See internal/controller/concurrency.go.
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=terasky.com,resources=xrdconversionconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -618,6 +623,7 @@ func (r *XRDConversionConfigReconciler) SetupWithManager(mgr ctrl.Manager) error
 		// already exists for CRDConversionConfig, so it costs nothing new.
 		Watches(&extv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(r.mapGeneratedCRDToConfigs)).
 		Watches(&teraskyv1alpha1.ConversionWebhookServer{}, enqueue.PacedMapFuncs(r.mapServerToAssignedConfigs, r.mapServerTransitionToAssignedConfigs, enqueue.CWSConfigEnqueueQPS)).
+		WithOptions(controllerOptions(r.MaxConcurrentReconciles)).
 		Named("xrdconversionconfig").
 		Complete(r)
 }

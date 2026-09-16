@@ -68,6 +68,7 @@
       "additionalProperties": false,
       "properties": {
         "replicaCount": { "type": "integer", "minimum": 0 },
+        "maxConcurrentReconciles": { "type": "integer", "minimum": 1 },
         "leaderElection": {
           "type": "object",
           "additionalProperties": false,
@@ -256,7 +257,10 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "labels": { "type": "object", "additionalProperties": { "type": "string" } },
-            "propagationLagFor": { "$ref": "#/definitions/positiveDuration" }
+            "propagationLagFor": { "$ref": "#/definitions/positiveDuration" },
+            "workqueueDepthThreshold": { "type": "integer", "minimum": 0 },
+            "workqueueBacklogFor": { "$ref": "#/definitions/positiveDuration" },
+            "reconcileErrorRateThreshold": { "type": "number", "minimum": 0 }
           }
         }
       }

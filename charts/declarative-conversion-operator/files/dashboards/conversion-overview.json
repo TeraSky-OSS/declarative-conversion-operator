@@ -176,6 +176,83 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 12,
+      "title": "Controller health",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "title": "Workqueue depth",
+      "type": "timeseries",
+      "description": "Items waiting to be reconciled, per controller. This is the leading indicator: depth rises before phases go stale and before ConversionPropagated lags. Depth that returns to zero between bursts is healthy; depth that stays above zero means the controller cannot keep up, and --max-concurrent-reconciles is the lever.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (job, controller) (workqueue_depth)",
+          "legendFormat": "{{job}} / {{controller}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Workqueue add rate",
+      "type": "timeseries",
+      "description": "Enqueues per second. Read it next to depth: a high add rate with flat depth is a busy controller keeping up, while a low add rate with rising depth means individual reconciles are slow.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (job, controller) (rate(workqueue_adds_total[5m]))",
+          "legendFormat": "{{job}} / {{controller}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Workqueue work duration",
+      "type": "timeseries",
+      "description": "How long one reconcile takes. p99 pulling away from p50 points at a single slow target rather than at general load.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{job}} / {{controller}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{job}} / {{controller}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Reconcile error rate",
+      "type": "timeseries",
+      "description": "Reconciles returning an error, per second. These are retried with backoff, so a sustained rate both delays convergence and feeds the queue depth above.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (job, controller) (rate(controller_runtime_reconcile_errors_total[5m]))",
+          "legendFormat": "{{job}} / {{controller}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "schemaVersion": 39,

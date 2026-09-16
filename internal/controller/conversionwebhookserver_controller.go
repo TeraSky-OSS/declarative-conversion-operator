@@ -87,6 +87,11 @@ type ConversionWebhookServerReconciler struct {
 	// for a webhook-server pod exactly the same way it is for the manager.
 	EnableXRDSupport bool
 	EnableCRDSupport bool
+
+	// MaxConcurrentReconciles bounds how many objects this controller
+	// reconciles at once. Zero leaves controller-runtime's own default
+	// (1) in place. See internal/controller/concurrency.go.
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch;create;update;patch;delete
@@ -795,6 +800,7 @@ func (r *ConversionWebhookServerReconciler) SetupWithManager(mgr ctrl.Manager) e
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Watches(&teraskyv1alpha1.XRDConversionConfig{}, handler.EnqueueRequestsFromMapFunc(enqueueAllServers(r.Client))).
+		WithOptions(controllerOptions(r.MaxConcurrentReconciles)).
 		Named("conversionwebhookserver").
 		Complete(r)
 }

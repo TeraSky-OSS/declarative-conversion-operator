@@ -48,6 +48,7 @@ spec:
             - --enable-xrd-support={{ .Values.features.crossplane.enabled }}
             - --enable-crd-support={{ .Values.features.nativeCRD.enabled }}
             - --enable-xrd-conversion-guard={{ and .Values.features.crossplane.enabled .Values.features.crossplane.conversionGuard.enabled }}
+            - --max-concurrent-reconciles={{ int .Values.manager.maxConcurrentReconciles }}
             {{- with .Values.manager.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -175,17 +174,28 @@ func main() {
 	registry := webhookserver.NewRegistry()
 	metricsReg := prometheus.NewRegistry()
 	// A dedicated registry starts empty — unlike the process-wide default
-	// one, it has no Go runtime or process collectors. Without these,
-	// /metrics exposes this operator's own counters and nothing about the
-	// process serving them: no resident memory, no goroutine count, no GC
-	// behaviour. That makes the replica's memory footprint — the thing
+	// one, it has no Go runtime or process collectors. Without those,
+	// /metrics would expose this operator's own counters and nothing about
+	// the process serving them: no resident memory, no goroutine count, no
+	// GC behaviour, which makes the replica's memory footprint — the thing
 	// --cache-label-selector exists to control — unmeasurable from outside
 	// the pod.
-	metricsReg.MustRegister(
-		collectors.NewGoCollector(),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
-	metrics := webhookserver.NewMetrics(metricsReg, metricsReg)
+	//
+	// They are not registered here. controller-runtime's own registry,
+	// which CombinedGatherer pairs with this one, already carries both —
+	// and its Go collector is configured with the full runtime/metrics
+	// set, a superset of the plain one. Registering a second copy here
+	// would be a duplicate metric name, and prometheus.Gatherers fails the
+	// whole scrape on one of those, taking every dco_webhook_* series with
+	// it. Asserted by TestCombinedGatherer_NoDuplicateSeries.
+	// The gatherer is a pair, not just metricsReg: controller-runtime
+	// registers its own workqueue depth/latency and reconcile counters on
+	// its package-global registry, and this binary serves /metrics from a
+	// dedicated one — so without this, a replica's registry reconcile loop
+	// was the one controller in the system with no queue-depth signal at
+	// all. Gathering both means the shipped "Controller health" dashboard
+	// row covers the webhook-server as well as the manager.
+	metrics := webhookserver.NewMetrics(metricsReg, webhookserver.CombinedGatherer(metricsReg))
 
 	reconciler := &webhookserver.Reconciler{
 		Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics,
