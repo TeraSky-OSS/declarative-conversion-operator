@@ -55,11 +55,13 @@ them leads to over-provisioning the wrong one.
       throughout; `/readyz` stays `503` and the *conversion* endpoint does
       not listen at all until the registry is populated. The `startupProbe`
       (`conversionWebhookServer.startupProbe`, five minutes by default)
-      suspends the liveness and readiness probes until the sync completes —
-      without it, the liveness probe's 3 × 10 s would be the whole budget,
-      and before the health endpoint moved earlier that probe got
-      connection-refused, so a replica slower than thirty seconds
-      crash-looped forever without ever finishing a sync.
+      polls `/readyz`, so its `periodSeconds × failureThreshold` is a
+      deadline on the sync — and while it is in flight the kubelet runs
+      neither of the other two probes, so a slow sync is not also fighting
+      the liveness probe's 3 × 10 s. Size it from
+      `dco_webhook_initial_sync_duration_seconds`: too tight turns a slow
+      start into a crash loop, too loose only delays the restart of a pod
+      that is not taking traffic anyway.
       Check the measured figure after a scale-out and raise
       `failureThreshold` if it is close:
 

@@ -325,13 +325,28 @@ rather than seconds.
 webhook-server container; `periodSeconds × failureThreshold` is the budget,
 defaulting to 5 × 60, i.e. five minutes.
 
-It is not optional decoration. The conversion endpoint does not listen until
-the registry is populated, so before that the liveness probe fails with
-connection-refused — and without a `startupProbe` the liveness probe's own
-3 × 10 s is the *entire* cold-start budget. A replica holding enough targets
-to exceed it would be killed and restarted forever, never finishing a sync.
-The kubelet suspends both other probes while a `startupProbe` is in flight,
-which is exactly the semantics wanted.
+It polls **`/readyz`**, which is what makes the budget real. The plain
+endpoint carrying `/healthz`, `/readyz` and `/metrics` comes up *before* the
+registry sync, so `/healthz` answers within milliseconds of process start; a
+`startupProbe` pointed at it would succeed immediately and bound nothing.
+`/readyz` stays false until the initial sync completes, so
+`periodSeconds × failureThreshold` is a deadline on the sync itself.
+
+The kubelet runs neither of the other two probes while a `startupProbe` is
+in flight, so a slow sync is not simultaneously fighting the liveness
+probe's own 3 × 10 s. Once the probe succeeds, liveness (`/healthz`) and
+readiness (`/readyz`) take over as usual.
+
+Two things the deadline buys, beyond not crash-looping a slow replica:
+
+- **The initial sync retries infrastructure failures without a limit** — a
+  failed read of a target, a failed server list — because a watch-driven
+  reconciler will not necessarily re-deliver an event for what failed. That
+  is the right behaviour for a transient failure and the wrong one for a
+  permanent one, and the `startupProbe` is what distinguishes them.
+- **Without it a wedged replica is invisible.** It would stay
+  liveness-healthy and never ready: out of the Service, never restarted,
+  showing up only as a gap in `readyReplicas`.
 
 Erring long is deliberate. An over-tight threshold turns a slow start into a
 crash loop; an over-long one only delays the restart of a pod that is not
@@ -358,9 +373,12 @@ registry synced, marking replica ready  serverName=default targets=812 workers=8
 ```
 
 Set `failureThreshold` from the slowest cold start you observe, with room to
-spare. The plain HTTP endpoint (`/healthz`, `/readyz`, `/metrics`) comes up
-*before* the cache sync, so a replica that is still cold is visibly alive
-rather than indistinguishable from a hung process.
+spare — it is a deadline on exactly the interval this metric measures. The
+plain HTTP endpoint (`/healthz`, `/readyz`, `/metrics`) comes up *before*
+the cache sync, so a replica that is still cold is visibly alive and
+scrapeable rather than indistinguishable from a hung process, and the
+`startupProbe` is polling a live listener rather than collecting
+connection-refused.
 
 ### Reporting ready anyway after a timeout
 

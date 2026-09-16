@@ -444,18 +444,30 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 			WithRequests(server.Spec.Resources.Requests).
 			WithLimits(server.Spec.Resources.Limits))
 
-	// The startupProbe is what makes the cold start survivable. A replica
-	// does not listen on any port until its registry has compiled every
-	// assigned plan, so before that both other probes fail with
-	// connection-refused — and without a startupProbe the liveness probe's
-	// own 3 x 10 s becomes the entire cold-start budget. A replica holding
-	// enough targets to exceed it would be killed and restarted forever.
+	// The startupProbe is the cold-start budget: period x failureThreshold
+	// is how long a replica may take to compile every assigned plan before
+	// the kubelet restarts it.
+	//
+	// It polls /readyz, not /healthz, and the distinction is the whole
+	// point. The plain endpoint — /healthz, /readyz, /metrics — comes up
+	// before the registry sync (see cmd/webhook-server/main.go), so
+	// /healthz answers within milliseconds of process start and a
+	// startupProbe pointed at it would succeed immediately and bound
+	// nothing. /readyz is false until InitialSync completes, so probing it
+	// is what turns the threshold into a real deadline on the sync.
+	//
+	// That deadline matters because the sync retries infrastructure
+	// failures without a limit. Without it, a replica wedged mid-sync
+	// stays liveness-healthy and not-ready forever: out of the Service,
+	// never restarted, and visible only as a gap in readyReplicas.
+	//
 	// While the startupProbe is in flight the kubelet runs neither of the
-	// other two, which is exactly the semantics wanted.
+	// other two probes, so a slow sync is not also fighting the liveness
+	// probe's own 3 x 10 s.
 	if server.Spec.StartupProbeEnabled() {
 		period, threshold := server.Spec.StartupProbeTiming()
 		container = container.WithStartupProbe(applycorev1.Probe().
-			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/healthz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
+			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/readyz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
 			WithPeriodSeconds(period).WithFailureThreshold(threshold))
 	}
 	if pullPolicy != "" {

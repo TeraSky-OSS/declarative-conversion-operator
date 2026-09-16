@@ -3573,15 +3573,15 @@ spec:
                 description: |-
                   StartupProbe bounds how long a replica may take to compile every
                   assigned plan before the kubelet restarts it. See StartupProbeSpec:
-                  without one, the liveness probe's 30 s is the whole cold-start
-                  budget.
+                  it polls /readyz, so its budget is a deadline on the sync itself.
                 properties:
                   enabled:
                     default: true
                     description: |-
                       Enabled renders the startupProbe, and defaults to true. Setting it
-                      to false removes the probe, which is only correct if something else
-                      guarantees the cold start fits inside the liveness budget.
+                      to false removes the deadline on the cold start entirely: the
+                      liveness probe reads /healthz, which answers before the sync begins,
+                      so nothing then restarts a replica that never finishes syncing.
                     type: boolean
                   failureThreshold:
                     default: 60

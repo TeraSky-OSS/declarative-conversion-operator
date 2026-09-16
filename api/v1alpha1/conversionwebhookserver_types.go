@@ -184,8 +184,7 @@ type ConversionWebhookServerSpec struct {
 
 	// StartupProbe bounds how long a replica may take to compile every
 	// assigned plan before the kubelet restarts it. See StartupProbeSpec:
-	// without one, the liveness probe's 30 s is the whole cold-start
-	// budget.
+	// it polls /readyz, so its budget is a deadline on the sync itself.
 	// +optional
 	StartupProbe *StartupProbeSpec `json:"startupProbe,omitempty"`
 
@@ -309,14 +308,18 @@ type ShardingSpec struct {
 // budget a replica gets to finish its cold start before the kubelet gives
 // up on it.
 //
-// A replica does not listen on any port until its registry has compiled
-// every assigned plan, so until then the liveness and readiness probes
-// both fail with connection-refused. Without a startupProbe the liveness
-// probe's own 3 × 10 s is therefore the entire cold-start budget, and a
-// replica holding enough targets to exceed it is killed and restarted
-// forever — the slower the cold start, the more certainly it never
-// finishes one. A startupProbe suspends the other two until it succeeds,
-// which is exactly the semantics wanted here.
+// The probe polls /readyz, not /healthz. The plain endpoint carrying
+// /healthz comes up before the registry sync, so a startupProbe pointed at
+// it would succeed within milliseconds and bound nothing; /readyz stays
+// false until the initial sync completes, which is what makes this a
+// deadline on the sync. While the probe is in flight the kubelet runs
+// neither of the other two, so a slow sync is not also fighting the
+// liveness probe's own 3 × 10 s.
+//
+// The deadline matters because the initial sync retries infrastructure
+// failures without a limit. Without it, a replica wedged mid-sync stays
+// liveness-healthy and never ready: out of the Service, never restarted,
+// and visible only as a gap in readyReplicas.
 //
 // PeriodSeconds × FailureThreshold is the budget. The defaults give five
 // minutes, against a measured cold start of well under a second for a
@@ -328,8 +331,9 @@ type ShardingSpec struct {
 // traffic anyway.
 type StartupProbeSpec struct {
 	// Enabled renders the startupProbe, and defaults to true. Setting it
-	// to false removes the probe, which is only correct if something else
-	// guarantees the cold start fits inside the liveness budget.
+	// to false removes the deadline on the cold start entirely: the
+	// liveness probe reads /healthz, which answers before the sync begins,
+	// so nothing then restarts a replica that never finishes syncing.
 	// +optional
 	// +kubebuilder:default=true
 	Enabled *bool `json:"enabled,omitempty"`

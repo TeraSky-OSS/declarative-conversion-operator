@@ -49,14 +49,18 @@ func TestStartupProbe_DefaultsWithoutASpec(t *testing.T) {
 		t.Errorf("startupProbe period/threshold = %d/%d, want 5/60 (a five-minute budget)",
 			c.StartupProbe.PeriodSeconds, c.StartupProbe.FailureThreshold)
 	}
-	if c.StartupProbe.HTTPGet == nil || c.StartupProbe.HTTPGet.Path != "/healthz" {
-		t.Fatalf("startupProbe must poll /healthz, got %+v", c.StartupProbe.HTTPGet)
+	// /readyz, not /healthz. The plain endpoint carrying /healthz comes up
+	// before the registry sync, so a startupProbe pointed at it succeeds
+	// within milliseconds and bounds nothing — the budget every doc
+	// describes would not exist. /readyz is false until InitialSync
+	// completes, which is what makes period x failureThreshold a real
+	// deadline on the sync and gets a wedged replica restarted instead of
+	// left not-ready forever.
+	if c.StartupProbe.HTTPGet == nil || c.StartupProbe.HTTPGet.Path != "/readyz" {
+		t.Fatalf("startupProbe must poll /readyz, got %+v", c.StartupProbe.HTTPGet)
 	}
-	// /readyz would never succeed before the registry is populated, which
-	// is the state the probe exists to wait through, so probing it would
-	// make the budget a deadline on the sync rather than on the process.
-	if c.StartupProbe.HTTPGet.Path == "/readyz" {
-		t.Error("startupProbe must not poll /readyz")
+	if c.LivenessProbe == nil || c.LivenessProbe.HTTPGet == nil || c.LivenessProbe.HTTPGet.Path != "/healthz" {
+		t.Fatalf("the liveness probe must stay on /healthz, got %+v", c.LivenessProbe)
 	}
 }
 
