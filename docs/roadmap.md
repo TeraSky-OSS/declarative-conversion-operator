@@ -5,7 +5,7 @@ timeline. Phases already shipped stay listed so the arc is visible; later phases
 are invitations to [open an issue or PR](https://github.com/terasky-oss/declarative-conversion-operator/issues)
 if one of them matters to you sooner.
 
-## Shipped (phases 0–15)
+## Shipped (phases 0–16)
 
 | Phase | Epic | Intent |
 |---|---|---|

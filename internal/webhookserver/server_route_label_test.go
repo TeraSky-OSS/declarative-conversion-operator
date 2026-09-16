@@ -180,6 +180,58 @@ func TestHandleConvert_FailedConversionRecordsNoLoss(t *testing.T) {
 	}
 }
 
+// Delivery is a property of the whole ConversionReview, not of one object
+// in it. A later object that fails takes the entire response down, so an
+// earlier object that converted lossily was never returned either — and
+// counting its loss would describe something that did not reach anybody.
+func TestHandleConvert_LossIsNotCountedWhenALaterObjectFails(t *testing.T) {
+	const hub = "v3"
+	registry := NewRegistry()
+	registry.Set("xfoos.example.org", &CompiledEntry{
+		Router: &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{
+			"v1": {HubVersion: hub, SpokeVersion: "v1", HubToSpoke: []engine.Op{}, SpokeToHub: []engine.Op{}},
+		}},
+		Lossless: map[string]engine.LosslessVerdict{"v1": {HubToSpoke: true, SpokeToHub: false}},
+	})
+	metrics := newTestMetrics()
+	s := &Server{Registry: registry, Metrics: metrics}
+
+	// First object: v1 -> hub, a hop the verdict above marks lossy, and it
+	// converts fine. Second object: v2 has no compiled plan, so the review
+	// fails as a whole.
+	raw := func(version string) runtime.RawExtension {
+		b, err := json.Marshal(map[string]any{
+			"apiVersion": "example.org/" + version, "kind": "Foo",
+			"metadata": map[string]any{"name": "x-" + version},
+		})
+		if err != nil {
+			t.Fatalf("marshaling the %s object: %v", version, err)
+		}
+		return runtime.RawExtension{Raw: b}
+	}
+	body, err := json.Marshal(extv1.ConversionReview{Request: &extv1.ConversionRequest{
+		UID: "abc", DesiredAPIVersion: "example.org/" + hub,
+		Objects: []runtime.RawExtension{raw("v1"), raw("v2")},
+	}})
+	if err != nil {
+		t.Fatalf("marshaling the review: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+
+	var got extv1.ConversionReview
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Response.Result.Status != metav1.StatusFailure {
+		t.Fatalf("expected the review to fail on the second object, got %+v", got.Response.Result)
+	}
+	if n := testutil.ToFloat64(metrics.LossyTotal.WithLabelValues("xfoos.example.org", "spoke_to_hub")); n != 0 {
+		t.Errorf("spoke_to_hub counter = %v; the first object's loss was never delivered", n)
+	}
+}
+
 // The mirror image: a spoke-to-spoke route whose two hops are both
 // lossless must not be counted at all, or the fix above would just be a
 // louder wrong answer.

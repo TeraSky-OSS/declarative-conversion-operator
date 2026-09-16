@@ -37,7 +37,7 @@ The default posture is **fail-closed**: any hub or spoke field left unclaimed by
 | [`duration`](duration.md) | Go duration string ⇄ integer seconds. | :material-alert:{ style="color:#ef6c00" } Integer→canonical string is lossy; sub-second strings error |
 | [`mapKeyRename`](map-key-rename.md) | Rename known keys in a free-form map; other keys pass through. | :material-check-all:{ style="color:#2e7d32" } Always (injective renames) |
 | [`cel`](cel.md) | Arbitrary CEL expressions over declared paths. | :material-close:{ style="color:#c62828" } Always lossy (requires `acknowledgeLossy`; no `losslessOverride`) |
-| [`branchMap`](branch-map.md) | Maps the branches of a `oneOf` union between versions. | :material-alert:{ style="color:#ef6c00" } Lossless unless two hub branches collapse onto one |
+| [`branchMap`](branch-map.md) | Maps the branches of a `oneOf` union between versions. Requires exactly one branch set, so an `anyOf` that permits overlap is out of scope. | :material-alert:{ style="color:#ef6c00" } Lossless unless two hub branches collapse onto one |
 
 ## Reading the examples
 

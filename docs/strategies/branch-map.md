@@ -19,6 +19,18 @@ them. What `branchMap` adds is the *correspondence*: a declaration of which
 hub branch becomes which spoke branch, checked at compile time and enforced
 at runtime.
 
+!!! warning "`oneOf`'s contract, not `anyOf`'s"
+    `branchMap` requires **exactly one** branch to be set, and treats zero
+    or several as a hard conversion error. That is what `oneOf` means; it
+    is not what `anyOf` means, which is *at least* one and permits overlap.
+
+    It fits an `anyOf` whose branches are mutually exclusive in practice.
+    It does not fit one that genuinely allows two at once: there is no
+    single correspondence to map, and an object exercising the overlap
+    would fail conversion even though the schema admits it. Map those
+    branches with ordinary rules over the individual properties instead —
+    they are declared fields like any other.
+
 !!! conditional-lossy "Lossless unless branches collapse"
     Mapping each hub branch to a distinct spoke branch is lossless in both
     directions, plus whatever the nested rules contribute. Mapping **two

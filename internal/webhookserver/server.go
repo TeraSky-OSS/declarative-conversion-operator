@@ -336,6 +336,9 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		// without it an operator raising the limit is guessing.
 		s.Metrics.BatchSize.WithLabelValues(xrdName).Observe(float64(len(review.Request.Objects)))
 	}
+	// Lossy hops for the objects converted so far, applied only once the
+	// whole review has succeeded — see the switch below.
+	var lossyHops []lossyHop
 	for _, raw := range review.Request.Objects {
 		if err := ctx.Err(); err != nil {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf(
@@ -381,24 +384,25 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		objSpan.End()
-		// Counted after the conversion succeeded, not before it was
-		// attempted. The counter means "a lossy conversion was delivered";
-		// an object whose conversion failed is never returned and never
-		// stored, so nothing observable lost anything, and it is already
-		// counted as an error by the two metrics above.
+		// Accumulated, not recorded yet. The counter means "a lossy
+		// conversion was delivered", and delivery is a property of the
+		// whole ConversionReview: a later object that fails takes the
+		// entire response down with it, so an earlier object that
+		// converted lossily is never returned and never stored either.
+		// Recording here would count loss for an object the apiserver
+		// discarded.
 		//
 		// A spoke-to-spoke conversion is two hops through the hub and each
-		// one can be lossy on its own, so both are recorded. The earlier
+		// one can be lossy on its own, so both are noted. The earlier
 		// hub-or-nothing test counted neither, which left the traffic
 		// class that carries the most loss reporting none.
 		switch route {
 		case routeHubToSpoke:
-			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
+			lossyHops = append(lossyHops, lossyHop{"hub_to_spoke", toVersion})
 		case routeSpokeToHub:
-			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
+			lossyHops = append(lossyHops, lossyHop{"spoke_to_hub", fromVersion})
 		case routeSpokeToSpoke:
-			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
-			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
+			lossyHops = append(lossyHops, lossyHop{"spoke_to_hub", fromVersion}, lossyHop{"hub_to_spoke", toVersion})
 		}
 		out["apiVersion"] = review.Request.DesiredAPIVersion
 		ensureConvertedMetadata(out, obj)
@@ -437,8 +441,21 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The review is going out. Only now has anything actually been
+	// delivered, so only now does a lossy conversion count as performed.
+	for _, hop := range lossyHops {
+		s.recordLossy(entry, xrdName, hop.direction, hop.spokeVersion)
+	}
 	s.writeReview(w, review.Request.UID, converted, "")
 	s.observe(xrdName, direction, "success", start)
+}
+
+// lossyHop is one hub<->spoke hop, of one object, that ran in a direction
+// statically known to be lossy. Held until the whole ConversionReview
+// succeeds, because a review that fails delivers none of its objects.
+type lossyHop struct {
+	direction    string
+	spokeVersion string
 }
 
 // Route classes for dco_webhook_conversion_objects_total. They exist

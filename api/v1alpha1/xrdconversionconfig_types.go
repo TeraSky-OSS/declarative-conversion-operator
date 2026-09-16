@@ -315,6 +315,11 @@ type JSONPatchParams struct {
 // properties, so a union is a set of declared, mutually-exclusive fields.
 //
 // No branch set, or more than one, is a hard runtime conversion error.
+// That is oneOf's contract — exactly one — and not anyOf's, which permits
+// overlap. BranchMap fits an anyOf whose branches are mutually exclusive
+// in practice; one that genuinely allows two at once has no single
+// correspondence to map, and is better handled with ordinary rules over
+// the individual branch properties.
 type BranchMapParams struct {
 	// HubPath and SpokePath are the union-typed OBJECT on each side, not a
 	// branch within it.

@@ -1123,7 +1123,7 @@
           "refId": "A"
         }
       ],
-      "description": "Share of conversions by route shape. The version pair above cannot answer this on its own because which version is the hub is a per-target fact rather than a label. A material spoke_to_spoke share means clients at two different non-hub versions are reading the same resources; each such conversion is two hops and costs about 2x a single one. See docs/operations/capacity.md for why direct spoke-to-spoke plans are deliberately not built."
+      "description": "Share of conversions by route shape. The version pair above cannot answer this on its own because which version is the hub is a per-target fact rather than a label. A material spoke_to_spoke share means clients at two different non-hub versions are reading the same resources; each such conversion runs two hops through the hub, so a direct plan could save at most one of them \u2014 about half the cost where the two hops cost about the same. See docs/operations/capacity.md for why direct spoke-to-spoke plans are deliberately not built."
     },
     {
       "id": 40,

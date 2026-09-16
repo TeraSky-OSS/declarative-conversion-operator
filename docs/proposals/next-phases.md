@@ -1120,13 +1120,29 @@ apiserver's write path".
 - ~~**Required-field satisfaction analysis**~~ — **shipped in 12.3**, where it
   belonged: it converts a production admission failure into a compile-time
   error, which is the same job as the rest of that deliverable.
-- **`oneOf` / `anyOf` branch mapping.** Currently opaque and documented as out
-  of scope. Union-typed API fields are common in mature XRDs, and a branch-aware
-  strategy (`branchMap`) would unblock migrations that today need `jsonPatch`.
-- **`$ref` / `allOf` flattening** so shared sub-schemas stop being opaque units.
-- **Spoke-to-spoke shortcut plans**, if the 2.3× hub-hop cost ever shows up in
-  a real profile. Listed for completeness; the measured numbers do not justify
-  it yet.
+- ~~**`oneOf` / `anyOf` branch mapping.** Currently opaque and documented as
+  out of scope.~~ — **shipped in 16.1** as [`branchMap`](../strategies/branch-map.md),
+  and the premise was half wrong: a union's branches were never out of reach,
+  only hidden. In a CRD every property named inside a junctor must also be
+  declared outside it, so a branch is an ordinary addressable field; what
+  16.1 added is the *correspondence* between hub and spoke branches, plus a
+  fix for the engine treating such a node as opaque. `jsonPatch` is no longer
+  the only way to touch one.
+- ~~**`$ref` / `allOf` flattening** so shared sub-schemas stop being opaque
+  units.~~ — **shipped in 16.2**, as a correctness fix rather than a
+  capability: a junctor can only constrain fields the engine already sees, so
+  a node with `allOf: [{required: [bucket]}]` was losing its entire field set
+  because of a constraint.
+- ~~**Spoke-to-spoke shortcut plans**, if the 2.3× hub-hop cost ever shows up
+  in a real profile.~~ — **investigated in 16.3 and deliberately not built.**
+  The 2.3× was one point on a curve that turns out to be flat. A
+  spoke-to-spoke conversion costs exactly `A→hub` plus `hub→B`, so a direct
+  plan could save **at most one hop** — 0.6–4 µs at realistic object sizes,
+  inside a request that has already paid milliseconds of apiserver overhead,
+  against `O(N²)` compiled plans and a third mapping to keep consistent with
+  the two it shortcuts. The reasoning and the per-size table are in
+  [Capacity planning](../operations/capacity.md#spoke-to-spoke-vs-hub-hop);
+  `Router.Convert` stays the seam for anyone revisiting it.
 - **Strategy additions driven by real migrations only.** The `Strategy` enum and
   discriminated union were built for this; the discipline of "a real migration
   asked for it" is what has kept the strategy set coherent.
