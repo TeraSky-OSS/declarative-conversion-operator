@@ -994,7 +994,8 @@ apiserver's write path".
 >   start peaks around 140 MiB against 18 MiB of steady state. The kernel
 >   enforcing a container limit does not wait for the collector, so the
 >   operator now sets `GOMEMLIMIT` from `resources.limits.memory` — which
->   bounds that transient, and, being a soft target, does nothing for a live
+>   roughly halves that transient (140 MiB to 61 MiB at a thousand targets)
+>   and, being a soft target rather than a ceiling, does nothing for a live
 >   working set that exceeds the limit. The
 >   chart's 256 MiB default was reviewed and left alone: it was not wrong,
 >   it was unenforceable.

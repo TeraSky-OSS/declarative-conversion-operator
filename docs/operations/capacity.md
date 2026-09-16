@@ -209,8 +209,10 @@ operator leaves an explicit one alone.
 
     So `GOMEMLIMIT` is not a substitute for sizing the limit. Size it for the
     live set — registry plus informer cache, the two terms below — and leave
-    headroom on top; `GOMEMLIMIT` is what stops the cold-start transient from
-    needing headroom of its own.
+    headroom on top. What `GOMEMLIMIT` changes is how much headroom the
+    cold-start transient needs: measured at a thousand targets it took the
+    peak from 140 MiB to 61 MiB. Much smaller, not zero, and not a
+    guaranteed ceiling — the collector can be outrun.
 
 #### Worked example
 
@@ -221,18 +223,20 @@ chart's default 256 MiB limit:
 - Informer cache: the schemas those targets live in. Extrapolating the
   measured 121 MiB for 300 two-version 200-property CRDs gives roughly
   **400 MiB** — this term alone blows the default limit.
-- Cold-start transient: without `GOMEMLIMIT`, several hundred MiB on top.
+- Cold-start transient: several hundred MiB on top without `GOMEMLIMIT`,
+  substantially less with it — see the note below.
 
 So: **set `cacheSelector`, or raise the limit to ~1 GiB.** The registry is
 not the problem at any plausible scale; the informer cache is, and it is the
 one term this operator can only narrow, never shrink.
 
 Note which term `GOMEMLIMIT` can and cannot help with here, because this
-example is the case that makes the distinction concrete: the ~400 MiB
+example is the case that makes the distinction concrete. The ~400 MiB
 informer cache is **live**, so no GC setting brings it under a 256 MiB
-limit — only `cacheSelector` or a bigger limit will. What `GOMEMLIMIT` does
-is stop the cold-start transient from adding several hundred MiB on top of
-whatever limit you land on.
+limit — only `cacheSelector` or a bigger limit will. The cold-start
+transient is the one term it does move, and it shrinks it by roughly half
+rather than removing it: budget for a reduced transient on top of whatever
+limit the live set demands, not for none.
 
 The chart's 256 MiB default was reviewed against these numbers and left
 alone. It is right for the cluster it is a default for — a few dozen
