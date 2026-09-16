@@ -81,6 +81,27 @@ inputs:
       finding, so failures land on the diff rather than in a log.
     required: false
     default: "true"
+  comment:
+    description: >-
+      Also upsert the report as a sticky pull-request comment. Off by
+      default: annotations and the job summary already put a failure where
+      a reviewer sees it, and a comment on every push is noise for repos
+      that do not want one. Turn it on when the report itself is the
+      review artifact — a platform repo where the person approving the
+      change is not the person who ran the tool.
+    required: false
+    default: "false"
+  comment-tag:
+    description: >-
+      Identifies the comment to update. Defaults to the config path, so
+      two configs in one pull request get one comment each without
+      configuration.
+    required: false
+    default: ""
+  token:
+    description: Token used to upsert the comment.
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   exit-code:
@@ -236,3 +257,119 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.run.outputs.report-path }}
         if-no-files-found: warn
+
+    # Rendered only when it is going to be posted. convctl is run again
+    # rather than reformatting the JUnit file in bash: the tool already
+    # knows how to render its own report, and a second renderer would
+    # drift from the first. The cost is another pass, which is why this
+    # is behind `comment` rather than always on.
+    - name: Render the report as markdown
+      id: markdown
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        XRD: ${{ inputs.xrd }}
+        CRD: ${{ inputs.crd }}
+        PACKAGE: ${{ inputs.package }}
+        TARGET: ${{ inputs.target }}
+        SAMPLES: ${{ inputs.samples }}
+        LIVE: ${{ inputs.live }}
+        CONTEXT: ${{ inputs.context }}
+        MAX_SAMPLES: ${{ inputs.max-samples }}
+        SAMPLE_STRATEGY: ${{ inputs.sample-strategy }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        STRICT: ${{ inputs.strict }}
+        VALIDATE_OUTPUT: ${{ inputs.validate-output }}
+        CONCURRENCY: ${{ inputs.concurrency }}
+      run: |
+        set -euo pipefail
+        md="$RUNNER_TEMP/convctl-test-report.md"
+        args=(--config "$CONFIG" --fail-on "$FAIL_ON")
+        if [ -n "$XRD" ];             then args+=(--xrd "$XRD"); fi
+        if [ -n "$CRD" ];             then args+=(--crd "$CRD"); fi
+        if [ -n "$PACKAGE" ];         then args+=(--package "$PACKAGE"); fi
+        if [ -n "$TARGET" ];          then args+=(--target "$TARGET"); fi
+        if [ -n "$SAMPLES" ];         then args+=(--samples "$SAMPLES"); fi
+        if [ "$LIVE" = "true" ];      then args+=(--live); fi
+        if [ -n "$CONTEXT" ];         then args+=(--context "$CONTEXT"); fi
+        if [ -n "$MAX_SAMPLES" ];     then args+=(--max-samples "$MAX_SAMPLES"); fi
+        if [ -n "$SAMPLE_STRATEGY" ]; then args+=(--sample-strategy "$SAMPLE_STRATEGY"); fi
+        if [ "$STRICT" = "true" ];    then args+=(--strict); fi
+        if [ "$VALIDATE_OUTPUT" = "true" ]; then args+=(--validate-output); fi
+        if [ -n "$CONCURRENCY" ];     then args+=(--concurrency "$CONCURRENCY"); fi
+        # The exit code is the run's verdict and was already captured by
+        # the run step; here it only decides nothing, so do not let it
+        # abort the render.
+        convctl test "${args[@]}" --output markdown --output-file "$md" --quiet || true
+        echo "markdown-path=$md" >> "$GITHUB_OUTPUT"
+
+    - name: Upsert the pull-request comment
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TAG: ${{ inputs.comment-tag != '' && inputs.comment-tag || inputs.config }}
+        MD: ${{ steps.markdown.outputs.markdown-path }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        FORK: ${{ github.event.pull_request.head.repo.fork }}
+        API: ${{ github.api_url }}
+      run: |
+        set -euo pipefail
+
+        # curl and jq, not the gh CLI — see convctl-diff for why: a slim
+        # self-hosted runner image ships these two and not gh.
+        if [ "$FORK" = "true" ]; then
+          echo "::notice::pull request is from a fork, so the token cannot comment; the report is in the job summary"
+          exit 0
+        fi
+        if [ ! -s "${MD:-}" ]; then
+          echo "::notice::no report to comment"
+          exit 0
+        fi
+
+        tag="$(tr '\n' '_' <<< "$TAG" | sed 's/_$//')"
+        marker="<!-- convctl-test:$tag -->"
+        body="$RUNNER_TEMP/convctl-test-comment.md"
+        {
+          echo "$marker"
+          cat "$MD"
+        } > "$body"
+
+        gh_api() {
+          curl -sS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$@"
+        }
+
+        existing=""
+        page=1
+        while [ "$page" -le 10 ]; do
+          resp="$(gh_api "$API/repos/$REPO/issues/$PR/comments?per_page=100&page=$page")"
+          count="$(jq 'length' <<< "$resp")"
+          [ "$count" -eq 0 ] && break
+          existing="$(jq -r --arg marker "$marker" \
+            '[.[] | select(.body | contains($marker))] | .[0].id // empty' <<< "$resp")"
+          [ -n "$existing" ] && break
+          [ "$count" -lt 100 ] && break
+          page=$((page + 1))
+        done
+
+        payload="$RUNNER_TEMP/convctl-test-comment.json"
+        jq -n --rawfile body "$body" '{body: $body}' > "$payload"
+
+        if [ -n "$existing" ]; then
+          code="$(gh_api -o /dev/null -w '%{http_code}' -X PATCH \
+            -d @"$payload" "$API/repos/$REPO/issues/comments/$existing")"
+        else
+          code="$(gh_api -o /dev/null -w '%{http_code}' -X POST \
+            -d @"$payload" "$API/repos/$REPO/issues/$PR/comments")"
+        fi
+
+        case "$code" in
+          2*) ;;
+          *) echo "::warning::could not upsert the pull-request comment (HTTP $code); the report is in the job summary" ;;
+        esac

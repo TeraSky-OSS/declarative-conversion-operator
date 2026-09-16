@@ -157,8 +157,16 @@ runs:
         PR: ${{ github.event.pull_request.number }}
         REPO: ${{ github.repository }}
         FORK: ${{ github.event.pull_request.head.repo.fork }}
+        API: ${{ github.api_url }}
       run: |
         set -euo pipefail
+
+        # curl and jq, not the gh CLI. This Action has to run wherever the
+        # job runs, and a self-hosted runner is usually a slim container
+        # image: ghcr.io/actions/actions-runner ships curl and jq but not
+        # gh, so `gh api` failed with "command not found" for the exact
+        # deployment that most needs an in-cluster runner. Nothing here
+        # needs more than the REST API and a bearer token.
 
         # A pull_request event from a fork has a read-only token. That is a
         # notice, not a failure: the delta is already in the job summary, and
@@ -184,6 +192,14 @@ runs:
           cat "$MD"
         } > "$body"
 
+        gh_api() {
+          curl -sS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$@"
+        }
+
         # Find this tag's comment and edit it, so repeated runs update one
         # comment rather than appending a new one each push.
         #
@@ -193,14 +209,35 @@ runs:
         # syntax error, so the lookup would fail and every run would post a
         # new comment. A quote or backslash in an explicit tag does the
         # same.
-        existing="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-          | jq -r --arg marker "$marker" \
-              '[.[] | select(.body | contains($marker))] | .[0].id // empty')"
+        existing=""
+        page=1
+        while [ "$page" -le 10 ]; do
+          resp="$(gh_api "$API/repos/$REPO/issues/$PR/comments?per_page=100&page=$page")"
+          count="$(jq 'length' <<< "$resp")"
+          [ "$count" -eq 0 ] && break
+          existing="$(jq -r --arg marker "$marker" \
+            '[.[] | select(.body | contains($marker))] | .[0].id // empty' <<< "$resp")"
+          [ -n "$existing" ] && break
+          [ "$count" -lt 100 ] && break
+          page=$((page + 1))
+        done
+
+        payload="$RUNNER_TEMP/convctl-diff-comment.json"
+        jq -n --rawfile body "$body" '{body: $body}' > "$payload"
 
         if [ -n "$existing" ]; then
-          gh api --method PATCH "repos/$REPO/issues/comments/$existing" \
-            -F body=@"$body" --silent
+          code="$(gh_api -o /dev/null -w '%{http_code}' -X PATCH \
+            -d @"$payload" "$API/repos/$REPO/issues/comments/$existing")"
         else
-          gh api --method POST "repos/$REPO/issues/$PR/comments" \
-            -F body=@"$body" --silent
+          code="$(gh_api -o /dev/null -w '%{http_code}' -X POST \
+            -d @"$payload" "$API/repos/$REPO/issues/$PR/comments")"
         fi
+
+        # A comment that could not be posted is a warning, not a failed
+        # job: the delta is already in the job summary, and the most
+        # common cause is a token without pull-requests: write, which is
+        # a workflow-permission problem rather than a conversion problem.
+        case "$code" in
+          2*) ;;
+          *) echo "::warning::could not upsert the pull-request comment (HTTP $code); the delta is in the job summary" ;;
+        esac
