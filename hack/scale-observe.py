@@ -8,15 +8,18 @@ supposed to publish are not visible from there —
   * cold start, i.e. how long a webhook-server replica spent compiling
     every assigned plan before it could serve, which is the term that grows
     with the fleet and the one a startupProbe has to be sized against; and
-  * peak memory, which is what decides whether the envelope fits in a
-    container limit at all.
+  * the loaded working set, which is what decides whether the envelope
+    fits in a container limit at all. Note that this is the steady state
+    after the cold start, not the transient peak during it — the peak
+    happens before the replicas are Ready, where nothing is sampling, and
+    is measured by the -benchmem benchmarks instead.
 
 Both are read off the cluster here and merged into the same JSON, so the
 artifact a scheduled run publishes is one file rather than three.
 
-Nothing here is fatal. A run whose latency numbers are good and whose
-observations could not be collected is still a useful run; losing it over a
-missing metrics endpoint would not be.
+Individual failures are tolerated — one unscrapeable pod should not
+discard a twenty-five-minute run — but collecting NOTHING is an error, so
+a nightly that lost both measurements cannot report itself green.
 
 Usage:
   hack/scale-observe.py --result FILE --namespace NS [--label SELECTOR]
@@ -82,16 +85,26 @@ def gauge(metrics: str, name: str) -> float | None:
     return None
 
 
-def working_set_bytes(node: str, pod: str) -> float | None:
+def working_set_bytes(node: str, namespace: str, pod: str) -> float | None:
     """Working set from the kubelet Summary API.
 
     The same number hack/measure-cache-memory.sh uses, and the same one a
     container memory limit is enforced against — unlike RSS, it excludes
     reclaimable page cache.
+
+    This is a single sample taken once the replicas are Ready again, so it
+    is the loaded STEADY state, not the transient peak during the cold
+    start: the peak happens before readiness, where nothing is sampling.
+    The peak is measured by the -benchmem benchmarks instead, and published
+    in docs/operations/capacity.md.
+
+    Matched on namespace as well as name, because a pod name is unique only
+    within its namespace and the Summary API reports the whole node.
     """
     summary = json.loads(kubectl("get", "--raw", f"/api/v1/nodes/{node}/proxy/stats/summary"))
     for entry in summary.get("pods", []):
-        if entry.get("podRef", {}).get("name") == pod:
+        ref = entry.get("podRef", {})
+        if ref.get("name") == pod and ref.get("namespace") == namespace:
             value = entry.get("memory", {}).get("workingSetBytes")
             return float(value) if value is not None else None
     return None
@@ -137,7 +150,7 @@ def main() -> int:
                 sync_targets.append(value)
 
         try:
-            value = working_set_bytes(node, pod)
+            value = working_set_bytes(node, args.namespace, pod)
         except (subprocess.CalledProcessError, json.JSONDecodeError) as err:
             warn(f"could not read the kubelet summary for {pod}: {err}")
         else:
@@ -156,12 +169,15 @@ def main() -> int:
     if pods:
         observed["webhookReplicas"] = float(len(pods))
 
-    if observed:
-        report["observed"] = {**report.get("observed", {}), **observed}
-        with open(args.result, "w", encoding="utf-8") as fh:
-            json.dump(report, fh, indent=2)
-            fh.write("\n")
-        print(f"scale-observe: merged {len(observed)} cluster observations into {args.result}")
+    if not observed:
+        warn("collected no cluster observations at all; the run's cold-start and working-set numbers are missing")
+        return 1
+
+    report["observed"] = {**report.get("observed", {}), **observed}
+    with open(args.result, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+        fh.write("\n")
+    print(f"scale-observe: merged {len(observed)} cluster observations into {args.result}")
     return 0
 
 

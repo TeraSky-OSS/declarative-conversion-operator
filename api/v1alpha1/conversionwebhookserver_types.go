@@ -327,7 +327,8 @@ type ShardingSpec struct {
 // over-long one only delays the restart of a pod that is not taking
 // traffic anyway.
 type StartupProbeSpec struct {
-	// Enabled turns the startupProbe off. Only correct if something else
+	// Enabled renders the startupProbe, and defaults to true. Setting it
+	// to false removes the probe, which is only correct if something else
 	// guarantees the cold start fits inside the liveness budget.
 	// +optional
 	// +kubebuilder:default=true

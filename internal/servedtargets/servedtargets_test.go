@@ -75,6 +75,8 @@ func TestDecode_RejectsGarbage(t *testing.T) {
 	}
 }
 
+// lease builds a Lease renewed `age` ago. A negative age puts renewTime in
+// the future, which is how the clock-skew cases are expressed.
 func lease(name string, age time.Duration, targets []string) coordinationv1.Lease {
 	value, truncated := Encode(targets)
 	renew := metav1.NewMicroTime(time.Now().Add(-age))
@@ -189,5 +191,44 @@ func TestContains(t *testing.T) {
 		if Contains(set, out) {
 			t.Errorf("Contains(%v, %q) = true", set, out)
 		}
+	}
+}
+
+// A renewTime in the future means the publisher's clock is ahead. A little
+// is normal; a lot would keep a wedged replica looking live for as long as
+// the jump lasts, and a stale report is exactly what could authorise a
+// handover onto an instance that has stopped serving the target.
+func TestAggregate_RejectsRenewalsTooFarInTheFuture(t *testing.T) {
+	skewed := lease("skewed", -(MaxClockSkew + time.Minute), []string{"x"})
+	_, reporting, _ := Aggregate([]coordinationv1.Lease{skewed}, time.Now())
+	if reporting != 0 {
+		t.Fatalf("reporting = %d, want 0: a renewTime %s in the future is not proof of liveness", reporting, MaxClockSkew+time.Minute)
+	}
+
+	// A small skew is normal and must still count.
+	fine := lease("fine", -(MaxClockSkew / 2), []string{"x"})
+	served, reporting, _ := Aggregate([]coordinationv1.Lease{fine}, time.Now())
+	if reporting != 1 || !reflect.DeepEqual(served, []string{"x"}) {
+		t.Fatalf("a small clock skew must still be accepted; got served=%v reporting=%d", served, reporting)
+	}
+}
+
+// Encode checks the compressed size, which a highly compressible set can
+// slip past. Without the uncompressed check too, Decode would hand back a
+// truncated prefix that reads as a complete answer — and every target
+// missing from it would look unservable, holding a handover open forever.
+func TestEncodeDecode_BoundsTheDecodedSizeToo(t *testing.T) {
+	// Maximally compressible: the same name over and over.
+	many := make([]string, 0, MaxDecodedBytes/8+16)
+	for i := 0; i < cap(many); i++ {
+		many = append(many, fmt.Sprintf("t%07d.example.org", i))
+	}
+	value, truncated := Encode(many)
+	if !truncated {
+		t.Fatalf("a set of %d names decoding to more than %d bytes must be reported as truncated (compressed to %d bytes)",
+			len(many), MaxDecodedBytes, len(value))
+	}
+	if value != "" {
+		t.Fatal("a truncated encode must return nothing")
 	}
 }

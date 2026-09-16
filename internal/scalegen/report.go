@@ -30,7 +30,11 @@ import (
 // comparing two reports written to different schemas would produce a
 // confident, wrong regression verdict — so the comparison refuses when the
 // versions differ.
-const ReportSchemaVersion = 1
+// Bumped to 2 when ThroughputPerSecond changed from a per-worker figure
+// derived from p50 to the real N/elapsed rate, and when Envelope was
+// added. A v1 report compared against a v2 one would read the same field
+// name as two different quantities.
+const ReportSchemaVersion = 2
 
 // Report is the machine-readable form of a Result: the scale run's
 // numbers, shaped for a scheduled job to publish as an artifact, render in
@@ -46,6 +50,13 @@ type Report struct {
 	Targets      int `json:"targets"`
 	Instances    int `json:"instances"`
 	TotalObjects int `json:"totalObjects"`
+
+	// Envelope is every input that changes what the run measures. The
+	// regression check requires two reports to agree on all of it before
+	// comparing them: a manual probe at a different parallelism or QPS
+	// measures a different thing, and diffing it against the nightly
+	// would produce a confident answer to a question nobody asked.
+	Envelope map[string]string `json:"envelope"`
 
 	CreateMs float64 `json:"createMs"`
 
@@ -73,9 +84,13 @@ type Measurement struct {
 	P99Ms  float64 `json:"p99Ms"`
 	MaxMs  float64 `json:"maxMs"`
 	// ThroughputPerSecond is n divided by the wall-clock the operation
-	// class took, so a run that got slower shows up here even if the
+	// class took, across all workers — the rate the fleet actually
+	// achieved, so a run that got slower shows up here even when the
 	// percentiles are noisy.
 	ThroughputPerSecond float64 `json:"throughputPerSecond"`
+	// ElapsedMs is that wall-clock, kept so the rate can be re-derived
+	// and so a comparison can tell "fewer requests" from "slower ones".
+	ElapsedMs float64 `json:"elapsedMs"`
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
@@ -88,6 +103,7 @@ func (r *Result) ToReport(now time.Time) *Report {
 		Targets:       r.Targets,
 		Instances:     r.Instances,
 		TotalObjects:  r.Targets * r.Instances,
+		Envelope:      r.Envelope,
 		CreateMs:      ms(r.Create),
 		Measurements: map[string]Measurement{
 			"listV1": measurement(r.ListV1),
@@ -106,14 +122,13 @@ func (r *Result) ToReport(now time.Time) *Report {
 }
 
 func measurement(s Stats) Measurement {
-	m := Measurement{N: s.N, Errors: s.Errors, P50Ms: ms(s.P50), P99Ms: ms(s.P99), MaxMs: ms(s.Max)}
-	// Throughput from the median rather than from a wall-clock the Stats
-	// does not carry: with P workers each taking p50, the fleet rate is
-	// P/p50. The worker count is not known here, so this is per-worker
-	// throughput — comparable between runs at the same parallelism, which
-	// is what the regression check uses it for.
-	if s.P50 > 0 {
-		m.ThroughputPerSecond = float64(time.Second) / float64(s.P50)
+	m := Measurement{
+		N: s.N, Errors: s.Errors,
+		P50Ms: ms(s.P50), P99Ms: ms(s.P99), MaxMs: ms(s.Max),
+		ElapsedMs: ms(s.Elapsed),
+	}
+	if s.Elapsed > 0 {
+		m.ThroughputPerSecond = float64(s.N) / s.Elapsed.Seconds()
 	}
 	return m
 }

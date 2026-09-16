@@ -79,6 +79,16 @@ type HandoverVerdict struct {
 // handover.
 func canServeTarget(served []string, reporting, readyReplicas int32, truncated bool, target, serverName string) HandoverVerdict {
 	switch {
+	case readyReplicas == 0:
+		// Reachable only by bypassing the ConversionWebhookServer health
+		// gate that runs before this, but "no ready replica" must never
+		// read as "nothing objects": repointing a target at an instance
+		// with nothing running is the outage this whole sequence exists
+		// to avoid.
+		return HandoverVerdict{
+			Reason:  "HandoverPending",
+			Message: fmt.Sprintf("ConversionWebhookServer %q has no ready replicas, so it cannot serve %q; the target stays on its current server", serverName, target),
+		}
 	case reporting == 0:
 		return HandoverVerdict{
 			OK:     true,

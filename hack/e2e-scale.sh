@@ -11,8 +11,9 @@
 #
 # Set RESULT_JSON to write the run's measurements as JSON — latency
 # percentiles, throughput, plus the webhook-server's cold-start time and
-# peak working set read off the cluster. That is what the nightly Scale
-# workflow publishes as an artifact and diffs against the previous run.
+# its loaded working set read off the cluster. That is what the nightly
+# Scale workflow publishes as an artifact and diffs against the previous
+# run.
 #
 # Prerequisites: docker, kind, kubectl, helm.
 # Set KEEP_CLUSTER=1 to skip teardown.
@@ -110,14 +111,24 @@ if [ -n "${RESULT_JSON}" ] && [ -f "${RESULT_JSON}" ]; then
     echo "WARN: no webhook-server deployment found; cold start will not be measured" >&2
   fi
 
-  log "Collecting cluster-side observations (cold start, peak working set)"
+  log "Collecting cluster-side observations (cold start, loaded working set)"
+  # Not `|| true`. The script tolerates partial collection internally — one
+  # unscrapeable pod does not discard the run — but if it collected nothing
+  # at all, the artifact is missing half of what a nightly run exists to
+  # publish, and reporting that green would hide it. The result file is
+  # still written and still uploaded, so failing here loses no data.
+  observe_rc=0
   python3 "${REPO_ROOT}/hack/scale-observe.py" \
-    --result "${RESULT_JSON}" --namespace "${NAMESPACE}" || true
+    --result "${RESULT_JSON}" --namespace "${NAMESPACE}" || observe_rc=$?
 fi
 
 if [ "${scale_rc}" -ne 0 ]; then
   echo "FAIL: the scale run reported errors (exit ${scale_rc})"
   exit "${scale_rc}"
+fi
+if [ "${observe_rc:-0}" -ne 0 ]; then
+  echo "FAIL: cluster-side observations could not be collected (exit ${observe_rc})"
+  exit "${observe_rc}"
 fi
 
 log "Scale e2e finished"

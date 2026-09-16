@@ -65,13 +65,21 @@ type TargetPublisher struct {
 	notify chan struct{}
 }
 
-// Enabled reports whether this publisher has everything it needs. The
-// downward-API values are absent on an older webhook-server Deployment
-// the operator has not yet re-applied, and publishing nothing at all is
-// better than publishing a Lease that no reader can attribute to a pod.
+// Enabled reports whether this publisher has everything it needs,
+// including PodUID. The downward-API values are absent on an older
+// webhook-server Deployment the operator has not yet re-applied, and
+// publishing nothing at all is better than publishing a Lease that no
+// reader can attribute to a pod.
+//
+// PodUID is required rather than optional because it is the
+// ownerReference: a Lease without one outlives the pod that wrote it,
+// stops renewing, and sits in the namespace as a report from a replica
+// that no longer exists. Readers do discount it after StaleAfter, but a
+// Lease nothing ever collects is a leak, and during the window before it
+// goes stale it is a report attributable to nobody.
 func (p *TargetPublisher) Enabled() bool {
 	return p != nil && p.Client != nil && p.Registry != nil &&
-		p.ServerName != "" && p.Namespace != "" && p.PodName != ""
+		p.ServerName != "" && p.Namespace != "" && p.PodName != "" && p.PodUID != ""
 }
 
 // Notify asks for an out-of-band publish, called after the registry
@@ -191,7 +199,9 @@ func (p *TargetPublisher) stamp(lease *coordinationv1.Lease, encoded string, tru
 		delete(lease.Annotations, servedtargets.TruncatedAnnotation)
 	}
 
-	if p.PodUID != "" && len(lease.OwnerReferences) == 0 {
+	// Enabled() guarantees PodUID, so every Lease this writes is owned by
+	// the pod that wrote it and is collected with it.
+	if len(lease.OwnerReferences) == 0 {
 		lease.OwnerReferences = []metav1.OwnerReference{{
 			APIVersion: "v1",
 			Kind:       "Pod",

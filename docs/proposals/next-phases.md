@@ -978,14 +978,16 @@ apiserver's write path".
 > turned up rather than confirmed:
 >
 > - **The cold-start work found a defect, not just a missing metric.** A
->   webhook-server replica does not listen on any port until its registry
->   is populated, so both probes fail with connection-refused until then —
->   which made the liveness probe's own 3 × 10 s the *entire* cold-start
->   budget. A replica holding enough targets to exceed thirty seconds would
->   have been killed and restarted forever, reading as a crash loop rather
->   than as a slow start. `spec.startupProbe` closes it, and the plain HTTP
->   endpoint now comes up before the cache sync so a cold replica is
->   visibly alive.
+>   webhook-server replica *used to* listen on no port at all until its
+>   registry was populated, so both probes got connection-refused until
+>   then — which made the liveness probe's own 3 × 10 s the *entire*
+>   cold-start budget. A replica holding enough targets to exceed thirty
+>   seconds would have been killed and restarted forever, reading as a
+>   crash loop rather than as a slow start. Two changes close it:
+>   `spec.startupProbe` suspends the other two probes while the sync runs,
+>   and the health endpoint now comes up *before* the cache sync, so a cold
+>   replica answers `/healthz`, reports `/readyz` 503, and is visibly alive.
+>   The conversion endpoint still waits for a populated registry.
 > - **The memory work found a second one.** The steady registry is small —
 >   about 18 KiB per target — but compiling churns roughly twenty times
 >   what it retains, and with the default `GOGC` a thousand-target cold

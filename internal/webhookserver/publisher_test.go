@@ -109,6 +109,14 @@ func TestPublish_ExcludesEntriesWithNoCompiledPlan(t *testing.T) {
 }
 
 func TestPublisher_DisabledWithoutAnIdentity(t *testing.T) {
+	// PodUID counts as identity too: without it the Lease has no owner
+	// reference, so it outlives the pod that wrote it.
+	withoutUID := newTestPublisher(NewRegistry())
+	withoutUID.PodUID = ""
+	if withoutUID.Enabled() {
+		t.Fatal("a publisher with no pod UID must be disabled: its Lease would never be garbage-collected")
+	}
+
 	p := newTestPublisher(NewRegistry())
 	p.PodName = ""
 	if p.Enabled() {

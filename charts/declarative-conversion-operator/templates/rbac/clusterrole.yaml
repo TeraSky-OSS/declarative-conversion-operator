@@ -113,23 +113,34 @@ rules:
 ---
 # The one write a webhook-server replica makes: its own served-target
 # Lease, which is what lets the operator verify an instance can already
-# serve a target before moving that target onto it. Namespaced, and only in
-# the release namespace.
+# serve a target before moving that target onto it.
 #
-# A ConversionWebhookServer whose spec.namespace points somewhere else
-# needs the same Role and RoleBinding created there. Without it the
-# replicas still serve conversions perfectly well; what is lost is the
-# verified handover, and the config reports HandoverReady with reason
-# HandoverUnverified rather than failing.
+# Namespaced, and in the namespace the chart's own ConversionWebhookServer
+# instance actually runs in — spec.namespace, which defaults to the release
+# namespace but does not have to equal it. A ConversionWebhookServer
+# created outside this chart needs the same Role and RoleBinding in its own
+# namespace. Without it the replicas still serve conversions perfectly
+# well; what is lost is the verified handover, and the config reports
+# HandoverReady with reason HandoverUnverified rather than failing.
 #
 # No list or watch: a replica reads back exactly one Lease, by name, and
-# giving it the ability to enumerate the namespace's Leases would hand it
-# every leader-election holder identity for nothing.
+# enumerating the namespace's Leases would hand it every leader-election
+# holder identity for nothing.
+#
+# What this is NOT: an own-Lease restriction. RBAC cannot express "only the
+# Lease named after your own pod" — resourceNames needs names known when
+# the Role is written, and these are derived from generated pod names. A
+# compromised webhook-server pod can therefore get/update/patch any Lease
+# in this namespace, including the operator's own leader-election Lease.
+# The bound that does hold is the namespace: give an instance its own
+# spec.namespace if that residual matters to you, and this grant reaches
+# nothing else. See docs/security/rbac.md.
+{{- $cwsNamespace := default .Release.Namespace .Values.conversionWebhookServer.namespace }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server-leases
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $cwsNamespace }}
   labels:
     {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
 rules:
@@ -141,7 +152,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server-leases
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $cwsNamespace }}
   labels:
     {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
 roleRef:

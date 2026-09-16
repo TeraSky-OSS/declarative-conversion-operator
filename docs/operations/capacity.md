@@ -134,7 +134,7 @@ There are three terms, and they are not the same size:
 |---|---|---|
 | **Informer cache** | every CRD and XRD the replica watches, schemas included | the 121 MiB above, for 300 two-version 200-property CRDs — **the dominant term** |
 | **Compiled registry** | number of targets × their schema size | ~18 KiB per target (see below) |
-| **Cold-start transient** | allocation churn while compiling, not anything retained | up to ~8× the steady registry — **what an OOM kill is decided against** |
+| **Cold-start transient** | allocation churn while compiling, not anything retained | 8–13× the steady registry, depending on fleet size — **what an OOM kill is decided against** |
 
 #### Bytes per compiled plan
 
@@ -179,6 +179,9 @@ start:
 |---|---:|---:|---:|
 | 100 | 1.8 MiB | 23–26 MiB | ~13× |
 | 1000 | 18 MiB | 140 MiB | ~8× |
+
+The ratio falls as the fleet grows because the fixed per-replica overhead
+stops dominating, not because the transient gets cheaper in absolute terms.
 
 This is the finding worth acting on. The peak is not memory the replica
 needs; it is memory the garbage collector has not reclaimed yet, because
@@ -560,10 +563,16 @@ anything.
 
 The artifact carries more than latency: `hack/scale-observe.py` merges in
 the webhook-server's **cold-start time**
-(`dco_webhook_initial_sync_duration_seconds`) and **peak working set**
-(from the kubelet Summary API), so the two numbers this page's memory and
-cold-start sections are about are trended by the same job. Both are gated
-against the previous run alongside the latency figures.
+(`dco_webhook_initial_sync_duration_seconds`) and its **loaded working
+set** (from the kubelet Summary API), so the two numbers this page's memory
+and cold-start sections are about are trended by the same job. Both are
+gated against the previous run alongside the latency figures.
+
+The working set is a single sample taken once the replicas are Ready again
+after the restart, so it is the **steady state with the fleet loaded, not
+the transient peak** — the peak happens before readiness, where nothing is
+sampling. The peak-versus-steady table above is what measures that, from
+`make bench-mem`.
 
 #### Why 300 CRDs, and not the 1000 the proposal asked for
 

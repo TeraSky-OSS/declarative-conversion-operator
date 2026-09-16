@@ -85,12 +85,29 @@ const (
 	// elaborate chunking scheme.
 	MaxEncodedBytes = 192 * 1024
 
+	// MaxDecodedBytes caps the UNCOMPRESSED set, which is the size a
+	// reader has to be prepared to expand. Target names are long and
+	// highly similar, so they compress by roughly four to one — the
+	// compressed cap alone would let a very repetitive set through and
+	// then surprise the reader.
+	MaxDecodedBytes = 1024 * 1024
+
 	// Heartbeat is how often a replica renews its Lease, and LeaseDuration
 	// is what it advertises as the validity window. A reader treats a
 	// Lease whose renewTime is older than StaleAfter as gone.
 	Heartbeat     = 30 * time.Second
 	LeaseDuration = 90 * time.Second
 	StaleAfter    = 3 * Heartbeat
+
+	// MaxClockSkew bounds how far in the FUTURE a renewTime may be before
+	// the Lease is treated as stale rather than fresh.
+	//
+	// Without it, a replica whose clock jumped forward and then wedged
+	// keeps looking live for as long as the jump lasts — and a stale
+	// report is exactly what could authorise a handover onto an instance
+	// that has stopped serving the target. Publishers stamp renewTime from
+	// their own clock, so some skew is expected; an hour of it is not.
+	MaxClockSkew = 5 * time.Minute
 )
 
 // LeaseName is the Lease a given replica publishes to. Keyed by pod name,
@@ -111,15 +128,22 @@ func Encode(targets []string) (string, bool) {
 	sorted := append([]string(nil), targets...)
 	sort.Strings(sorted)
 
+	joined := strings.Join(sorted, "\n")
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	// gzip.Writer only fails if the underlying writer does, and
 	// bytes.Buffer does not.
-	_, _ = zw.Write([]byte(strings.Join(sorted, "\n")))
+	_, _ = zw.Write([]byte(joined))
 	_ = zw.Close()
 
+	// Both sizes are checked. The compressed one is what has to fit in the
+	// annotation; the uncompressed one is what a reader has to be willing
+	// to expand, and target names compress well enough that a set could
+	// pass the first check and blow past the reader's limit — which would
+	// come back as a silently truncated prefix that looks like a complete
+	// answer.
 	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
-	if len(encoded) > MaxEncodedBytes {
+	if len(encoded) > MaxEncodedBytes || len(joined) > MaxDecodedBytes {
 		return "", true
 	}
 	return encoded, false
@@ -144,9 +168,17 @@ func Decode(value string) ([]string, error) {
 	// attacker-influenced only by whoever can already write Leases in the
 	// namespace, but an unbounded decompress is not something to leave in
 	// a reconcile loop regardless.
-	out, err := io.ReadAll(io.LimitReader(zr, MaxEncodedBytes*8))
+	// One byte past the limit, so an oversized payload is an ERROR rather
+	// than a silently truncated prefix. A prefix would decode into a
+	// shorter list that looks complete, and the targets missing from it
+	// would read as "this replica cannot serve them" — holding a handover
+	// open indefinitely for a reason nothing reports.
+	out, err := io.ReadAll(io.LimitReader(zr, MaxDecodedBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading served-targets annotation: %w", err)
+	}
+	if len(out) > MaxDecodedBytes {
+		return nil, fmt.Errorf("served-targets annotation decodes to more than %d bytes", MaxDecodedBytes)
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -173,7 +205,13 @@ func Aggregate(leases []coordinationv1.Lease, now time.Time) (served []string, r
 	var counts map[string]int32
 	for i := range leases {
 		l := &leases[i]
-		if l.Spec.RenewTime == nil || now.Sub(l.Spec.RenewTime.Time) > StaleAfter {
+		if l.Spec.RenewTime == nil {
+			continue
+		}
+		// Negative age is a renewTime in the future: the publisher's clock
+		// is ahead of ours. A little is normal; more than MaxClockSkew is
+		// not something to accept as proof of liveness.
+		if age := now.Sub(l.Spec.RenewTime.Time); age > StaleAfter || age < -MaxClockSkew {
 			continue
 		}
 		reporting++

@@ -76,8 +76,13 @@ require_positive_int --move-timeout "${MOVE_TIMEOUT}"
 
 reassign_cleanup() {
   local code=$?
-  [ -n "${CLIENT_PID}" ] && kill "${CLIENT_PID}" >/dev/null 2>&1 || true
-  [ -n "${PROXY_PID}" ] && kill "${PROXY_PID}" >/dev/null 2>&1 || true
+  # set +e first: e2e_cleanup has to run even when the test failed, and
+  # under `set -e` a non-zero status inside the trap can end it early —
+  # leaving the kind cluster behind on exactly the runs where nobody wants
+  # a stray cluster.
+  set +e
+  [ -n "${CLIENT_PID}" ] && kill "${CLIENT_PID}" >/dev/null 2>&1
+  [ -n "${PROXY_PID}" ] && kill "${PROXY_PID}" >/dev/null 2>&1
   rm -f "${STOP_FILE}"
   (exit "${code}")
   e2e_cleanup
@@ -323,14 +328,26 @@ if [ -z "${settled}" ]; then
 fi
 echo "OK: sharding placed ${TARGET_CRD} on ${settled}"
 
-again="$(kubectl get crdconversionconfig "${CONFIG_NAME}" -o jsonpath='{.status.assignedWebhookServer}')"
-assert_eq "${again}" "${settled}" "the sharded assignment is stable across reconciles"
-# The sharded move is the one this phase is about, so it gets the same
-# verification the explicit moves do: it must have waited for the
-# destination rather than taking the unverified fallback.
-if [ "${settled}" != "default" ]; then
-  assert_handover_verified
-fi
+# Rendezvous hashing is deterministic in the target name and the pool, both
+# of which are fixed here, so this fixture lands on shard-b. Asserting that
+# rather than accepting whatever came out is the point: if it ever resolved
+# to `default`, no move would have happened and the run would pass without
+# having exercised a sharded handover at all — the one thing this step is
+# for. A hash change should fail here and prompt a new fixture, loudly.
+assert_eq "${settled}" "shard-b" "sharding moved the target off the default instance"
+assert_handover_verified
+
+# Force a reconcile and re-read, rather than re-reading the status the poll
+# above already saw. An assignment that is unstable across reconciles —
+# flapping between pool members — would otherwise pass this.
+kubectl annotate crdconversionconfig "${CONFIG_NAME}" \
+  "e2e.terasky.com/poke=$(date +%s)" --overwrite >/dev/null
+for _ in $(seq 1 30); do
+  again="$(kubectl get crdconversionconfig "${CONFIG_NAME}" -o jsonpath='{.status.assignedWebhookServer}')"
+  [ -n "${again}" ] && break
+  sleep 1
+done
+assert_eq "${again}" "${settled}" "the sharded assignment is stable across a fresh reconcile"
 
 sleep "${gap}"
 driver_alive "the run finishing"

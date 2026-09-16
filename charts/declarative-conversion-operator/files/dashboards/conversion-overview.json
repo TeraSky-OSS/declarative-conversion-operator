@@ -195,7 +195,7 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (job, controller) (workqueue_depth)",
+          "expr": "sum by (job, controller) (workqueue_depth{app_kubernetes_io_name=~\"declarative-conversion-operator|declarative-conversion-webhook-server\"})",
           "legendFormat": "{{job}} / {{controller}}",
           "refId": "A"
         }
@@ -211,7 +211,7 @@
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (job, controller) (rate(workqueue_adds_total[5m]))",
+          "expr": "sum by (job, controller) (rate(workqueue_adds_total{app_kubernetes_io_name=~\"declarative-conversion-operator|declarative-conversion-webhook-server\"}[5m]))",
           "legendFormat": "{{job}} / {{controller}}",
           "refId": "A"
         }
@@ -227,12 +227,12 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket{app_kubernetes_io_name=~\"declarative-conversion-operator|declarative-conversion-webhook-server\"}[5m])))",
           "legendFormat": "p50 {{job}} / {{controller}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, job, controller) (rate(workqueue_work_duration_seconds_bucket{app_kubernetes_io_name=~\"declarative-conversion-operator|declarative-conversion-webhook-server\"}[5m])))",
           "legendFormat": "p99 {{job}} / {{controller}}",
           "refId": "B"
         }
@@ -248,7 +248,7 @@
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (job, controller) (rate(controller_runtime_reconcile_errors_total[5m]))",
+          "expr": "sum by (job, controller) (rate(controller_runtime_reconcile_errors_total{app_kubernetes_io_name=~\"declarative-conversion-operator|declarative-conversion-webhook-server\"}[5m]))",
           "legendFormat": "{{job}} / {{controller}}",
           "refId": "A"
         }

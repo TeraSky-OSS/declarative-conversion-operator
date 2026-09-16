@@ -98,7 +98,7 @@ groups:
           summary: "Config {{ $labels.target }} phase transitioned to {{ $labels.to_phase }}"
           description: "config_kind={{ $labels.config_kind }} from={{ $labels.from_phase }} reason={{ $labels.reason }}. Stale means KeepServingStale after drift; Failed usually means FailClosed revert."
       - alert: ControllerWorkqueueBacklog
-        expr: sum by (job, controller) (workqueue_depth) > 10
+        expr: sum by (job, controller) (workqueue_depth{app_kubernetes_io_name=~"declarative-conversion-operator|declarative-conversion-webhook-server"}) > 10
         for: 15m
         labels:
           severity: warning
@@ -106,7 +106,7 @@ groups:
           summary: "Reconcile backlog on controller {{ $labels.controller }}"
           description: "job={{ $labels.job }}. This controller's workqueue has stayed above the backlog threshold, so config changes are converging slowly or not at all — expect stale phases and a lagging ConversionPropagated to follow. Check reconcile latency and error rate on the same dashboard row, then raise --max-concurrent-reconciles if the apiserver has the headroom."
       - alert: ControllerReconcileErrors
-        expr: sum by (job, controller) (rate(controller_runtime_reconcile_errors_total[5m])) > 0.1
+        expr: sum by (job, controller) (rate(controller_runtime_reconcile_errors_total{app_kubernetes_io_name=~"declarative-conversion-operator|declarative-conversion-webhook-server"}[5m])) > 0.1
         for: 15m
         labels:
           severity: warning

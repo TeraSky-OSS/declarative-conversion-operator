@@ -18,15 +18,20 @@ package webhookserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+	"github.com/terasky-oss/declarative-conversion-operator/pkg/xrdadapter"
 )
 
 // coldStartFleet builds n XRD targets and n matching configs, plus the one
@@ -144,5 +149,51 @@ func TestInitialSync_PublishesColdStartMetrics(t *testing.T) {
 	// sync at the end is what has to leave the gauges correct.
 	if got := testutil.ToFloat64(m.RegistrySize); int(got) != r.Registry.Len() {
 		t.Fatalf("dco_webhook_registry_size = %v after the bulk pass, want %d", got, r.Registry.Len())
+	}
+}
+
+// An infrastructure failure during the startup pass has to come back as an
+// error, because readiness is gated on this returning cleanly. A bad
+// config does not: reconcileOne* records that into the registry and
+// returns nil, since retrying cannot fix it.
+func TestInitialSync_ReportsInfrastructureErrors(t *testing.T) {
+	objs := coldStartFleet(6)
+	failing := newFakeClient(objs...).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if u, ok := obj.(*unstructured.Unstructured); ok && u.GroupVersionKind() == xrdadapter.GroupVersionKind && key.Name == "xfoos1.example.org" {
+				return errors.New("the apiserver said no")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+
+	r := &Reconciler{Client: failing, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true}
+	_, err := r.InitialSync(context.Background())
+	if err == nil {
+		t.Fatal("expected a failed target read to be reported; readiness is gated on this returning cleanly")
+	}
+	if !strings.Contains(err.Error(), "the apiserver said no") {
+		t.Fatalf("the error should carry the cause: %v", err)
+	}
+
+	// And the other targets still loaded: one bad read must not abandon
+	// the pass.
+	if got := r.Registry.Len(); got < 4 {
+		t.Fatalf("registry holds %d entries; the other targets should still have compiled", got)
+	}
+}
+
+// A config whose target does not exist is a configuration problem, not an
+// infrastructure one. It is recorded against the registry and must not
+// keep the replica from reporting ready — otherwise one broken config
+// would hold the whole replica out of service.
+func TestInitialSync_BadConfigIsNotAnError(t *testing.T) {
+	// coldStartFleet deliberately leaves one config with no XRD.
+	r := &Reconciler{
+		Client: newFakeClient(coldStartFleet(12)...).Build(), ServerName: "srv",
+		Registry: NewRegistry(), EnableXRDSupport: true,
+	}
+	if _, err := r.InitialSync(context.Background()); err != nil {
+		t.Fatalf("a config with a missing target must not fail the sync: %v", err)
 	}
 }

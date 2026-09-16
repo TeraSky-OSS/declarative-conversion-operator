@@ -139,3 +139,17 @@ func TestCanServeTarget(t *testing.T) {
 		})
 	}
 }
+
+// The ConversionWebhookServer health gate runs before this, so it should
+// not be reachable — but "no ready replica" must never read as "nothing
+// objects". Repointing a target at an instance with nothing running is the
+// outage the whole sequence exists to avoid.
+func TestCanServeTarget_NoReadyReplicasNeverApproves(t *testing.T) {
+	v := canServeTarget(nil, 0, 0, false, "xfoos.example.org", "srv-b")
+	if v.OK {
+		t.Fatalf("approved a handover to an instance with no ready replicas: %+v", v)
+	}
+	if v.Reason != "HandoverPending" {
+		t.Fatalf("reason = %q, want HandoverPending", v.Reason)
+	}
+}

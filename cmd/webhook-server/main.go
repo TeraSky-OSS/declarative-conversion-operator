@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -48,6 +49,39 @@ import (
 )
 
 var scheme = runtime.NewScheme()
+
+// initialSyncRetryInterval is how long to wait before re-attempting an
+// initial sync that hit an infrastructure error. Short, because the
+// startupProbe budget is what it is spending.
+const initialSyncRetryInterval = 2 * time.Second
+
+// initialSyncWithRetry runs the startup pass until it completes without an
+// infrastructure error, or the context ends.
+//
+// There is no attempt cap on purpose, and it is the same decision as the
+// one against --registry-ready-timeout: a replica that never becomes ready
+// degrades throughput, while one that reports ready with a hole in its
+// registry answers ConversionReviews for the missing target with a failure
+// the apiserver turns into a failed write. The startupProbe bounds how
+// long this may go on, and the log line says what it is waiting for.
+func initialSyncWithRetry(ctx context.Context, logger logr.Logger, reconciler *webhookserver.Reconciler) (webhookserver.InitialSyncStats, error) {
+	for attempt := 1; ; attempt++ {
+		stats, err := reconciler.InitialSync(ctx)
+		if err == nil {
+			return stats, nil
+		}
+		if ctx.Err() != nil {
+			return stats, ctx.Err()
+		}
+		logger.Error(err, "initial registry sync hit an infrastructure error; retrying before reporting ready",
+			"attempt", attempt, "retryIn", initialSyncRetryInterval.String())
+		select {
+		case <-ctx.Done():
+			return stats, ctx.Err()
+		case <-time.After(initialSyncRetryInterval):
+		}
+	}
+}
 
 // effectiveInitialSyncWorkers reports the pool size InitialSync actually
 // used, so the cold-start log line states the parallelism that produced
@@ -214,7 +248,7 @@ func main() {
 	}
 	publisher.Init()
 	if !publisher.Enabled() {
-		logger.Info("served-target publishing is disabled: POD_NAME/POD_NAMESPACE are not set. " +
+		logger.Info("served-target publishing is disabled: POD_NAME/POD_NAMESPACE/POD_UID are not all set. " +
 			"Conversions are unaffected, but the operator cannot verify this instance is ready before moving a target onto it")
 	}
 
@@ -288,8 +322,23 @@ func main() {
 		}
 	}()
 
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		logger.Error(errors.New("cache sync failed"), "unable to sync cache before initial registry population")
+	// Racing the cache sync against the manager's own exit. WaitForCacheSync
+	// returns false only when ctx is done, so on its own it blocks forever
+	// if mgr.Start fails early — a missing RBAC verb on a watched kind, say.
+	// That used to be survivable by accident: nothing listened yet, so the
+	// probes failed and the kubelet restarted the pod. Now the plain
+	// endpoint is up and answering /healthz, so liveness passes and the pod
+	// would sit not-ready forever with the manager's error never logged.
+	syncedCh := make(chan bool, 1)
+	go func() { syncedCh <- mgr.GetCache().WaitForCacheSync(ctx) }()
+	select {
+	case synced := <-syncedCh:
+		if !synced {
+			logger.Error(errors.New("cache sync failed"), "unable to sync cache before initial registry population")
+			os.Exit(1)
+		}
+	case err := <-mgrErrCh:
+		logger.Error(err, "manager exited before the cache finished syncing; the replica cannot serve conversions")
 		os.Exit(1)
 	}
 	// Readiness stays strictly behind a completed InitialSync. A
@@ -302,9 +351,21 @@ func main() {
 	// half-loaded one corrupts the answer. The startupProbe is the
 	// supported lever for a slow cold start, sized from the budget this
 	// metric and log line publish. See docs/operations/capacity.md.
-	syncStats, err := reconciler.InitialSync(ctx)
+	//
+	// An infrastructure failure during the sync — a failed read of a target,
+	// a failed server list — is retried here rather than shrugged off. The
+	// watch-driven reconciler only retries what a later watch event
+	// re-delivers, and a transient Get failure at startup may never produce
+	// one: the config would simply be missing from this replica's registry
+	// until somebody edited it. Retrying until it succeeds keeps readiness
+	// honest; the startupProbe is what bounds how long that may take.
+	syncStats, err := initialSyncWithRetry(ctx, logger, reconciler)
 	if err != nil {
-		logger.Error(err, "initial registry sync encountered errors; continuing, affected XRDs will retry via watch events")
+		// Only reachable when the context is done, i.e. the process is
+		// shutting down. Falling through to SetReady would advertise a
+		// registry that was never completed.
+		logger.Error(err, "shutting down before the initial registry sync completed")
+		return
 	}
 	// Published synchronously, before readiness rather than after: a
 	// replica that is about to start taking traffic should already be

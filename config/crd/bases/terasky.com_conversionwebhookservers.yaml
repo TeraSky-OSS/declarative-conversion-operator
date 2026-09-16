@@ -3579,7 +3579,8 @@ spec:
                   enabled:
                     default: true
                     description: |-
-                      Enabled turns the startupProbe off. Only correct if something else
+                      Enabled renders the startupProbe, and defaults to true. Setting it
+                      to false removes the probe, which is only correct if something else
                       guarantees the cold start fits inside the liveness budget.
                     type: boolean
                   failureThreshold:

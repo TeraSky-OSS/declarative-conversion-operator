@@ -105,11 +105,22 @@ on them is not a grant to hand out for a bookkeeping annotation. And **no
 the ability to enumerate the namespace's Leases — and with it every
 leader-election holder identity — buys nothing.
 
-A `ConversionWebhookServer` whose `spec.namespace` points elsewhere needs
-the same `Role` and `RoleBinding` created there. Without it the replicas
-still serve conversions; what is lost is the verified handover, and a move
-onto that instance proceeds with `HandoverReady` reason
-`HandoverUnverified` rather than failing.
+**What this is not: an own-Lease restriction.** RBAC cannot express "only
+the Lease named after your own pod" — `resourceNames` needs names known
+when the `Role` is written, and these are derived from generated pod names.
+So a compromised webhook-server pod can `get`, `update` or `patch` *any*
+Lease in its namespace, which by default includes this operator's own
+leader-election Lease; disrupting that would stall reconciles until the
+lease expired. The bound that does hold is the namespace.
+
+If that residual matters to you, give the instance its own
+`spec.namespace`. The chart creates the `Role` in whatever namespace the
+default instance runs in, so an instance isolated in its own namespace
+leaves this grant reaching nothing else. A `ConversionWebhookServer`
+created outside the chart needs the same `Role` and `RoleBinding` in its
+own namespace; without them the replicas still serve conversions, and what
+is lost is the verified handover — a move onto that instance proceeds with
+`HandoverReady` reason `HandoverUnverified` rather than failing.
 
 No access to Secrets, and no ability to patch XRDs or CRDs.
 

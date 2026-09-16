@@ -18,6 +18,7 @@ package webhookserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -506,15 +507,16 @@ func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) 
 
 	// Both lists are read before any compiling starts, so a slow compile
 	// cannot make the target count a moving target.
-	var work []func(context.Context)
+	var work []func(context.Context) error
 	if r.EnableXRDSupport {
 		var list teraskyv1alpha1.XRDConversionConfigList
 		if err := r.List(ctx, &list); err != nil {
 			return stats, fmt.Errorf("listing XRDConversionConfigs for initial sync: %w", err)
 		}
 		for _, cfg := range list.Items {
-			work = append(work, func(ctx context.Context) {
-				_, _ = r.reconcileOneXRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+			work = append(work, func(ctx context.Context) error {
+				_, err := r.reconcileOneXRD(ctx, cfg.Name)
+				return err
 			})
 		}
 	}
@@ -524,15 +526,16 @@ func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) 
 			return stats, fmt.Errorf("listing CRDConversionConfigs for initial sync: %w", err)
 		}
 		for _, cfg := range list.Items {
-			work = append(work, func(ctx context.Context) {
-				_, _ = r.reconcileOneCRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+			work = append(work, func(ctx context.Context) error {
+				_, err := r.reconcileOneCRD(ctx, cfg.Name)
+				return err
 			})
 		}
 	}
 
 	stats.Targets = len(work)
 	r.bulkSync.Store(true)
-	r.runInitialSyncWork(ctx, work)
+	errs := r.runInitialSyncWork(ctx, work)
 	r.bulkSync.Store(false)
 	r.registryChanged()
 
@@ -541,18 +544,31 @@ func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) 
 		r.Metrics.InitialSyncTargets.Set(float64(stats.Targets))
 		r.Metrics.InitialSyncDuration.Set(stats.Duration.Seconds())
 	}
+	// An infrastructure failure is returned, not swallowed. reconcileOne*
+	// already distinguishes the two: a bad config records itself into the
+	// registry and returns nil, because retrying cannot fix it. What comes
+	// back here is a failed API read — and the watch-driven reconciler
+	// only retries what a later watch event re-delivers, which a transient
+	// Get failure at startup may never produce. Reporting ready on top of
+	// that would leave a hole in the registry that answers every
+	// ConversionReview for the missing target with a failure.
+	if len(errs) > 0 {
+		return stats, fmt.Errorf("initial sync: %d of %d targets failed to load: %w", len(errs), stats.Targets, errors.Join(errs...))
+	}
 	return stats, nil
 }
 
 // runInitialSyncWork drains work across at most InitialSyncWorkers
-// goroutines. It deliberately does not stop early on a cancelled context:
-// each unit is already best-effort and bounded, and a partially-populated
-// registry that then reports ready is precisely the failure mode
-// InitialSync exists to prevent. Cancellation reaches the individual API
-// reads through ctx, which is what actually makes a cancelled sync fast.
-func (r *Reconciler) runInitialSyncWork(ctx context.Context, work []func(context.Context)) {
+// goroutines and returns every error the units reported.
+//
+// It deliberately does not stop early on the first failure or on a
+// cancelled context: each unit is bounded, and the caller needs the whole
+// picture — "three targets failed" is a different situation from "one
+// did". Cancellation reaches the individual API reads through ctx, which
+// is what actually makes a cancelled sync fast.
+func (r *Reconciler) runInitialSyncWork(ctx context.Context, work []func(context.Context) error) []error {
 	if len(work) == 0 {
-		return
+		return nil
 	}
 	workers := r.InitialSyncWorkers
 	if workers <= 0 {
@@ -562,20 +578,31 @@ func (r *Reconciler) runInitialSyncWork(ctx context.Context, work []func(context
 		workers = len(work)
 	}
 	if workers <= 1 {
+		var errs []error
 		for _, fn := range work {
-			fn(ctx)
+			if err := fn(ctx); err != nil {
+				errs = append(errs, err)
+			}
 		}
-		return
+		return errs
 	}
 
-	next := make(chan func(context.Context))
-	var wg sync.WaitGroup
+	next := make(chan func(context.Context) error)
+	var (
+		mu   sync.Mutex
+		errs []error
+		wg   sync.WaitGroup
+	)
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
 			for fn := range next {
-				fn(ctx)
+				if err := fn(ctx); err != nil {
+					mu.Lock()
+					errs = append(errs, err)
+					mu.Unlock()
+				}
 			}
 		}()
 	}
@@ -584,6 +611,7 @@ func (r *Reconciler) runInitialSyncWork(ctx context.Context, work []func(context
 	}
 	close(next)
 	wg.Wait()
+	return errs
 }
 
 // SetupWithManager wires up one controller per enabled config kind, each

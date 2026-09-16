@@ -34,9 +34,16 @@ import sys
 LATENCY_FIELDS = ("p50Ms", "p99Ms")
 
 # Cluster-side observations worth gating on, and what they mean.
+#
+# webhookWorkingSetBytes is a single sample taken once the replicas are
+# Ready again after the restart — so it is the loaded steady state, NOT the
+# transient peak during the cold start. The peak happens before readiness,
+# where nothing is sampling; pkg/engine's and internal/webhookserver's
+# -benchmem benchmarks are what measure that, and they are in
+# docs/operations/capacity.md.
 OBSERVED_GATED = {
     "webhookInitialSyncSeconds": "webhook-server cold start",
-    "webhookWorkingSetBytes": "webhook-server peak working set",
+    "webhookWorkingSetBytes": "webhook-server working set after the cold start",
 }
 
 # Below this, the measurement is too small for a ratio to mean anything: a
@@ -61,6 +68,30 @@ def noise_floor(key: str) -> float:
     if key.endswith("Seconds"):
         return NOISE_FLOOR_SECONDS
     return NOISE_FLOOR_MS
+
+
+def envelope_delta(previous: dict, current: dict) -> list[str]:
+    """Every input the two runs disagree on.
+
+    Targets and instances alone are not enough: the same fleet driven at 16
+    workers and at 60, or at a different QPS or strategy mix, is two
+    different measurements wearing the same field names. Comparing them
+    produces a confident answer to a question nobody asked.
+    """
+    prev_env = previous.get("envelope") or {
+        "targets": str(previous.get("targets")),
+        "instances": str(previous.get("instances")),
+    }
+    cur_env = current.get("envelope") or {
+        "targets": str(current.get("targets")),
+        "instances": str(current.get("instances")),
+    }
+    out = []
+    for key in sorted(set(prev_env) | set(cur_env)):
+        was, now = prev_env.get(key), cur_env.get(key)
+        if was != now:
+            out.append(f"{key} {was} -> {now}")
+    return out
 
 
 def render(report: dict, previous: dict | None) -> list[str]:
@@ -89,6 +120,13 @@ def render(report: dict, previous: dict | None) -> list[str]:
     lines.append("")
 
     observed = report.get("observed") or {}
+    if not observed:
+        lines.append(
+            "> :warning: **No cluster-side observations were collected.** Cold start and "
+            "working set are missing from this run, so neither is trended against the "
+            "previous one. See the job log for what `scale-observe.py` reported."
+        )
+        lines.append("")
     if observed:
         lines.append("| Observed on the cluster | Value |")
         lines.append("|---|---:|")
@@ -198,11 +236,12 @@ def main() -> int:
                 "comparison was made._"
             )
             lines.append("")
-        elif previous.get("targets") != current.get("targets") or previous.get("instances") != current.get("instances"):
+        elif envelope_delta(previous, current):
             lines.append(
-                f"_Previous run used a different envelope "
-                f"({previous.get('targets')}x{previous.get('instances')} against "
-                f"{current.get('targets')}x{current.get('instances')}); no comparison was made._"
+                "_Previous run used a different envelope ("
+                + ", ".join(envelope_delta(previous, current))
+                + "); no comparison was made. A run at a different parallelism, QPS or "
+                "strategy mix measures a different thing._"
             )
             lines.append("")
         else:

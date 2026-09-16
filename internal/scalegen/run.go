@@ -23,6 +23,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,11 +67,16 @@ type Options struct {
 
 // Stats is latency for one operation class (get or list).
 type Stats struct {
-	N       int
-	Errors  int
-	P50     time.Duration
-	P99     time.Duration
-	Max     time.Duration
+	N      int
+	Errors int
+	P50    time.Duration
+	P99    time.Duration
+	Max    time.Duration
+	// Elapsed is the wall-clock the whole class took, across all workers.
+	// Throughput is N/Elapsed and nothing else: dividing by a percentile
+	// would report per-worker latency dressed up as a rate, and would not
+	// move when the parallelism did.
+	Elapsed time.Duration
 	Samples []string
 }
 
@@ -84,6 +90,9 @@ type Result struct {
 	ListV2    Stats
 	GetV1     Stats
 	GetV2     Stats
+	// Envelope records every input that changes what the run measures, so
+	// two reports can be checked for comparability before being diffed.
+	Envelope map[string]string
 }
 
 func (o Options) withDefaults() Options {
@@ -126,6 +135,25 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
+// envelope is every knob that changes what a run measures. Targets and
+// instances are in the report on their own; these are the rest, and they
+// matter just as much — the same fleet driven at 16 workers and at 60 is
+// two different measurements wearing the same field names.
+func (o Options) envelope() map[string]string {
+	return map[string]string{
+		"targets":       strconv.Itoa(o.Targets),
+		"instances":     strconv.Itoa(o.Instances),
+		"parallel":      strconv.Itoa(o.Parallel),
+		"listRepeats":   strconv.Itoa(o.ListRepeats),
+		"getRepeats":    strconv.Itoa(o.GetRepeats),
+		"strategiesMin": strconv.Itoa(o.StrategiesMin),
+		"strategiesMax": strconv.Itoa(o.StrategiesMax),
+		"seed":          strconv.FormatInt(o.Seed, 10),
+		"qps":           strconv.FormatFloat(float64(o.QPS), 'f', -1, 32),
+		"burst":         strconv.Itoa(o.Burst),
+	}
+}
+
 func (o Options) logf(format string, args ...any) {
 	_, _ = fmt.Fprintf(o.Out, format+"\n", args...)
 }
@@ -145,7 +173,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		opts.logf("  %-24s %d", s.Name, cov[s.Name])
 	}
 	if opts.DryRun {
-		return &Result{Targets: len(targets), Instances: opts.Instances, Coverage: cov}, nil
+		return &Result{Targets: len(targets), Instances: opts.Instances, Coverage: cov, Envelope: opts.envelope()}, nil
 	}
 
 	cfg, err := restConfig(opts.Kubeconfig, opts.QPS, opts.Burst)
@@ -257,6 +285,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	res := &Result{
 		Targets: len(targets), Instances: opts.Instances, Coverage: cov,
 		Create: createDur, ListV1: listV1, ListV2: listV2, GetV1: getV1, GetV2: getV2,
+		Envelope: opts.envelope(),
 	}
 	printResult(opts.Out, res)
 	if listV1.Errors+listV2.Errors+getV1.Errors+getV2.Errors > 0 {
@@ -447,6 +476,7 @@ func benchGets(ctx context.Context, dyn dynamic.Interface, targets []Target, ns,
 }
 
 func collectTimed(ctx context.Context, parallel int, jobs []func() timed) Stats {
+	start := time.Now()
 	out := make([]timed, len(jobs))
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
@@ -465,7 +495,9 @@ func collectTimed(ctx context.Context, parallel int, jobs []func() timed) Stats 
 		}()
 	}
 	wg.Wait()
-	return summarize(out)
+	stats := summarize(out)
+	stats.Elapsed = time.Since(start)
+	return stats
 }
 
 func runErrPool(ctx context.Context, parallel int, jobs []func() error) error {

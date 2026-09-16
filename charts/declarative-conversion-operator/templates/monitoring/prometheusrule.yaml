@@ -119,7 +119,7 @@ spec:
           # any of this operator's own metrics notice anything. A healthy
           # controller drains its queue between bursts, so what matters is
           # a depth that stays up, not one that spikes.
-          expr: sum by (job, controller) (workqueue_depth) > {{ .Values.metrics.prometheusRule.workqueueDepthThreshold | default 10 }}
+          expr: sum by (job, controller) (workqueue_depth{app_kubernetes_io_name=~"declarative-conversion-operator|declarative-conversion-webhook-server"}) > {{ .Values.metrics.prometheusRule.workqueueDepthThreshold | default 10 }}
           for: {{ .Values.metrics.prometheusRule.workqueueBacklogFor | default "15m" }}
           labels:
             severity: warning
@@ -127,7 +127,7 @@ spec:
             summary: "Reconcile backlog on controller {{`{{ $labels.controller }}`}}"
             description: "job={{`{{ $labels.job }}`}}. This controller's workqueue has stayed above the backlog threshold, so config changes are converging slowly or not at all — expect stale phases and a lagging ConversionPropagated to follow. Check reconcile latency and error rate on the same dashboard row, then raise --max-concurrent-reconciles if the apiserver has the headroom."
         - alert: ControllerReconcileErrors
-          expr: sum by (job, controller) (rate(controller_runtime_reconcile_errors_total[5m])) > {{ .Values.metrics.prometheusRule.reconcileErrorRateThreshold | default 0.1 }}
+          expr: sum by (job, controller) (rate(controller_runtime_reconcile_errors_total{app_kubernetes_io_name=~"declarative-conversion-operator|declarative-conversion-webhook-server"}[5m])) > {{ .Values.metrics.prometheusRule.reconcileErrorRateThreshold | default 0.1 }}
           for: 15m
           labels:
             severity: warning
