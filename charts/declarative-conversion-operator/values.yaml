@@ -199,6 +199,17 @@ conversionWebhookServer:
     maxUnavailable: null
     maxSurge: null
     defaultTopologySpread: null
+  # How long a replica may take to compile every assigned plan before the
+  # kubelet gives up on it. A replica does not listen on any port until its
+  # registry is populated, so without a startupProbe the liveness probe's
+  # 3 x 10 s is the entire cold-start budget. periodSeconds x
+  # failureThreshold is the budget; the CRD's defaults give five minutes.
+  # See docs/operations/capacity.md for the measured cold start this is
+  # sized against. Leave a key null to take the CRD's default.
+  startupProbe:
+    enabled: null
+    periodSeconds: null
+    failureThreshold: null
   resources:
     requests:
       cpu: 50m

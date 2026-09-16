@@ -210,8 +210,12 @@ func TestInitialSync_PopulatesRegistryForEnabledKinds(t *testing.T) {
 	c := newFakeClient(xrd, xrdCfg, crd, crdCfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true, EnableCRDSupport: true}
 
-	if err := r.InitialSync(context.Background()); err != nil {
+	stats, err := r.InitialSync(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if stats.Targets != 2 {
+		t.Fatalf("expected the stats to report both configs, got %d", stats.Targets)
 	}
 	if _, ok := r.Registry.Get("xfoos.example.org"); !ok {
 		t.Fatalf("expected the XRD's config to have been synced")
@@ -231,8 +235,12 @@ func TestInitialSync_DisabledKindsAreSkipped(t *testing.T) {
 	c := newFakeClient(xrd, xrdCfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: false, EnableCRDSupport: false}
 
-	if err := r.InitialSync(context.Background()); err != nil {
+	stats, err := r.InitialSync(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if stats.Targets != 0 {
+		t.Fatalf("expected no targets to be walked, got %d", stats.Targets)
 	}
 	if r.Registry.Len() != 0 {
 		t.Fatalf("expected nothing to sync when both kinds are disabled, got len=%d", r.Registry.Len())

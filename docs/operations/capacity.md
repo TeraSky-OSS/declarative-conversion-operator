@@ -195,6 +195,90 @@ That is a 99% reduction in cached objects. Memory scales with that store, so
 the same ratio applies to RAM. Use a selector per tenant (or per team) when
 one cluster holds many configs but each webhook instance only serves a slice.
 
+## Cold start: how long before a replica can serve
+
+A replica does not answer conversions until its registry holds a compiled
+plan for every target assigned to it. That startup pass — `InitialSync` — is
+the whole of the cold start, and it is what a `startupProbe` has to be sized
+against.
+
+`BenchmarkInitialSync` in `internal/webhookserver/initialsync_bench_test.go`
+walks N targets, each a two-version XRD of 50 leaves per version with one
+`FieldRename` rule per leaf, and compiles them all:
+
+| Targets | Serial | Parallel (GOMAXPROCS=24) | Speed-up |
+|---|---:|---:|---:|
+| 10 | 12 ms | 8 ms | 1.5× |
+| 100 | 73 ms | 50 ms | 1.5× |
+| 1000 | 825 ms | 391 ms | 2.1× |
+
+Compilation is CPU-bound and independent per target, so `InitialSync` runs a
+bounded worker pool — `GOMAXPROCS` by default, `--initial-sync-workers` to
+override. The benchmark's client is a fake backed by one mutex, so its
+API-read term is more serialised than a real informer cache and the speed-up
+above is a floor, not a ceiling.
+
+**A thousand targets is under a second of compile.** The cold-start budget is
+therefore dominated not by this operator but by the informer cache sync in
+front of it: a replica watching every CRD and XRD on a large cluster spends
+most of its startup waiting for those LISTs. That is what
+`spec.cacheSelector` reduces, and it is why the default budget is minutes
+rather than seconds.
+
+### The startup probe
+
+`ConversionWebhookServer.spec.startupProbe` renders a `startupProbe` on the
+webhook-server container; `periodSeconds × failureThreshold` is the budget,
+defaulting to 5 × 60, i.e. five minutes.
+
+It is not optional decoration. The conversion endpoint does not listen until
+the registry is populated, so before that the liveness probe fails with
+connection-refused — and without a `startupProbe` the liveness probe's own
+3 × 10 s is the *entire* cold-start budget. A replica holding enough targets
+to exceed it would be killed and restarted forever, never finishing a sync.
+The kubelet suspends both other probes while a `startupProbe` is in flight,
+which is exactly the semantics wanted.
+
+Erring long is deliberate. An over-tight threshold turns a slow start into a
+crash loop; an over-long one only delays the restart of a pod that is not
+taking traffic anyway.
+
+### Measuring your own
+
+Two metrics and a log line, published once per replica at the moment it
+reports ready:
+
+```promql
+# Cold start, per replica
+dco_webhook_initial_sync_duration_seconds
+
+# Targets that cold start compiled
+dco_webhook_initial_sync_targets
+
+# Per-target cost for your schemas
+dco_webhook_initial_sync_duration_seconds / dco_webhook_initial_sync_targets
+```
+
+```
+registry synced, marking replica ready  serverName=default targets=812 workers=8 elapsed=1.412s
+```
+
+Set `failureThreshold` from the slowest cold start you observe, with room to
+spare. The plain HTTP endpoint (`/healthz`, `/readyz`, `/metrics`) comes up
+*before* the cache sync, so a replica that is still cold is visibly alive
+rather than indistinguishable from a hung process.
+
+### Reporting ready anyway after a timeout
+
+Considered and deliberately not implemented. A `--registry-ready-timeout`
+that let a replica join the Service with a partially-populated registry
+would have it answer ConversionReviews for targets it has not compiled yet
+with a failure — which the apiserver turns into a failed write on a
+resource that has nothing to do with the slow config. An unavailable replica
+degrades throughput; a half-loaded one corrupts the answer. The
+`startupProbe` is the supported lever, and the current fail-closed ordering
+stands.
+
 ## Registry copy-on-write at 100+ entries
 
 `Registry.Set` copies the whole map of pointers and atomically swaps it so

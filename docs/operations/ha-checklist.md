@@ -49,6 +49,24 @@ them leads to over-provisioning the wrong one.
       ```
 
       An empty result means every ready replica can serve that target.
+- [ ] **Know your cold-start budget.** A replica compiles every assigned plan
+      before it listens on any port, so until then both the liveness and
+      readiness probes fail with connection-refused. The `startupProbe`
+      (`conversionWebhookServer.startupProbe`, five minutes by default)
+      suspends the other two until the sync completes — without it, the
+      liveness probe's 3 × 10 s would be the whole budget and a replica
+      slower than that would crash-loop forever, never finishing a sync.
+      Check the measured figure after a scale-out and raise
+      `failureThreshold` if it is close:
+
+      ```promql
+      max(dco_webhook_initial_sync_duration_seconds)
+      ```
+
+      The compile itself is under a second for a thousand targets; what
+      makes a cold start slow is the informer cache sync in front of it,
+      which `spec.cacheSelector` is the lever for. See
+      [Capacity planning](capacity.md#cold-start-how-long-before-a-replica-can-serve).
 
 ## Rolling updates
 

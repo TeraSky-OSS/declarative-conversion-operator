@@ -64,6 +64,14 @@ spec:
   rollout:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- /* startupProbe is filtered the same way and for the same reason. */}}
+  {{- $sp := .Values.conversionWebhookServer.startupProbe | default dict }}
+  {{- $spSet := dict }}
+  {{- range $k, $v := $sp }}{{- if not (kindIs "invalid" $v) }}{{- $_ := set $spSet $k $v }}{{- end }}{{- end }}
+  {{- with $spSet }}
+  startupProbe:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- if .Values.conversionWebhookServer.podDisruptionBudget.enabled }}
   podDisruptionBudget:
     minAvailable: {{ .Values.conversionWebhookServer.podDisruptionBudget.minAvailable }}

@@ -32,6 +32,25 @@ tests:
       - isNull:
           path: spec.rollout.defaultTopologySpread
 
+  - it: emits no startupProbe block when nothing is set
+    asserts:
+      - isNull:
+          path: spec.startupProbe
+
+  - it: emits only the startupProbe keys that were set
+    set:
+      conversionWebhookServer.startupProbe.failureThreshold: 120
+    asserts:
+      - equal:
+          path: spec.startupProbe.failureThreshold
+          value: 120
+      # Same reasoning as rollout above: an explicit null here would
+      # override the CRD's default period with nothing.
+      - isNull:
+          path: spec.startupProbe.periodSeconds
+      - isNull:
+          path: spec.startupProbe.enabled
+
   - it: emits no extraArgs when nothing is set
     asserts:
       - isNull:

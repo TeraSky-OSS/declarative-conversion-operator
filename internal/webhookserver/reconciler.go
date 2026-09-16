@@ -19,7 +19,9 @@ package webhookserver
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -86,6 +88,15 @@ type Reconciler struct {
 	// fatal at startup on a cluster without Crossplane installed.
 	EnableXRDSupport bool
 	EnableCRDSupport bool
+	// InitialSyncWorkers bounds the parallelism of InitialSync's
+	// startup pass. Zero means DefaultInitialSyncWorkers(). It has no
+	// effect on the watch-driven path, whose concurrency is
+	// controller-runtime's to decide.
+	InitialSyncWorkers int
+
+	// bulkSync suppresses the per-target registry gauge refresh while a
+	// bulk pass (InitialSync) is running; see syncRegistryMetrics.
+	bulkSync atomic.Bool
 
 	mu             sync.Mutex
 	configToTarget map[string]string
@@ -154,10 +165,8 @@ func (r *Reconciler) reconcileOneXRD(ctx context.Context, name string) error {
 	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
 	if err != nil || assigned != r.ServerName {
 		r.Registry.Remove(cfg.Spec.TargetXRD.Name)
-		if r.Metrics != nil {
-			r.Metrics.SyncRegistryMetrics(r.Registry)
-		}
-		return nil
+		r.syncRegistryMetrics()
+		return nil //nolint:nilerr // an unresolvable assignment is a bad config, not a transient failure: retrying cannot fix it, and this replica genuinely does not serve the target either way
 	}
 
 	xrd := &unstructured.Unstructured{}
@@ -216,10 +225,8 @@ func (r *Reconciler) reconcileOneCRD(ctx context.Context, name string) error {
 	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
 	if err != nil || assigned != r.ServerName {
 		r.Registry.Remove(cfg.Spec.TargetCRD.Name)
-		if r.Metrics != nil {
-			r.Metrics.SyncRegistryMetrics(r.Registry)
-		}
-		return nil
+		r.syncRegistryMetrics()
+		return nil //nolint:nilerr // an unresolvable assignment is a bad config, not a transient failure: retrying cannot fix it, and this replica genuinely does not serve the target either way
 	}
 
 	var crd extv1.CustomResourceDefinition
@@ -275,8 +282,8 @@ func (r *Reconciler) compileAndRegister(targetName, hubVersion string, reviewVer
 	if r.Metrics != nil {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "success").Inc()
 		r.Metrics.RegistryLastReload.WithLabelValues(targetName).Set(float64(time.Now().Unix()))
-		r.Metrics.SyncRegistryMetrics(r.Registry)
 	}
+	r.syncRegistryMetrics()
 }
 
 func (r *Reconciler) rememberConfig(key, targetName string) {
@@ -292,10 +299,26 @@ func (r *Reconciler) forgetConfig(key string) {
 	r.mu.Unlock()
 	if ok {
 		r.Registry.Remove(targetName)
-		if r.Metrics != nil {
-			r.Metrics.SyncRegistryMetrics(r.Registry)
-		}
+		r.syncRegistryMetrics()
 	}
+}
+
+// syncRegistryMetrics refreshes the per-target registry gauges, unless a
+// bulk pass has asked to be excused.
+//
+// SyncRegistryMetrics rebuilds every series from a full snapshot, so it is
+// O(targets) per call. On the watch-driven path that is one call per
+// change and unnoticeable. During InitialSync it would be one call per
+// target — quadratic in the target count, on the cold start this phase
+// exists to shorten, and every intermediate state it publishes is
+// immediately superseded anyway. InitialSync therefore suppresses it and
+// syncs once at the end, which is the only state a scrape can observe: the
+// replica is not in the Service's endpoints until it reports ready.
+func (r *Reconciler) syncRegistryMetrics() {
+	if r.Metrics == nil || r.bulkSync.Load() {
+		return
+	}
+	r.Metrics.SyncRegistryMetrics(r.Registry)
 }
 
 func (r *Reconciler) recordFailure(targetName, reason, msg string) {
@@ -303,36 +326,136 @@ func (r *Reconciler) recordFailure(targetName, reason, msg string) {
 	if r.Metrics != nil {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "error").Inc()
 		r.Metrics.RegistryCompileErr.WithLabelValues(targetName, reason).Inc()
-		r.Metrics.SyncRegistryMetrics(r.Registry)
 	}
+	r.syncRegistryMetrics()
 }
 
-// InitialSync runs reconcileOneXRD/reconcileOneCRD synchronously for every
+// InitialSyncStats is what one InitialSync did: how many configs it walked
+// and how long that took. Returned rather than logged from inside so the
+// caller owns the log line and the metric — cmd/webhook-server is the only
+// place that knows whether this replica is about to become ready.
+type InitialSyncStats struct {
+	Targets  int
+	Duration time.Duration
+}
+
+// DefaultInitialSyncWorkers is the bound on InitialSync's worker pool when
+// InitialSyncWorkers is left at zero. Compilation is CPU-bound and
+// independent per target, so the useful parallelism is the number of cores
+// the container is actually allowed to use — GOMAXPROCS, which respects a
+// CPU limit when the runtime is configured for it. The pool is bounded
+// rather than unbounded because every worker holds a decoded schema and a
+// half-built plan; an unbounded fan-out across a thousand targets would
+// turn a CPU problem into a memory one at exactly the moment the replica
+// has the least headroom.
+func DefaultInitialSyncWorkers() int {
+	if n := runtime.GOMAXPROCS(0); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// InitialSync runs reconcileOneXRD/reconcileOneCRD for every
 // currently-existing config of whichever kinds are enabled, so the caller
 // can gate readiness on "cache synced AND every config has been through at
 // least one reconcile attempt" rather than cache-sync alone — closing the
 // classic gap where a pod is added to a Service's endpoints before its
 // registry reflects reality.
-func (r *Reconciler) InitialSync(ctx context.Context) error {
+//
+// The walk is parallel across a bounded pool (see InitialSyncWorkers),
+// because it is the whole of a replica's cold start: with hundreds of
+// targets, compiling them one at a time is the difference between a pod
+// that is ready in a second and one a startupProbe has to be told to wait
+// for. Parallelism is safe by construction — each call reads one config
+// and its target from the shared informer cache and writes one entry into
+// the copy-on-write Registry under its own lock, and the two calls never
+// share intermediate state. It is also *observationally* identical to the
+// serial walk: distinct configs write distinct registry keys, so no
+// ordering between them is visible in the result.
+func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) {
+	start := time.Now()
+	var stats InitialSyncStats
+
+	// Both lists are read before any compiling starts, so a slow compile
+	// cannot make the target count a moving target.
+	var work []func(context.Context)
 	if r.EnableXRDSupport {
 		var list teraskyv1alpha1.XRDConversionConfigList
 		if err := r.List(ctx, &list); err != nil {
-			return fmt.Errorf("listing XRDConversionConfigs for initial sync: %w", err)
+			return stats, fmt.Errorf("listing XRDConversionConfigs for initial sync: %w", err)
 		}
 		for _, cfg := range list.Items {
-			_ = r.reconcileOneXRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+			work = append(work, func(ctx context.Context) {
+				_ = r.reconcileOneXRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+			})
 		}
 	}
 	if r.EnableCRDSupport {
 		var list teraskyv1alpha1.CRDConversionConfigList
 		if err := r.List(ctx, &list); err != nil {
-			return fmt.Errorf("listing CRDConversionConfigs for initial sync: %w", err)
+			return stats, fmt.Errorf("listing CRDConversionConfigs for initial sync: %w", err)
 		}
 		for _, cfg := range list.Items {
-			_ = r.reconcileOneCRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+			work = append(work, func(ctx context.Context) {
+				_ = r.reconcileOneCRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+			})
 		}
 	}
-	return nil
+
+	stats.Targets = len(work)
+	r.bulkSync.Store(true)
+	r.runInitialSyncWork(ctx, work)
+	r.bulkSync.Store(false)
+	r.syncRegistryMetrics()
+
+	stats.Duration = time.Since(start)
+	if r.Metrics != nil {
+		r.Metrics.InitialSyncTargets.Set(float64(stats.Targets))
+		r.Metrics.InitialSyncDuration.Set(stats.Duration.Seconds())
+	}
+	return stats, nil
+}
+
+// runInitialSyncWork drains work across at most InitialSyncWorkers
+// goroutines. It deliberately does not stop early on a cancelled context:
+// each unit is already best-effort and bounded, and a partially-populated
+// registry that then reports ready is precisely the failure mode
+// InitialSync exists to prevent. Cancellation reaches the individual API
+// reads through ctx, which is what actually makes a cancelled sync fast.
+func (r *Reconciler) runInitialSyncWork(ctx context.Context, work []func(context.Context)) {
+	if len(work) == 0 {
+		return
+	}
+	workers := r.InitialSyncWorkers
+	if workers <= 0 {
+		workers = DefaultInitialSyncWorkers()
+	}
+	if workers > len(work) {
+		workers = len(work)
+	}
+	if workers <= 1 {
+		for _, fn := range work {
+			fn(ctx)
+		}
+		return
+	}
+
+	next := make(chan func(context.Context))
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for fn := range next {
+				fn(ctx)
+			}
+		}()
+	}
+	for _, fn := range work {
+		next <- fn
+	}
+	close(next)
+	wg.Wait()
 }
 
 // SetupWithManager wires up one controller per enabled config kind, each

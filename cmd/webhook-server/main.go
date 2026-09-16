@@ -49,6 +49,21 @@ import (
 
 var scheme = runtime.NewScheme()
 
+// effectiveInitialSyncWorkers reports the pool size InitialSync actually
+// used, so the cold-start log line states the parallelism that produced
+// the elapsed time next to it rather than the flag value, which is 0 by
+// default and says nothing.
+func effectiveInitialSyncWorkers(flagValue, targets int) int {
+	workers := flagValue
+	if workers <= 0 {
+		workers = webhookserver.DefaultInitialSyncWorkers()
+	}
+	if targets > 0 && workers > targets {
+		workers = targets
+	}
+	return workers
+}
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(teraskyv1alpha1.AddToScheme(scheme))
@@ -71,6 +86,7 @@ func main() {
 		maxRequestBytes  int64
 		requestTimeout   time.Duration
 		shutdownTimeout  time.Duration
+		initialSyncPar   int
 	)
 	flag.StringVar(&serverName, "webhook-server-name", "", "Name of the ConversionWebhookServer instance this replica belongs to (required).")
 	flag.StringVar(&tlsCertDir, "tls-cert-dir", "/tls", "Directory containing tls.crt and tls.key for the conversion endpoint.")
@@ -85,6 +101,7 @@ func main() {
 	flag.StringVar(&cacheSelector, "cache-label-selector", "", "JSON metav1.LabelSelector scoping this replica's informers. It covers the XRDConversionConfig and CRDConversionConfig objects AND the CustomResourceDefinition/CompositeResourceDefinition objects holding their schemas, so targets must carry the label too. Empty watches everything.")
 	flag.Int64Var(&maxRequestBytes, "max-request-bytes", webhookserver.DefaultMaxRequestBytes, "Maximum ConversionReview request body size. A larger body is answered with a ConversionReview failure rather than being read. Raise it if legitimate batches are being rejected.")
 	flag.DurationVar(&requestTimeout, "request-timeout", webhookserver.DefaultRequestTimeout, "Maximum time one ConversionReview may occupy a worker. Must stay below the apiserver's own fixed 30s conversion timeout plus this server's write timeout.")
+	flag.IntVar(&initialSyncPar, "initial-sync-workers", 0, "How many conversion plans this replica compiles concurrently during its cold start. 0 uses GOMAXPROCS. Compilation is CPU-bound and independent per target; the bound exists because each worker holds a decoded schema and a half-built plan. Lower it if the cold start is competing with something else for CPU; raising it above GOMAXPROCS buys nothing.")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", webhookserver.DefaultShutdownTimeout, "How long to let in-flight ConversionReviews finish after a termination signal. This value plus the pod's preStop sleep must stay below terminationGracePeriodSeconds, or the kubelet SIGKILLs mid-review and the apiserver reports a failed write.")
 	opts := ctrl.Options{Scheme: scheme}
 	zapOpts := zap.Options{Development: false}
@@ -112,6 +129,10 @@ func main() {
 	}
 	if shutdownTimeout <= 0 {
 		fmt.Fprintf(os.Stderr, "--shutdown-timeout must be positive, got %s\n", shutdownTimeout)
+		os.Exit(1)
+	}
+	if initialSyncPar < 0 {
+		fmt.Fprintf(os.Stderr, "--initial-sync-workers must not be negative, got %d\n", initialSyncPar)
 		os.Exit(1)
 	}
 
@@ -169,6 +190,7 @@ func main() {
 	reconciler := &webhookserver.Reconciler{
 		Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics,
 		EnableXRDSupport: enableXRDSupport, EnableCRDSupport: enableCRDSupport,
+		InitialSyncWorkers: initialSyncPar,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to set up registry reconciler")
@@ -187,20 +209,6 @@ func main() {
 	}
 
 	ctx := rootCtx
-
-	mgrErrCh := make(chan error, 1)
-	go func() { mgrErrCh <- mgr.Start(ctx) }()
-	go certReloader.Run(ctx)
-
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		logger.Error(errors.New("cache sync failed"), "unable to sync cache before initial registry population")
-		os.Exit(1)
-	}
-	if err := reconciler.InitialSync(ctx); err != nil {
-		logger.Error(err, "initial registry sync encountered errors; continuing, affected XRDs will retry via watch events")
-	}
-	server.SetReady(true)
-	logger.Info("registry synced, marking replica ready", "serverName", serverName)
 
 	// Both servers carry the same timeouts. The conversion endpoint needs
 	// them because it is in the apiserver's write path; the plain endpoint
@@ -228,17 +236,60 @@ func main() {
 		MaxHeaderBytes:    webhookserver.DefaultMaxHeaderBytes,
 	}
 
-	go func() {
-		logger.Info("serving conversion requests", "address", conversionAddr)
-		if err := conversionSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			logger.Error(err, "conversion server exited unexpectedly")
-			os.Exit(1)
-		}
-	}()
+	mgrErrCh := make(chan error, 1)
+	go func() { mgrErrCh <- mgr.Start(ctx) }()
+	go certReloader.Run(ctx)
+
+	// The plain endpoint comes up before the cache sync, not after it. It
+	// carries /healthz, /readyz and /metrics, and a cold start is the one
+	// time those are worth having: previously nothing listened until the
+	// registry was fully compiled, so a slow start was indistinguishable
+	// from a hung process — every probe got connection-refused and the
+	// only evidence was the pod log. /readyz stays false throughout (it
+	// reads the same gate SetReady flips below), so nothing joins the
+	// Service early; what changes is that the startupProbe now measures a
+	// live process rather than an absent listener.
 	go func() {
 		logger.Info("serving health/metrics/debug", "address", plainAddr)
 		if err := plainSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error(err, "plain HTTP server exited unexpectedly")
+			os.Exit(1)
+		}
+	}()
+
+	if !mgr.GetCache().WaitForCacheSync(ctx) {
+		logger.Error(errors.New("cache sync failed"), "unable to sync cache before initial registry population")
+		os.Exit(1)
+	}
+	// Readiness stays strictly behind a completed InitialSync. A
+	// "--registry-ready-timeout" that reported ready anyway after N
+	// seconds was considered and deliberately not added: a replica that
+	// joins the Service with a partially-populated registry answers
+	// ConversionReviews for the targets it has not compiled yet with a
+	// failure, and the apiserver turns that into a failed write on an
+	// unrelated resource. An unavailable replica degrades throughput; a
+	// half-loaded one corrupts the answer. The startupProbe is the
+	// supported lever for a slow cold start, sized from the budget this
+	// metric and log line publish. See docs/operations/capacity.md.
+	syncStats, err := reconciler.InitialSync(ctx)
+	if err != nil {
+		logger.Error(err, "initial registry sync encountered errors; continuing, affected XRDs will retry via watch events")
+	}
+	server.SetReady(true)
+	logger.Info("registry synced, marking replica ready",
+		"serverName", serverName,
+		"targets", syncStats.Targets,
+		"workers", effectiveInitialSyncWorkers(initialSyncPar, syncStats.Targets),
+		"elapsed", syncStats.Duration.String())
+
+	// The conversion endpoint, unlike the plain one, only starts once the
+	// registry is populated: it is on the apiserver's write path, and a
+	// listener that accepts before it can answer correctly is worse than
+	// no listener at all.
+	go func() {
+		logger.Info("serving conversion requests", "address", conversionAddr)
+		if err := conversionSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			logger.Error(err, "conversion server exited unexpectedly")
 			os.Exit(1)
 		}
 	}()

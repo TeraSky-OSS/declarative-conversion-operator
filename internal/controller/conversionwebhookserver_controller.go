@@ -432,6 +432,21 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		WithResources(applycorev1.ResourceRequirements().
 			WithRequests(server.Spec.Resources.Requests).
 			WithLimits(server.Spec.Resources.Limits))
+
+	// The startupProbe is what makes the cold start survivable. A replica
+	// does not listen on any port until its registry has compiled every
+	// assigned plan, so before that both other probes fail with
+	// connection-refused — and without a startupProbe the liveness probe's
+	// own 3 x 10 s becomes the entire cold-start budget. A replica holding
+	// enough targets to exceed it would be killed and restarted forever.
+	// While the startupProbe is in flight the kubelet runs neither of the
+	// other two, which is exactly the semantics wanted.
+	if server.Spec.StartupProbeEnabled() {
+		period, threshold := server.Spec.StartupProbeTiming()
+		container = container.WithStartupProbe(applycorev1.Probe().
+			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/healthz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
+			WithPeriodSeconds(period).WithFailureThreshold(threshold))
+	}
 	if pullPolicy != "" {
 		container = container.WithImagePullPolicy(pullPolicy)
 	}

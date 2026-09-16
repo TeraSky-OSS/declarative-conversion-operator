@@ -177,6 +177,13 @@ type ConversionWebhookServerSpec struct {
 	// +optional
 	CacheSelector *metav1.LabelSelector `json:"cacheSelector,omitempty"`
 
+	// StartupProbe bounds how long a replica may take to compile every
+	// assigned plan before the kubelet restarts it. See StartupProbeSpec:
+	// without one, the liveness probe's 30 s is the whole cold-start
+	// budget.
+	// +optional
+	StartupProbe *StartupProbeSpec `json:"startupProbe,omitempty"`
+
 	// Rollout controls how a replica leaves service during a rolling
 	// update or a node drain. The defaults are chosen so that a rollout
 	// causes zero failed conversions; see RolloutSpec.
@@ -259,6 +266,79 @@ type RolloutSpec struct {
 	// +optional
 	// +kubebuilder:default=true
 	DefaultTopologySpread *bool `json:"defaultTopologySpread,omitempty"`
+}
+
+// StartupProbeSpec configures the webhook-server's startupProbe: the
+// budget a replica gets to finish its cold start before the kubelet gives
+// up on it.
+//
+// A replica does not listen on any port until its registry has compiled
+// every assigned plan, so until then the liveness and readiness probes
+// both fail with connection-refused. Without a startupProbe the liveness
+// probe's own 3 × 10 s is therefore the entire cold-start budget, and a
+// replica holding enough targets to exceed it is killed and restarted
+// forever — the slower the cold start, the more certainly it never
+// finishes one. A startupProbe suspends the other two until it succeeds,
+// which is exactly the semantics wanted here.
+//
+// PeriodSeconds × FailureThreshold is the budget. The defaults give five
+// minutes, against a measured cold start of well under a second for a
+// thousand 50-leaf targets (see docs/operations/capacity.md) — the margin
+// is for informer cache sync on a large cluster, which dominates and is
+// not this operator's to control. Erring long is deliberate: an
+// over-tight threshold turns a slow start into a crash loop, while an
+// over-long one only delays the restart of a pod that is not taking
+// traffic anyway.
+type StartupProbeSpec struct {
+	// Enabled turns the startupProbe off. Only correct if something else
+	// guarantees the cold start fits inside the liveness budget.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=5
+	// +kubebuilder:validation:Minimum=1
+	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=1
+	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
+}
+
+// Startup-probe defaults, mirrored from the kubebuilder markers on
+// StartupProbeSpec so the controller can reason about the values an unset
+// field will actually produce rather than about the literal nil.
+const (
+	DefaultStartupProbePeriodSeconds    int32 = 5
+	DefaultStartupProbeFailureThreshold int32 = 60
+)
+
+// StartupProbeEnabled reports whether the webhook-server's startupProbe
+// should be rendered, with the same default the CRD carries.
+func (s *ConversionWebhookServerSpec) StartupProbeEnabled() bool {
+	if s.StartupProbe == nil || s.StartupProbe.Enabled == nil {
+		return true
+	}
+	return *s.StartupProbe.Enabled
+}
+
+// StartupProbeTiming returns the period and failure threshold the
+// startupProbe should be rendered with. Their product is the cold-start
+// budget.
+func (s *ConversionWebhookServerSpec) StartupProbeTiming() (periodSeconds, failureThreshold int32) {
+	periodSeconds, failureThreshold = DefaultStartupProbePeriodSeconds, DefaultStartupProbeFailureThreshold
+	if s.StartupProbe == nil {
+		return periodSeconds, failureThreshold
+	}
+	if s.StartupProbe.PeriodSeconds != nil {
+		periodSeconds = *s.StartupProbe.PeriodSeconds
+	}
+	if s.StartupProbe.FailureThreshold != nil {
+		failureThreshold = *s.StartupProbe.FailureThreshold
+	}
+	return periodSeconds, failureThreshold
 }
 
 // AssignedConfigRef is one XRDConversionConfig the resolver currently

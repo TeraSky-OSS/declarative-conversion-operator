@@ -41,6 +41,14 @@ type Metrics struct {
 	RegistryCompileErr  *prometheus.CounterVec
 	Ready               prometheus.Gauge
 
+	// InitialSyncDuration and InitialSyncTargets describe the cold start:
+	// how long this replica spent compiling every assigned plan before it
+	// reported ready, and how many targets that was. Both are written
+	// exactly once, immediately before SetReady(true) — they are the
+	// startup budget an operator sizes a startupProbe against.
+	InitialSyncDuration prometheus.Gauge
+	InitialSyncTargets  prometheus.Gauge
+
 	// gatherer is the registry metrics were registered on, used by
 	// PlainMux's /metrics handler. Must be the underlying Gatherer when
 	// reg is a WrapRegistererWith* wrapper (those implement Registerer only).
@@ -111,9 +119,17 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 			Name: "dco_webhook_ready",
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
 		}),
+		InitialSyncDuration: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dco_webhook_initial_sync_duration_seconds",
+			Help: "Wall-clock seconds this replica spent in the initial registry sync — every assigned plan compiled — before it reported ready. Written once, immediately before readiness; it reads 0 on a replica that is still cold, which dco_webhook_ready disambiguates.",
+		}),
+		InitialSyncTargets: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dco_webhook_initial_sync_targets",
+			Help: "Number of conversion configs this replica walked during its initial sync. Divide the duration by this to get the per-target cold-start cost for your schemas.",
+		}),
 		gatherer: gatherer,
 	}
-	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.ObjectDuration, m.BatchSize, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
+	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.ObjectDuration, m.BatchSize, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready, m.InitialSyncDuration, m.InitialSyncTargets)
 	return m
 }
 

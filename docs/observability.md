@@ -47,6 +47,8 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 | `dco_webhook_registry_reload_total` | Counter | `target`, `result` | Attempted (re)compiles |
 | `dco_webhook_registry_compile_errors_total` | Counter | `target`, `reason` | Compile failures that left a stale-or-absent plan in place |
 | `dco_webhook_ready` | Gauge | — | `1` after this replica's registry completed initial sync |
+| `dco_webhook_initial_sync_duration_seconds` | Gauge | — | Seconds this replica spent compiling every assigned plan before reporting ready. Written once; `0` on a replica still cold, which `dco_webhook_ready` disambiguates |
+| `dco_webhook_initial_sync_targets` | Gauge | — | Configs walked during that cold start. Divide the duration by it for a per-target cost |
 
 ### `direction` on the two latency histograms
 
@@ -190,6 +192,25 @@ count by (pod) (dco_webhook_registry_entry_loaded == 1)
 `ConversionWebhookServer.status.assignedConfigs` remains the cluster-level
 **desired** set computed by the shared resolver. Use it together with the
 per-pod gauges above — not as a substitute for them.
+
+### Cold start
+
+The plain endpoint (`/healthz`, `/readyz`, `/metrics`) listens *before* the
+informer cache syncs, so a replica that is still compiling is visibly alive
+rather than indistinguishable from a hung process. Its `/readyz` stays
+`503` and the conversion endpoint does not listen at all until the registry
+is populated.
+
+```promql
+# Slowest cold start in the fleet — size startupProbe.failureThreshold from this
+max(dco_webhook_initial_sync_duration_seconds)
+
+# Per-target cold-start cost for your schemas
+dco_webhook_initial_sync_duration_seconds / dco_webhook_initial_sync_targets
+```
+
+See [Capacity planning](operations/capacity.md#cold-start-how-long-before-a-replica-can-serve)
+for the measured curve and the reasoning behind the default budget.
 
 ---
 
