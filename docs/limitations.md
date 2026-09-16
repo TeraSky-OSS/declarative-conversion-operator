@@ -61,8 +61,18 @@ locally; `make bench-mem` reproduces the memory-per-target numbers (bytes
 retained per compiled plan, registry footprint, and the transient peak
 during initial sync); `make test-e2e-load` posts synthetic ConversionReview
 batches at a live webhook-server; `make test-e2e-scale` drives real Get/List
-through the apiserver conversion path against a generated CRD fleet (up to
-100×100).
+through the apiserver conversion path against a generated CRD fleet.
+
+**The envelope CI exercises unattended is 300 CRDs × 20 objects**, nightly,
+with the results published as an artifact and diffed against the previous
+run ([the nightly scale run](operations/capacity.md#the-nightly-scale-run)).
+That is below the 1000-CRD figure the phase proposal named, and
+deliberately so: a standard hosted runner is four shared vCPUs hosting a
+whole single-node control plane, and an aspirational number that always
+fails is worth less than a smaller one that always runs. The envelope is a
+workflow input so the ceiling can be raised on evidence. Anything above it
+— and the 100×1000 local figures on that page — is a workstation
+measurement, not a continuously-verified one.
 
 The published memory figures come from Go benchmarks, not from a loaded
 cluster: they measure the compiled registry and the cold-start transient

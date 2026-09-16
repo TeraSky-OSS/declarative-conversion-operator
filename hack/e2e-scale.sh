@@ -9,6 +9,11 @@
 #
 #   TARGETS=100 INSTANCES=100 PARALLEL=32 ./hack/e2e-scale.sh
 #
+# Set RESULT_JSON to write the run's measurements as JSON — latency
+# percentiles, throughput, plus the webhook-server's cold-start time and
+# peak working set read off the cluster. That is what the nightly Scale
+# workflow publishes as an artifact and diffs against the previous run.
+#
 # Prerequisites: docker, kind, kubectl, helm.
 # Set KEEP_CLUSTER=1 to skip teardown.
 set -euo pipefail
@@ -36,6 +41,7 @@ BURST="${BURST:-200}"
 RESET="${RESET:-1}"
 LIST_REPEATS="${LIST_REPEATS:-3}"
 GET_REPEATS="${GET_REPEATS:-1}"
+RESULT_JSON="${RESULT_JSON:-}"
 
 trap e2e_cleanup EXIT
 
@@ -43,6 +49,7 @@ require_cmd docker
 require_cmd kind
 require_cmd kubectl
 require_cmd helm
+require_cmd python3
 
 create_kind_cluster
 build_and_load_images
@@ -71,6 +78,46 @@ SCALE_ARGS=(
 if [ "${RESET}" != "0" ]; then
   SCALE_ARGS+=(--reset)
 fi
-go run "${REPO_ROOT}/cmd/scalegen" "${SCALE_ARGS[@]}"
+if [ -n "${RESULT_JSON}" ]; then
+  SCALE_ARGS+=(--result-json "${RESULT_JSON}")
+fi
+
+# The run's exit status is kept rather than propagated immediately: a run
+# that ended with get/list errors is exactly the run whose numbers and
+# cluster-side observations are worth keeping, and `set -e` would throw
+# them away.
+scale_rc=0
+go run "${REPO_ROOT}/cmd/scalegen" "${SCALE_ARGS[@]}" || scale_rc=$?
+
+if [ -n "${RESULT_JSON}" ] && [ -f "${RESULT_JSON}" ]; then
+  # Roll the webhook-server before measuring, and only after the traffic is
+  # finished so it cannot perturb the latency numbers.
+  #
+  # Without this the cold-start figure is meaningless: the replicas started
+  # before any of this fleet existed, so they synced zero targets in
+  # microseconds, and the artifact would trend that forever. Restarting them
+  # now makes them compile the whole generated fleet, which is the number
+  # this run is supposed to publish — and it makes the working set that
+  # follows a loaded steady state rather than an empty one.
+  dep="$(kubectl -n "${NAMESPACE}" get deploy \
+    -l app.kubernetes.io/name=declarative-conversion-webhook-server \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [ -n "${dep}" ]; then
+    log "Restarting ${dep} so the cold start is measured against the generated fleet"
+    kubectl -n "${NAMESPACE}" rollout restart "deployment/${dep}"
+    kubectl -n "${NAMESPACE}" rollout status "deployment/${dep}" --timeout=600s
+  else
+    echo "WARN: no webhook-server deployment found; cold start will not be measured" >&2
+  fi
+
+  log "Collecting cluster-side observations (cold start, peak working set)"
+  python3 "${REPO_ROOT}/hack/scale-observe.py" \
+    --result "${RESULT_JSON}" --namespace "${NAMESPACE}" || true
+fi
+
+if [ "${scale_rc}" -ne 0 ]; then
+  echo "FAIL: the scale run reported errors (exit ${scale_rc})"
+  exit "${scale_rc}"
+fi
 
 log "Scale e2e finished"

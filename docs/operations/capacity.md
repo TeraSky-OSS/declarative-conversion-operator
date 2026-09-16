@@ -459,8 +459,10 @@ apiserver Get/List (which invoke the conversion webhook) in parallel:
   lists the whole fleet. Re-apply with `--reset` if older CRDs lack the
   category.
 
-Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars — this is
-**not** in the CI e2e matrix; 100×100 and 100×1000 are local capacity runs.
+Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars. The
+100×100 and 100×1000 figures below are **local** capacity runs on a
+workstation; the envelope CI exercises unattended is the nightly one
+described under [The nightly scale run](#the-nightly-scale-run).
 
 ```console
 # smoke (default)
@@ -524,6 +526,78 @@ is the bottleneck, not conversion. Re-run with
 `TARGETS=100 INSTANCES=1000 PARALLEL=60 make test-e2e-scale` after changing
 the serving path.
 
+### The nightly scale run
+
+`.github/workflows/scale.yml` runs `hack/e2e-scale.sh` on a schedule at
+**300 CRDs × 20 objects** (6,000 objects, 900 served versions), publishes
+`scale-result.json` as a 90-day artifact, renders it into the job summary,
+and compares it against the previous successful run.
+
+That is where the numbers in this section come from from now on. A local
+run on a workstation is still the right tool for investigating a change;
+the scheduled run is what notices one nobody was looking for.
+
+**Regression detection is relative, never absolute.** Absolute timings on a
+hosted runner vary by a factor of two between runs for reasons that have
+nothing to do with this code, so a threshold tight enough to catch a real
+regression would fire constantly. The check fails when a measurement
+exceeds a configurable multiple — 1.5× by default — of the *same
+measurement in the previous run at the same envelope, under the same report
+schema*. Below a noise floor (20 ms, 1 s, 32 MiB depending on the unit) a
+ratio is not treated as a signal: a p50 that moved from 2 ms to 4 ms is a
+2× regression by arithmetic and scheduler noise by every other reading.
+
+Two things are checked absolutely rather than as a trend, because for them
+zero is the only acceptable value: any Get/List error, and a run that
+issued no requests at all — which would otherwise report zero of everything
+and look like a pass.
+
+A failure names the measurement. The summary's comparison table marks the
+offending row **REGRESSED** and the job log repeats it as
+`FAIL: listV1 p50: 90.0 ms -> 190.0 ms (2.11x, threshold 1.50x)`, so the
+first question ("what got slower?") is answered without downloading
+anything.
+
+The artifact carries more than latency: `hack/scale-observe.py` merges in
+the webhook-server's **cold-start time**
+(`dco_webhook_initial_sync_duration_seconds`) and **peak working set**
+(from the kubelet Summary API), so the two numbers this page's memory and
+cold-start sections are about are trended by the same job. Both are gated
+against the previous run alongside the latency figures.
+
+#### Why 300 CRDs, and not the 1000 the proposal asked for
+
+The target in [the phase proposal](../proposals/next-phases.md) is 1000
+CRDs, on the reasoning that it is roughly the CRD count of a mature
+Crossplane cluster. The scheduled run does not reach it yet, and
+configuring an aspirational number that always fails would be worse than
+publishing a smaller one that always runs.
+
+A standard GitHub-hosted runner is 4 vCPU and 16 GiB, hosting a
+single-node kind cluster whose apiserver, etcd, the operator and the
+webhook-server replicas all share those four cores. Two terms make CRD
+count, rather than object count, the binding constraint there:
+
+- **Applying CRDs is apiserver-CPU-bound, not IO-bound.** Each `CustomResourceDefinition`
+  write makes the apiserver rebuild parts of its aggregated OpenAPI
+  document and re-establish the resource's handler. On the workstation runs
+  below that cost is invisible next to object creation; on four shared
+  cores it is not.
+- **Every CRD is watched three times over** — by the apiserver, by the
+  operator, and by each webhook-server replica — and each replica also
+  holds its schemas resident. At 1000 CRDs that is the informer footprint
+  the [sizing section](#worked-example) puts at several hundred MiB per
+  replica, against a 16 GiB box already running a control plane.
+
+300 × 20 completes in roughly 25 minutes end to end and has headroom
+against the job's 75-minute timeout, which is what "reliable" has to mean
+for something that runs unattended. The envelope is a `workflow_dispatch`
+input precisely so the ceiling can be probed upward with evidence rather
+than moved by assertion: run it at 500, then 750, and raise the default
+when a higher number has run clean several times. A run at a different
+envelope publishes its numbers and skips the comparison, so probing cannot
+produce a false regression.
+
 | Flag / env | Default | Meaning |
 |---|---|---|
 | `--targets` / `TARGETS` | 4 | Number of CRDs (each with 3 versions) |
@@ -538,6 +612,7 @@ the serving path.
 | `--list-repeats` / `LIST_REPEATS` | 3 | List calls per CRD per spoke version |
 | `--get-repeats` / `GET_REPEATS` | 1 | Get calls per instance per spoke version |
 | `--dry-run` | false | Print strategy coverage only (no cluster) |
+| `--result-json` / `RESULT_JSON` | unset | Write the run's measurements as JSON, and merge in the cluster-side observations |
 
 Native CRDs are used on purpose: they exercise the same `pkg/engine` +
 webhook-server path as XRDs without requiring Crossplane. Times above include

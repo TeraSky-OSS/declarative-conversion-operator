@@ -1,0 +1,166 @@
+name: Scale
+
+# A scale target nobody runs is a scale target nobody trusts.
+# `make test-e2e-scale` reaches 100 CRDs x 100 objects and was explicitly
+# outside the CI matrix, so the first time it ran in anger would have been
+# the first time anyone discovered it had bit-rotted.
+#
+# This runs it nightly at a raised envelope, publishes the numbers as an
+# artifact and as a job summary, and fails on a large relative regression
+# against the previous run — never on an absolute timing, because absolute
+# timings on a hosted runner vary too much between runs to gate on.
+on:
+  schedule:
+    # 03:30 UTC daily: an hour after the soak, so the two never contend for
+    # the same runner pool or for the reviewer's attention.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "CRDs to generate (each with 3 versions)"
+        required: false
+        default: "300"
+      instances:
+        description: "Objects per CRD"
+        required: false
+        default: "20"
+      parallel:
+        description: "Concurrent Get/List workers"
+        required: false
+        default: "16"
+      threshold:
+        description: "Fail when a measurement exceeds this multiple of the previous run"
+        required: false
+        default: "1.5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scale-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scale:
+    name: Cluster-scale Get/List
+    runs-on: ubuntu-latest
+    # The envelope below takes roughly 25 minutes end to end on a standard
+    # runner: ~6 for the images and kind, ~12 to apply 300 CRDs and create
+    # 6000 objects, and the rest driving traffic. The timeout is generous
+    # against that, because a run killed at the boundary produces no
+    # artifact and therefore no trend.
+    timeout-minutes: 75
+    permissions:
+      # Reading the previous run's artifact through the API, for the
+      # regression comparison. Nothing here writes.
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # This job runs downloaded code (kind, helm, the chart). checkout
+          # persists the job token in .git/config by default, where that
+          # code can read it.
+          persist-credentials: false
+
+      - name: Install kind
+        run: |
+          sudo curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64
+          sudo chmod +x /usr/local/bin/kind
+
+      - name: Install kubectl
+        run: |
+          KUBECTL_VERSION="$(curl -sSL https://dl.k8s.io/release/stable.txt)"
+          sudo curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo chmod +x /usr/local/bin/kubectl
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Validated as decimals before they reach a shell. workflow_dispatch
+      # needs write access, so this is not a privilege boundary — it keeps a
+      # typo from becoming a confusing kubectl error twenty minutes in.
+      - name: Validate the envelope
+        env:
+          TARGETS: ${{ github.event.inputs.targets || '300' }}
+          INSTANCES: ${{ github.event.inputs.instances || '20' }}
+          PARALLEL: ${{ github.event.inputs.parallel || '16' }}
+          THRESHOLD: ${{ github.event.inputs.threshold || '1.5' }}
+        run: |
+          for pair in "targets:$TARGETS" "instances:$INSTANCES" "parallel:$PARALLEL"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            case "$value" in ''|*[!0-9]*) echo "$name must be a positive integer, got '$value'" >&2; exit 1 ;; esac
+            [ "$value" -gt 0 ] || { echo "$name must be greater than zero" >&2; exit 1; }
+          done
+          case "$THRESHOLD" in ''|*[!0-9.]*) echo "threshold must be a number, got '$THRESHOLD'" >&2; exit 1 ;; esac
+          python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) > 1.0 else 1)" "$THRESHOLD" \
+            || { echo "threshold must be greater than 1.0, got '$THRESHOLD'" >&2; exit 1; }
+
+      # The comparison baseline. `gh run list` finds the most recent
+      # successful run of this workflow on this branch and pulls its
+      # artifact; a first run, or one after a schema change, simply has no
+      # baseline and says so in the summary rather than failing.
+      - name: Fetch the previous run's result
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p /tmp/previous
+          run_id="$(gh run list --workflow scale.yml --branch "${GITHUB_REF_NAME}" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+          if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
+            echo "no previous successful run to compare against"
+            exit 0
+          fi
+          if gh run download "${run_id}" --name scale-result --dir /tmp/previous 2>/dev/null; then
+            echo "previous=/tmp/previous/scale-result.json" >> "$GITHUB_OUTPUT"
+            echo "comparing against run ${run_id}"
+          else
+            echo "run ${run_id} published no scale-result artifact"
+          fi
+
+      - name: Run the scale envelope
+        env:
+          TARGETS: ${{ github.event.inputs.targets || '300' }}
+          INSTANCES: ${{ github.event.inputs.instances || '20' }}
+          PARALLEL: ${{ github.event.inputs.parallel || '16' }}
+          RESULT_JSON: /tmp/scale-result.json
+        run: ./hack/e2e-scale.sh
+
+      # Published whether the run passed or failed, and before the
+      # regression check reads it: a failed run's numbers are the ones
+      # somebody needs, and they must not be lost to a non-zero exit.
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-result
+          path: /tmp/scale-result.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Render the summary and check for a regression
+        if: always()
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.previous }}
+          THRESHOLD: ${{ github.event.inputs.threshold || '1.5' }}
+        run: |
+          if [ ! -f /tmp/scale-result.json ]; then
+            echo "### :x: Scale run produced no result file" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "The run failed before scalegen wrote its measurements; see the job log." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          args=(--current /tmp/scale-result.json --threshold "$THRESHOLD" --summary "$GITHUB_STEP_SUMMARY")
+          if [ -n "${PREVIOUS}" ]; then
+            args+=(--previous "${PREVIOUS}")
+          fi
+          ./hack/scale-report.py "${args[@]}"

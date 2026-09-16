@@ -32,6 +32,7 @@ import (
 func main() {
 	opts := scalegen.Options{Out: os.Stdout}
 	var qps float64
+	var resultJSON string
 	flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "kubeconfig path (default: KUBECONFIG / in-cluster)")
 	flag.StringVar(&opts.Namespace, "namespace", "dco-scale", "namespace for generated CRs")
 	flag.IntVar(&opts.Targets, "targets", 4, "number of CRDs to generate (each has 3 versions)")
@@ -47,11 +48,22 @@ func main() {
 	flag.IntVar(&opts.Burst, "burst", 200, "client-go burst")
 	flag.BoolVar(&opts.Reset, "reset", false, "delete previously generated CRDs in this group before applying")
 	flag.BoolVar(&opts.DryRun, "dry-run", false, "print strategy coverage without talking to a cluster")
+	flag.StringVar(&resultJSON, "result-json", "", "write the run's measurements to this path as JSON, for publishing as an artifact and diffing against a previous run")
 	flag.Parse()
 	opts.QPS = float32(qps)
 
-	if _, err := scalegen.Run(context.Background(), opts); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "scalegen: %v\n", err)
+	res, runErr := scalegen.Run(context.Background(), opts)
+	// Written even when the run reported errors: a scale run that failed
+	// is exactly when the numbers are worth keeping, and a scheduled job
+	// with no artifact to look at is a job nobody can act on.
+	if resultJSON != "" && res != nil {
+		if err := scalegen.WriteReport(resultJSON, res.ToReport(time.Now())); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "scalegen: writing %s: %v\n", resultJSON, err)
+			os.Exit(1)
+		}
+	}
+	if runErr != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "scalegen: %v\n", runErr)
 		os.Exit(1)
 	}
 }

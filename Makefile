@@ -104,7 +104,7 @@ test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native
 	./hack/e2e-load.sh
 
 .PHONY: test-e2e-scale
-test-e2e-scale: ## Cluster-scale Get/List through the live conversion webhook (native CRDs). Configurable via TARGETS/INSTANCES/PARALLEL. See docs/operations/capacity.md.
+test-e2e-scale: ## Cluster-scale Get/List through the live conversion webhook (native CRDs). Configurable via TARGETS/INSTANCES/PARALLEL; set RESULT_JSON to write the measurements as JSON. Also runs nightly in CI. See docs/operations/capacity.md.
 	./hack/e2e-scale.sh
 
 ##@ Build
