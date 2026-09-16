@@ -143,7 +143,7 @@ runs:
     - name: Restore cached binary
       id: cache
       if: inputs.binary == '' && inputs.cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ steps.resolve.outputs.dir }}
         key: convctl-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.os }}-${{ steps.resolve.outputs.arch }}
