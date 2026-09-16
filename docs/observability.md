@@ -36,11 +36,11 @@ Emitted by each ConversionWebhookServer replica (dedicated registry in
 |---|---|---|---|
 | `dco_webhook_conversion_review_duration_seconds` | Histogram | `target`, `direction`, `result` | End-to-end ConversionReview latency |
 | `dco_webhook_conversion_review_requests_total` | Counter | `target`, `result` | ConversionReview requests handled |
-| `dco_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `result` | Individual objects converted inside reviews |
+| `dco_webhook_conversion_objects_total` | Counter | `target`, `from_version`, `to_version`, `route`, `result` | Individual objects converted inside reviews. `route` classifies the conversion by shape — `hub_to_spoke`, `spoke_to_hub`, `spoke_to_spoke`, `identity` — which the version pair cannot: which version is the hub is a per-target fact, not a label. It is a function of labels the series already carries, so it adds no cardinality |
 | `dco_webhook_conversion_object_duration_seconds` | Histogram | `target`, `direction`, `result` | Per-object conversion latency. Prefer this over the review histogram for anything sliced by `direction` — see the note below |
 | `dco_webhook_conversion_batch_size` | Histogram | `target` | Objects carried by one ConversionReview. The input for sizing `--max-request-bytes` |
 | `dco_webhook_conversion_panics_total` | Counter | `target` | Panics recovered while serving a review. Always a bug in this operator; alert on any increase |
-| `dco_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy |
+| `dco_webhook_lossy_conversion_total` | Counter | `target`, `direction` | Conversions on a direction statically known to be lossy. A spoke-to-spoke conversion passes through the hub and is counted once for each of its two hops that is lossy |
 | `dco_webhook_registry_size` | Gauge | — | Registry entries on this replica (includes error-only placeholders) |
 | `dco_webhook_registry_entry_loaded` | Gauge | `target` | `1` if this replica has a compiled, servable plan for that target; `0` if error-only |
 | `dco_webhook_registry_last_reload_timestamp_seconds` | Gauge | `target` | Unix time of last successful compile |
@@ -98,8 +98,16 @@ sum by (target) (rate(dco_webhook_conversion_review_requests_total{result="error
 /
 sum by (target) (rate(dco_webhook_conversion_review_requests_total[5m]))
 
-# Lossy conversion rate
+# Lossy conversion rate. A spoke-to-spoke conversion is two hops and is
+# counted once per lossy hop, so this can exceed the object rate.
 sum by (target, direction) (rate(dco_webhook_lossy_conversion_total[5m]))
+
+# Share of traffic by route shape. This is what says whether direct
+# spoke-to-spoke plans would be worth building for your cluster — see
+# Capacity planning for why the shipped answer is "no".
+sum by (route) (rate(dco_webhook_conversion_objects_total[5m]))
+  / ignoring(route) group_left
+sum(rate(dco_webhook_conversion_objects_total[5m]))
 ```
 
 ---

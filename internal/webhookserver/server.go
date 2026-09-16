@@ -363,10 +363,20 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 				attribute.String("from_version", fromVersion),
 				attribute.String("to_version", toVersion),
 			))
-		if fromVersion == entry.Router.Hub {
+		route := routeLabel(entry.Router.Hub, fromVersion, toVersion)
+		// A spoke-to-spoke conversion is two hops, and each one can be
+		// lossy on its own. Recording both is what makes
+		// dco_webhook_lossy_conversion_total add up for a cluster whose
+		// clients read at two different non-hub versions; the earlier
+		// hub-or-nothing test counted neither hop.
+		switch route {
+		case routeHubToSpoke:
 			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
-		} else if toVersion == entry.Router.Hub {
+		case routeSpokeToHub:
 			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
+		case routeSpokeToSpoke:
+			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
+			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
 		}
 
 		out, err := entry.Router.Convert(obj, fromVersion, toVersion)
@@ -379,7 +389,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			if s.Metrics != nil {
-				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "error").Inc()
+				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, route, "error").Inc()
 				s.Metrics.ObjectDuration.WithLabelValues(xrdName, objDirection, "error").Observe(time.Since(objStart).Seconds())
 			}
 			return
@@ -397,7 +407,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		}
 		converted = append(converted, runtime.RawExtension{Raw: b})
 		if s.Metrics != nil {
-			s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "success").Inc()
+			s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, route, "success").Inc()
 			s.Metrics.ObjectDuration.WithLabelValues(xrdName, objDirection, "success").Observe(time.Since(objStart).Seconds())
 		}
 	}
@@ -424,6 +434,37 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 
 	s.writeReview(w, review.Request.UID, converted, "")
 	s.observe(xrdName, direction, "success", start)
+}
+
+// Route classes for dco_webhook_conversion_objects_total. They exist
+// because the metric's from_version/to_version pair cannot answer "how
+// much of this traffic is spoke-to-spoke?" on its own: that needs to know
+// which version is the hub, which is a per-target fact and not a label.
+// Deriving it in PromQL would mean hard-coding every target's hub version
+// into the query, and re-editing the query whenever a hub is promoted.
+//
+// The label is a function of labels the series already carries, so it adds
+// no cardinality beyond the four constants below.
+const (
+	routeIdentity     = "identity"
+	routeHubToSpoke   = "hub_to_spoke"
+	routeSpokeToHub   = "spoke_to_hub"
+	routeSpokeToSpoke = "spoke_to_spoke"
+)
+
+// routeLabel classifies a conversion by its shape rather than by version
+// names.
+func routeLabel(hub, from, to string) string {
+	switch {
+	case from == to:
+		return routeIdentity
+	case from == hub:
+		return routeHubToSpoke
+	case to == hub:
+		return routeSpokeToHub
+	default:
+		return routeSpokeToSpoke
+	}
 }
 
 func (s *Server) recordLossy(entry *CompiledEntry, xrdName, direction, spokeVersion string) {

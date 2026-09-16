@@ -61,19 +61,79 @@ patch documents over many tiny ones.
 ## Spoke-to-spoke vs hub hop
 
 Router always goes spoke A → hub → spoke B (`O(N)` compiled plans, never
-pairwise). For a 1000-element `forEach` object:
+pairwise). Phase 9 measured that at a single worst-case point; Phase 16
+swept it, because one point cannot show whether the ratio holds
+(`BenchmarkRouter_SpokeToSpoke_vs_HubHop`, `forEach` over an array of
+volumes, medians of eight runs):
 
-| Route | ns/op | vs hub→spoke |
-|---|---:|---|
-| hub → spoke | 328k | 1.0× |
-| spoke → spoke | 765k | 2.3× |
+| `forEach` elements | hub → spoke | spoke → spoke | ratio | allocations |
+|---:|---:|---:|---:|---|
+| 0 | 0.4 µs | 1.0 µs | 2.4× | 5 → 10 |
+| 1 | 0.8 µs | 1.8 µs | 2.2× | 9 → 18 |
+| 5 | 2.2 µs | 4.9 µs | 2.2× | 21 → 42 |
+| 10 | 4.2 µs | 8.4 µs | 2.0× | 36 → 72 |
+| 100 | 38 µs | 79 µs | 2.1× | 306 → 612 |
+| 1000 | 378 µs | 705 µs | 1.9× | 3006 → 6012 |
 
-Spoke-to-spoke is essentially two Converts. Even in this worst-case array
-shape it stays under 1 ms. The apiserver stores at the hub version, so
-spoke-to-spoke is rare in production. Direct shortcut plans were evaluated
-and rejected: they would push compilation toward `O(N²)` spoke pairs for a
-gain that does not show up under the 1s p99 ConversionReview alert. Hub-and-
-spoke remains the only routing mode.
+**The ratio is a flat ~2× across four orders of magnitude**, and the
+allocation counts are exactly 2× at every size. That is the whole
+explanation: the second hop does the same work as the first over an object
+of the same shape. There is no fixed per-call overhead that a direct plan
+would remove and nothing that grows super-linearly — so the answer does not
+change with object size, and this measurement does not need repeating per
+workload.
+
+### Measuring how much spoke-to-spoke traffic you actually have
+
+`dco_webhook_conversion_objects_total` carries a `route` label —
+`hub_to_spoke`, `spoke_to_hub`, `spoke_to_spoke`, `identity`. It exists
+because `from_version` and `to_version` cannot answer the question on their
+own: deciding whether a pair is spoke-to-spoke needs to know which version
+is the hub, which is a per-target fact rather than a label, so a PromQL
+query would have to hard-code every target's hub version and be re-edited
+whenever a hub is promoted.
+
+```promql
+sum by (route) (rate(dco_webhook_conversion_objects_total[5m]))
+  / ignoring(route) group_left
+sum(rate(dco_webhook_conversion_objects_total[5m]))
+```
+
+The "Conversion route mix" panel on the shipped **Conversion stability**
+dashboard is this query. Spoke-to-spoke only happens when a client reads at
+one non-hub version an object that a client at a *different* non-hub
+version wrote — in practice, when a controller and a human prefer different
+legacy versions of the same resource at the same time.
+
+### The recommendation: no direct plans
+
+Direct shortcut plans were evaluated and rejected, twice now, and the
+reasoning is worth keeping rather than re-deriving:
+
+- **The saving is bounded by the numbers above.** A realistic composite
+  resource is in the 0–10 element rows, where the second hop costs
+  **0.6–4 µs**. A ConversionReview that reaches this webhook has already
+  paid apiserver admission, TLS and JSON round-trips measured in
+  milliseconds. Removing 4 µs from that is not observable, let alone under
+  the 1 s p99 ConversionReview alert.
+- **The cost is not bounded.** Pairwise plans are `O(N²)` in served
+  versions, and each plan is compiled, validated and retained per target —
+  the memory figures below are per plan. Lazy per-pair compilation would
+  keep the common case `O(N)` but would move plan compilation onto the
+  conversion path, where a first request for a new pair pays compilation
+  latency inside the apiserver's timeout.
+- **The correctness surface doubles.** A direct plan is a third mapping to
+  keep consistent with the two it shortcuts, and any disagreement between
+  them is a conversion that silently depends on which route it took.
+
+**Hub-and-spoke remains the only routing mode.** The seam for anyone
+revisiting this is `Router.Convert` in
+[`pkg/engine/convert.go`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/pkg/engine/convert.go):
+it is the single place that decides the route, it already has both plans in
+hand, and a per-pair cache keyed on `(from, to)` would slot in there without
+touching any strategy. Bring the `route` panel showing spoke-to-spoke as a
+material share of traffic, and an object size in the rows where 2× is worth
+paying for.
 
 ## Memory: the manager
 

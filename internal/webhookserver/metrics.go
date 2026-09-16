@@ -94,8 +94,8 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 		}, []string{"target", "result"}),
 		ObjectsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "dco_webhook_conversion_objects_total",
-			Help: "Total individual objects converted.",
-		}, []string{"target", "from_version", "to_version", "result"}),
+			Help: "Total individual objects converted. The route label classifies the conversion by shape — hub_to_spoke, spoke_to_hub, spoke_to_spoke, identity — which from_version and to_version cannot, because which version is the hub is a per-target fact and not a label.",
+		}, []string{"target", "from_version", "to_version", "route", "result"}),
 		ObjectDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "dco_webhook_conversion_object_duration_seconds",
 			Help: "Latency of converting one object, excluding request decode. Unlike the review-level histogram this metric's direction label is always exact, so it is the one to use for per-direction capacity planning.",
