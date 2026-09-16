@@ -291,11 +291,20 @@ func mergeSchema(dst, src *extv1.JSONSchemaProps, path FieldPath, branch int) er
 		}
 		dst.Type = src.Type
 	}
-	if src.Nullable != dst.Nullable && src.Nullable {
-		if dst.Type != "" && !dst.Nullable {
-			return fmt.Errorf("%s: sets nullable: true while the parent does not; the two cannot both hold", where)
-		}
-		dst.Nullable = true
+	// Nullability intersects rather than conflicting. "Must be a string"
+	// and "may be null" is not a contradiction — it is a string, because a
+	// value has to satisfy every branch. A branch that carries a type
+	// fully specifies both, so its nullability constrains the parent's; a
+	// branch that carries only `nullable: true` cannot widen a parent that
+	// does not permit null.
+	//
+	// Kubernetes rejects `nullable` on a junctor outright, so none of this
+	// is reachable through a CRD. It is reachable through NormalizeSchema,
+	// which is exported and takes hand-written offline schemas, and there
+	// the old behaviour was a hard error on a schema that has a perfectly
+	// well-defined meaning.
+	if src.Type != "" {
+		dst.Nullable = dst.Nullable && src.Nullable
 	}
 	if src.XPreserveUnknownFields != nil {
 		if dst.XPreserveUnknownFields != nil && *dst.XPreserveUnknownFields != *src.XPreserveUnknownFields {
@@ -314,6 +323,32 @@ func mergeSchema(dst, src *extv1.JSONSchemaProps, path FieldPath, branch int) er
 
 	if len(src.Required) > 0 {
 		dst.Required = unionRequired(dst.Required, src.Required)
+	}
+
+	// A union inside an allOf branch is carried up, not dropped. The
+	// engine reads oneOf/anyOf — unionConstruct decides whether a node is
+	// opaque, and branchMap maps the branches — so discarding one here
+	// would silently hand every later stage a different schema from the
+	// one the author wrote.
+	//
+	// Two unions cannot be merged into one list: `allOf: [{oneOf: A},
+	// {oneOf: B}]` means "satisfies A *and* satisfies B", which no single
+	// oneOf expresses. That is an error naming both, for the same reason
+	// two conflicting types are.
+	for _, u := range []struct {
+		name     string
+		dst, src *[]extv1.JSONSchemaProps
+	}{
+		{"oneOf", &dst.OneOf, &src.OneOf},
+		{"anyOf", &dst.AnyOf, &src.AnyOf},
+	} {
+		if len(*u.src) == 0 {
+			continue
+		}
+		if len(*u.dst) > 0 {
+			return fmt.Errorf("%s: declares %s while the parent already does; two unions over the same node cannot be merged into one, so express the combination as a single %s", where, u.name, u.name)
+		}
+		*u.dst = *u.src
 	}
 
 	if len(src.Properties) > 0 {
@@ -377,11 +412,11 @@ func intersectEnums(dst, src []extv1.JSON) ([]extv1.JSON, error) {
 	}
 	inSrc := make(map[string]bool, len(src))
 	for _, v := range src {
-		inSrc[string(v.Raw)] = true
+		inSrc[canonicalJSON(v.Raw)] = true
 	}
 	var out []extv1.JSON
 	for _, v := range dst {
-		if inSrc[string(v.Raw)] {
+		if inSrc[canonicalJSON(v.Raw)] {
 			out = append(out, v)
 		}
 	}
@@ -389,6 +424,29 @@ func intersectEnums(dst, src []extv1.JSON) ([]extv1.JSON, error) {
 		return nil, errors.New("its enum shares no value with the parent's, so no value could ever satisfy both")
 	}
 	return out, nil
+}
+
+// canonicalJSON reduces an enum entry to a form two equal JSON *values*
+// share, so the intersection is over values rather than over bytes. JSON
+// Schema enum equality is value equality: `{"a":1,"b":2}` and `{ "b": 2,
+// "a": 1 }` are the same member, and comparing Raw made them different —
+// turning an enum that intersects perfectly well into "shares no value
+// with the parent's", a hard compile error on a valid schema.
+//
+// encoding/json sorts object keys on the way out, which is what does the
+// work here; it also normalises whitespace and number formatting. Input
+// that does not parse is compared as its literal bytes, because the
+// alternative is claiming two unparseable values are equal.
+func canonicalJSON(raw []byte) string {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return string(raw)
+	}
+	return string(out)
 }
 
 func unionRequired(dst, src []string) []string {

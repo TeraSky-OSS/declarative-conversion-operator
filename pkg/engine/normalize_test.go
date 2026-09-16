@@ -287,3 +287,158 @@ func TestNormalize_PassthroughTreeSeesMergedFields(t *testing.T) {
 		t.Fatal("bucket is not in the known tree, so passthrough would treat it as an undeclared field and clobber a rule's output")
 	}
 }
+
+// A union inside an allOf branch survives the merge. The engine reads
+// oneOf/anyOf — unionConstruct decides opacity, branchMap maps the
+// branches — so dropping one during normalisation would hand every later
+// stage a schema the author did not write, silently.
+func TestNormalize_CarriesAUnionUpFromAnAllOfBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func() *extv1.JSONSchemaProps
+		got   func(*extv1.JSONSchemaProps) []extv1.JSONSchemaProps
+	}{
+		{
+			name: "oneOf",
+			build: func() *extv1.JSONSchemaProps {
+				s := unionParent()
+				s.AllOf = []extv1.JSONSchemaProps{{OneOf: []extv1.JSONSchemaProps{
+					{Required: []string{"s3"}}, {Required: []string{"gcs"}},
+				}}}
+				return s
+			},
+			got: func(s *extv1.JSONSchemaProps) []extv1.JSONSchemaProps { return s.OneOf },
+		},
+		{
+			name: "anyOf",
+			build: func() *extv1.JSONSchemaProps {
+				s := unionParent()
+				s.AllOf = []extv1.JSONSchemaProps{{AnyOf: []extv1.JSONSchemaProps{
+					{Required: []string{"s3"}}, {Required: []string{"gcs"}},
+				}}}
+				return s
+			},
+			got: func(s *extv1.JSONSchemaProps) []extv1.JSONSchemaProps { return s.AnyOf },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := NormalizeSchema(tc.build())
+			if err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if len(tc.got(out)) != 2 {
+				t.Fatalf("%s was discarded by the merge: got %d branches, want 2", tc.name, len(tc.got(out)))
+			}
+			if len(out.AllOf) != 0 {
+				t.Errorf("the allOf itself should be gone, got %d branches", len(out.AllOf))
+			}
+			// The whole point: the union is still visible to the code that
+			// reads it.
+			if c := unionConstruct(out); c != tc.name {
+				t.Errorf("unionConstruct = %q, want %q", c, tc.name)
+			}
+		})
+	}
+}
+
+// Two unions over one node cannot become one list: `allOf: [{oneOf: A}]`
+// on a parent that already has a oneOf means "satisfies both", which no
+// single oneOf expresses. An error naming it, for the same reason two
+// conflicting types are an error rather than last-writer-wins.
+func TestNormalize_RejectsTwoUnionsOverTheSameNode(t *testing.T) {
+	s := unionParent()
+	s.OneOf = []extv1.JSONSchemaProps{{Required: []string{"s3"}}}
+	s.AllOf = []extv1.JSONSchemaProps{{OneOf: []extv1.JSONSchemaProps{{Required: []string{"gcs"}}}}}
+	_, err := NormalizeSchema(s)
+	if err == nil {
+		t.Fatal("expected two unions over one node to be rejected")
+	}
+	if !strings.Contains(err.Error(), "oneOf") {
+		t.Errorf("the error should name the construct, got %v", err)
+	}
+}
+
+func unionParent() *extv1.JSONSchemaProps {
+	return &extv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]extv1.JSONSchemaProps{
+			"s3":  {Type: "object", Properties: map[string]extv1.JSONSchemaProps{"bucket": {Type: "string"}}},
+			"gcs": {Type: "object", Properties: map[string]extv1.JSONSchemaProps{"bucket": {Type: "string"}}},
+		},
+	}
+}
+
+// Enum intersection is over JSON *values*, not over the bytes they were
+// written as. JSON Schema treats `{"a":1,"b":2}` and `{ "b": 2, "a": 1 }`
+// as the same enum member; comparing Raw made them different and turned an
+// enum that intersects perfectly well into a hard compile error.
+func TestNormalize_IntersectsEnumsByValueNotByBytes(t *testing.T) {
+	for _, tc := range []struct{ name, parent, branch string }{
+		{"object key order", `{"a":1,"b":2}`, `{ "b": 2, "a": 1 }`},
+		{"whitespace", `["x","y"]`, `[ "x", "y" ]`},
+		{"number formatting", `1`, `1.0`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &extv1.JSONSchemaProps{
+				Enum:  []extv1.JSON{{Raw: []byte(tc.parent)}},
+				AllOf: []extv1.JSONSchemaProps{{Enum: []extv1.JSON{{Raw: []byte(tc.branch)}}}},
+			}
+			out, err := NormalizeSchema(s)
+			if err != nil {
+				t.Fatalf("two spellings of the same value must intersect: %v", err)
+			}
+			if len(out.Enum) != 1 {
+				t.Fatalf("enum = %v, want the one shared value", out.Enum)
+			}
+			// The parent's spelling is kept, so the surviving entry is a
+			// representative rather than a re-serialised approximation.
+			if string(out.Enum[0].Raw) != tc.parent {
+				t.Errorf("kept %q, want the parent's own entry %q", out.Enum[0].Raw, tc.parent)
+			}
+		})
+	}
+}
+
+// ...and genuinely disjoint enums are still a contradiction.
+func TestNormalize_StillRejectsDisjointEnums(t *testing.T) {
+	s := &extv1.JSONSchemaProps{
+		Enum:  []extv1.JSON{{Raw: []byte(`"a"`)}},
+		AllOf: []extv1.JSONSchemaProps{{Enum: []extv1.JSON{{Raw: []byte(`"b"`)}}}},
+	}
+	if _, err := NormalizeSchema(s); err == nil {
+		t.Fatal("expected disjoint enums to be rejected")
+	}
+}
+
+// Nullability intersects. "Must be a string" and "may be null" is not a
+// contradiction — it is a string, because a value has to satisfy every
+// branch. Kubernetes rejects nullable on a junctor outright, so this is
+// only reachable through the exported offline path, where the old
+// behaviour was a hard error on a well-defined schema.
+func TestNormalize_IntersectsNullability(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		parentNullable bool
+		branch         extv1.JSONSchemaProps
+		want           bool
+	}{
+		{"nullable branch cannot widen a non-nullable parent", false, extv1.JSONSchemaProps{Nullable: true}, false},
+		{"a typed non-nullable branch narrows a nullable parent", true, extv1.JSONSchemaProps{Type: "string"}, false},
+		{"both nullable stays nullable", true, extv1.JSONSchemaProps{Type: "string", Nullable: true}, true},
+		{"an untyped branch says nothing about nullability", true, extv1.JSONSchemaProps{Enum: []extv1.JSON{{Raw: []byte(`"a"`)}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &extv1.JSONSchemaProps{
+				Type: "string", Nullable: tc.parentNullable,
+				AllOf: []extv1.JSONSchemaProps{tc.branch},
+			}
+			out, err := NormalizeSchema(s)
+			if err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if out.Nullable != tc.want {
+				t.Errorf("Nullable = %v, want %v", out.Nullable, tc.want)
+			}
+		})
+	}
+}

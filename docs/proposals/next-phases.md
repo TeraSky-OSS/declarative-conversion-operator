@@ -1095,9 +1095,11 @@ apiserver's write path".
 >   int-or-string shape, which has no type of its own, still is.
 > - **Spoke-to-spoke closed as a documented no, which this section already
 >   expected.** What it did not expect is how flat the answer is. Swept from
->   0 to 1000 `forEach` elements, the second hop costs ~2× at *every* size —
->   exactly 2× the allocations and 2× the bytes — with no fixed overhead to
->   amortise and nothing super-linear. The ~2× belongs to that fixture,
+>   0 to 1000 `forEach` elements, the whole two-hop route costs ~2× a
+>   single hop at *every* size — exactly 2× the allocations and 2× the
+>   bytes — with no fixed overhead to amortise and nothing super-linear.
+>   That second hop therefore adds about one hop's worth, not two. The ~2×
+>   belongs to that fixture,
 >   whose two hops cost about the same; what does not is the identity under
 >   it, that a spoke-to-spoke conversion costs exactly `A→hub` plus
 >   `hub→B`, so a direct plan could save **at most one hop** whatever a hop
