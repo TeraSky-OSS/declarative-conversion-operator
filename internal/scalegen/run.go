@@ -151,6 +151,11 @@ func (o Options) envelope() map[string]string {
 		"seed":          strconv.FormatInt(o.Seed, 10),
 		"qps":           strconv.FormatFloat(float64(o.QPS), 'f', -1, 32),
 		"burst":         strconv.Itoa(o.Burst),
+		// Reset decides whether the fleet is created or merely confirmed:
+		// without it, Create short-circuits on AlreadyExists and createMs
+		// measures a no-op. Two runs that disagree on it are not
+		// comparable even when every other knob matches.
+		"reset": strconv.FormatBool(o.Reset),
 	}
 }
 

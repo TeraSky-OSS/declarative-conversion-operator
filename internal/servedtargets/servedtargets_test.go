@@ -17,8 +17,12 @@ limitations under the License.
 package servedtargets
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,15 +222,39 @@ func TestAggregate_RejectsRenewalsTooFarInTheFuture(t *testing.T) {
 // truncated prefix that reads as a complete answer — and every target
 // missing from it would look unservable, holding a handover open forever.
 func TestEncodeDecode_BoundsTheDecodedSizeToo(t *testing.T) {
-	// Maximally compressible: the same name over and over.
-	many := make([]string, 0, MaxDecodedBytes/8+16)
+	// Maximally compressible: one literal name over and over. A formatted
+	// index would make every name distinct, and the payload could then
+	// trip MaxEncodedBytes instead — passing this test without ever
+	// reaching the bound it is about.
+	const name = "targets.example.org"
+	many := make([]string, 0, MaxDecodedBytes/len(name)+16)
 	for i := 0; i < cap(many); i++ {
-		many = append(many, fmt.Sprintf("t%07d.example.org", i))
+		many = append(many, name)
 	}
+
+	// Stated rather than assumed: this payload is over the decoded bound
+	// and comfortably under the encoded one, so truncation can only be the
+	// decoded check firing.
+	joined := strings.Join(many, "\n")
+	if len(joined) <= MaxDecodedBytes {
+		t.Fatalf("fixture is %d bytes decoded, which does not exceed the %d-byte bound it is meant to test", len(joined), MaxDecodedBytes)
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write([]byte(joined)); err != nil {
+		t.Fatalf("compressing the fixture: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("closing the compressor: %v", err)
+	}
+	if compressed := len(base64.StdEncoding.EncodeToString(buf.Bytes())); compressed > MaxEncodedBytes {
+		t.Fatalf("fixture compresses to %d bytes, over the %d-byte encoded bound — it would trip the wrong check", compressed, MaxEncodedBytes)
+	}
+
 	value, truncated := Encode(many)
 	if !truncated {
-		t.Fatalf("a set of %d names decoding to more than %d bytes must be reported as truncated (compressed to %d bytes)",
-			len(many), MaxDecodedBytes, len(value))
+		t.Fatalf("a set of %d names decoding to %d bytes, over the %d-byte bound, must be reported as truncated",
+			len(many), len(joined), MaxDecodedBytes)
 	}
 	if value != "" {
 		t.Fatal("a truncated encode must return nothing")

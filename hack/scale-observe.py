@@ -169,7 +169,12 @@ def main() -> int:
     if pods:
         observed["webhookReplicas"] = float(len(pods))
 
-    if not observed:
+    # Judged on the two measurement classes, not on `observed` being
+    # non-empty: webhookReplicas is there whenever a Ready pod exists, so a
+    # run where every metrics scrape and every kubelet read failed would
+    # still look successful and publish an artifact with nothing in it for
+    # the nightly diff to compare.
+    if not sync_seconds and not peak_bytes:
         warn("collected no cluster observations at all; the run's cold-start and working-set numbers are missing")
         return 1
 

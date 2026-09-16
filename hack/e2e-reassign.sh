@@ -340,13 +340,30 @@ assert_handover_verified
 # Force a reconcile and re-read, rather than re-reading the status the poll
 # above already saw. An assignment that is unstable across reconciles —
 # flapping between pool members — would otherwise pass this.
+#
+# Clearing status.assignedWebhookServer first is what makes the re-read mean
+# anything. The field already holds the right answer, so polling it straight
+# after the annotation would return on the first read, before the reconcile
+# the annotation triggers had run. Blanked, it can only come back if a
+# reconcile actually completed — and the resolver recomputes the assignment
+# from the pool rather than reading the old value, so what comes back is a
+# fresh answer, not a remembered one. status.webhookURL is deliberately left
+# alone: the handover gate reads it, and clearing it would open the gate.
+kubectl patch crdconversionconfig "${CONFIG_NAME}" --subresource=status --type=merge \
+  -p '{"status":{"assignedWebhookServer":null}}' >/dev/null
 kubectl annotate crdconversionconfig "${CONFIG_NAME}" \
   "e2e.terasky.com/poke=$(date +%s)" --overwrite >/dev/null
-for _ in $(seq 1 30); do
+again=""
+for _ in $(seq 1 60); do
   again="$(kubectl get crdconversionconfig "${CONFIG_NAME}" -o jsonpath='{.status.assignedWebhookServer}')"
   [ -n "${again}" ] && break
   sleep 1
 done
+if [ -z "${again}" ]; then
+  echo "FAIL: the assignment was never recomputed after a forced reconcile"
+  kubectl get crdconversionconfig "${CONFIG_NAME}" -o yaml || true
+  exit 1
+fi
 assert_eq "${again}" "${settled}" "the sharded assignment is stable across a fresh reconcile"
 
 sleep "${gap}"
