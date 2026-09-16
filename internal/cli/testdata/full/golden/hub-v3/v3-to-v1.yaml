@@ -39,6 +39,10 @@ spec:
   replicaCount: 3
   size: Large
   storageGB: "500"
+  store:
+    backend: objectStore
+    objectStore:
+      name: logs
   teamTag: platform
   tierLimits:
   - limit: "1000"

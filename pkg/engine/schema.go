@@ -123,15 +123,39 @@ func flattenInto(schema *extv1.JSONSchemaProps, path FieldPath, requiredSet map[
 	if schema == nil {
 		return
 	}
-	if c := schemaConstruct(schema); c != "" {
-		kind, _ := classify(schema)
+	kind, opaque := classify(schema)
+
+	// $ref and allOf are gone by this point — NormalizeSchema removes
+	// them — so a node still carrying one has been reached without going
+	// through normalisation. Staying opaque is the loud answer to that:
+	// flattening it anyway would be *mostly* right and would silently
+	// drop whatever the construct contributed.
+	if c := unresolvedConstruct(schema); c != "" {
 		*out = append(*out, LeafField{
 			Path: path.Clone(), Kind: kind, Schema: schema, Opaque: true,
 			Construct: c, Required: requiredSet[lastSegment(path)],
 		})
 		return
 	}
-	kind, opaque := classify(schema)
+
+	if c := unionConstruct(schema); c != "" && !isStructuralNode(kind, opaque) {
+		// A union on a node the engine cannot otherwise classify — the
+		// int-or-string shape, `anyOf: [{type: integer}, {type:
+		// string}]`, which has no type of its own — stays one opaque
+		// leaf, named after the construct so the diagnostic says why.
+		//
+		// A union over *declared properties* does not. The apiserver
+		// requires every property named inside a junctor to also be
+		// declared outside it (structural_facts_test.go), so the fields
+		// of a union-typed object are right there in the same node.
+		// Hiding them behind the construct hid fields that were never
+		// ambiguous, and left `jsonPatch` as the only way to touch one.
+		*out = append(*out, LeafField{
+			Path: path.Clone(), Kind: kind, Schema: schema, Opaque: true,
+			Construct: c, Required: requiredSet[lastSegment(path)],
+		})
+		return
+	}
 
 	switch {
 	case opaque:
@@ -205,31 +229,44 @@ func classify(schema *extv1.JSONSchemaProps) (FieldKind, bool) {
 	}
 }
 
-// schemaConstruct reports a JSON Schema combinator the engine does not
-// flatten through. Empty means an ordinary typed node.
-//
-// `$ref` and `allOf` are absent from this list because NormalizeSchema
-// resolves and merges them before anything here sees a schema — a node
-// that still carries one has been reached without going through
-// normalisation, which is a programming error rather than a schema the
-// engine must be careful around. They are still reported so that path
-// produces a legible diagnostic instead of silently flattening a node
-// whose real field set has not been worked out.
-func schemaConstruct(schema *extv1.JSONSchemaProps) string {
+// isStructuralNode reports whether the engine can describe a node's shape
+// on its own terms — an object with declared properties, an array with a
+// known item schema, or a scalar. A node that is opaque or unclassifiable
+// is not structural, whatever constructs it carries.
+func isStructuralNode(kind FieldKind, opaque bool) bool {
+	return !opaque && kind != FieldKindUnknown
+}
+
+// unresolvedConstruct reports a combinator NormalizeSchema should already
+// have removed. Seeing one means a caller flattened a schema without
+// normalising it first.
+func unresolvedConstruct(schema *extv1.JSONSchemaProps) string {
 	if schema == nil {
 		return ""
 	}
 	if schema.Ref != nil && *schema.Ref != "" {
 		return "$ref"
 	}
+	if len(schema.AllOf) > 0 {
+		return "allOf"
+	}
+	return ""
+}
+
+// unionConstruct reports a combinator that expresses a choice between
+// shapes. Unlike the two above, these legitimately survive normalisation:
+// a union is not something that can be merged away, only reasoned about —
+// by branchMap, or by ordinary rules over the properties it selects
+// between.
+func unionConstruct(schema *extv1.JSONSchemaProps) string {
+	if schema == nil {
+		return ""
+	}
 	if len(schema.OneOf) > 0 {
 		return "oneOf"
 	}
 	if len(schema.AnyOf) > 0 {
 		return "anyOf"
-	}
-	if len(schema.AllOf) > 0 {
-		return "allOf"
 	}
 	return ""
 }

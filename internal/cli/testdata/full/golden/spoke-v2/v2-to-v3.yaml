@@ -35,6 +35,10 @@ spec:
   replicaCount: 2
   size: Medium
   storageGB: "256"
+  store:
+    backend: gcs
+    gcs:
+      bucket: archive
   tags:
     env: staging
     team: growth

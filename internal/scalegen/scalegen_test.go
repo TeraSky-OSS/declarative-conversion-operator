@@ -28,8 +28,8 @@ import (
 
 func TestSlotsCount(t *testing.T) {
 	t.Parallel()
-	if n := len(slots()); n != 29 {
-		t.Fatalf("catalog has %d strategies, want 29", n)
+	if n := len(slots()); n != 30 {
+		t.Fatalf("catalog has %d strategies, want 30", n)
 	}
 }
 
@@ -65,7 +65,7 @@ func TestAssign_TooSmallToCover(t *testing.T) {
 	t.Parallel()
 	_, _, err := Assign(1, 3, 10, 1)
 	if err == nil {
-		t.Fatal("expected error when 2*targets*max < 29")
+		t.Fatal("expected error when 2*targets*max < 30")
 	}
 }
 
@@ -75,8 +75,8 @@ func TestBuildTargets_AnalyzeAndConvert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cov := StrategyCoverage(targets); len(cov) != 29 {
-		t.Fatalf("coverage has %d strategies, want 29", len(cov))
+	if cov := StrategyCoverage(targets); len(cov) != 30 {
+		t.Fatalf("coverage has %d strategies, want 30", len(cov))
 	}
 	if got := targets[0].CRD.Spec.Names.Categories; len(got) != 1 || got[0] != Category {
 		t.Fatalf("CRD categories = %v, want [%s]", got, Category)
@@ -189,8 +189,8 @@ func TestRun_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Targets != 4 || len(res.Coverage) != 29 {
-		t.Fatalf("targets=%d coverage=%d, want 4 and 29", res.Targets, len(res.Coverage))
+	if res.Targets != 4 || len(res.Coverage) != 30 {
+		t.Fatalf("targets=%d coverage=%d, want 4 and 30", res.Targets, len(res.Coverage))
 	}
 }
 

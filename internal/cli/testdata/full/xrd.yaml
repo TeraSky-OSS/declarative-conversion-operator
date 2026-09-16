@@ -109,6 +109,28 @@ spec:
                     type: string
                 packed:
                   type: integer
+                # A union: every branch is a declared, optional property
+                # and the oneOf only says which one may be set. That is the
+                # only shape a CRD accepts — see
+                # pkg/engine/structural_facts_test.go.
+                store:
+                  type: object
+                  properties:
+                    backend:
+                      type: string
+                    s3:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                    gcs:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                  oneOf:
+                    - required: ["s3"]
+                    - required: ["gcs"]
             status:
               type: object
               properties:
@@ -223,6 +245,27 @@ spec:
                     type: string
                 packed:
                   type: integer
+                # Identical to the hub's, so the v2 spoke needs no rule for
+                # it — the leftover scan auto-covers a leaf with the same
+                # shape on both sides. Only v1 renames the branches.
+                store:
+                  type: object
+                  properties:
+                    backend:
+                      type: string
+                    s3:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                    gcs:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                  oneOf:
+                    - required: ["s3"]
+                    - required: ["gcs"]
             status:
               type: object
               properties:
@@ -311,6 +354,25 @@ spec:
                   type: integer
                 bitLow:
                   type: integer
+                # The same union, with both branches renamed (BranchMap).
+                store:
+                  type: object
+                  properties:
+                    backend:
+                      type: string
+                    objectStore:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                    googleStore:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                  oneOf:
+                    - required: ["objectStore"]
+                    - required: ["googleStore"]
                 # -- mirrors of fields owned by the v2 spoke's rules, kept
                 # identical in shape so they're auto-covered here without a
                 # rule --

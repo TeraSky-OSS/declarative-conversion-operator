@@ -1,9 +1,9 @@
 # Kitchen sink: every strategy at once
 
 [`internal/cli/testdata/full/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full)
-is the one place in the repository where **all 29 built-in strategies** are
+is the one place in the repository where **all 30 built-in strategies** are
 exercised against a single schema: a three-version XRD with a hub and two
-spokes, 30 rules covering all 29 strategies, plus sample objects at every
+spokes, 31 rules covering all 30 strategies, plus sample objects at every
 version. It is the
 fixture the CLI's own end-to-end tests and the e2e suite run against, so it is
 correct by construction — if a strategy's YAML shape ever changed, this fixture
@@ -19,7 +19,7 @@ gallery](index.md) instead — those are written to be read top to bottom.
 | File | What it is |
 |---|---|
 | [`xrd.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/xrd.yaml) | `xwidgets.example.org` with three served versions: `v3` (hub, `referenceable: true`), `v2`, and `v1`. |
-| [`config.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/config.yaml) | The `XRDConversionConfig`: 14 rules for the `v2` spoke, 16 for `v1`, 30 in total covering 29 distinct strategies. |
+| [`config.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/config.yaml) | The `XRDConversionConfig`: 14 rules for the `v2` spoke, 17 for `v1`, 31 in total covering 30 distinct strategies. |
 | [`config-norules.yaml`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/internal/cli/testdata/full/config-norules.yaml) | The same config with every rule stripped — the "new spoke version, no mapping yet" starting point for `convctl suggest`. |
 | [`samples/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/internal/cli/testdata/full/samples) | One object per version: `hub-v3.yaml`, `spoke-v2.yaml`, `spoke-v1.yaml`. |
 
@@ -58,7 +58,7 @@ Two more things the report shows that are easy to miss:
 - **Spoke-to-spoke paths match rules from both spokes.** `v1→v2` lists `v2:`
   and `v1:` rules because every spoke-to-spoke conversion routes through the
   hub — two conversions, exactly as in a live cluster.
-- **`RULE COVERAGE` lists all 30 rules with a match count.** A rule no sample
+- **`RULE COVERAGE` lists all 31 rules with a match count.** A rule no sample
   exercised would show up here as a warning, which `--strict` (or
   `--fail-on warn`) escalates to a failure.
 
@@ -88,7 +88,7 @@ Rule numbers are the indices the `convctl test` report prints
 | 12 | [`NumericScale`](../strategies/numeric-scale.md) | `spec.memoryMB` ⇄ `spec.memoryGB`, `factor: 1024` — lossy on the integer side |
 | 13 | [`ListJoin`](../strategies/list-join-split.md) | `spec.dnsServers` array ⇄ `spec.dnsServersCSV` string |
 
-### `v1` spoke — 16 rules
+### `v1` spoke — 17 rules
 
 | # | Strategy | What it maps here |
 |---|---|---|
@@ -108,6 +108,7 @@ Rule numbers are the indices the `convctl test` report prints
 | 13 | [`Duration`](../strategies/duration.md) | `spec.timeout` duration string ⇄ `spec.timeoutSeconds` — lossy on the string side |
 | 14 | [`MapKeyRename`](../strategies/map-key-rename.md) | `spec.extraLabels`: rename `app` ⇄ `application`, other keys pass through |
 | 15 | [`CEL`](../strategies/cel.md) | `spec.packed` ⇄ `spec.bitHigh` + `spec.bitLow` (always lossy) |
+| 16 | [`BranchMap`](../strategies/branch-map.md) | `spec.store` union: `s3`/`gcs` ⇄ `objectStore`/`googleStore`, discriminator remapped |
 
 ## What the schema is quietly demonstrating
 
@@ -117,7 +118,7 @@ alongside the config explains two things no single strategy page can:
 - **Fields with an identical shape on both sides need no rule.** Each spoke
   mirrors the fields *the other* spoke has rules for, keeping them
   byte-identical to the hub — and they are covered automatically. That is why
-  30 rules are enough for a schema this wide, and why fail-closed coverage
+  31 rules are enough for a schema this wide, and why fail-closed coverage
   isn't as noisy in practice as it sounds.
 - **`status` is not special.** `v2` maps `status.phase` → `status.state` with an
   ordinary `FieldRename`, while `v1` leaves `status` untouched because its shape
@@ -148,7 +149,7 @@ go run ./cmd/convctl suggest \
 ```
 
 And `convctl diff` between the two configs, which reads as "what did writing all
-30 rules actually accomplish?" — every field that stopped being uncovered, per
+31 rules actually accomplish?" — every field that stopped being uncovered, per
 spoke:
 
 ```console

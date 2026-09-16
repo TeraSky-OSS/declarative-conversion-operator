@@ -40,6 +40,10 @@ spec:
   schemaVersion: v2
   size: S
   storageSize: "64"
+  store:
+    backend: gcs
+    gcs:
+      bucket: archive
   tags:
     env: dev
     team: core

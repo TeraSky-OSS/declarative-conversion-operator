@@ -494,9 +494,9 @@ native-CRD kind cluster, then **generates** a fleet of CRDs and drives real
 apiserver Get/List (which invoke the conversion webhook) in parallel:
 
 - Each CRD has **3 versions** (`v3` storage hub, `v1`/`v2` spokes).
-- Each spoke conversion has **3–10 strategies**, assigned so **all 29**
+- Each spoke conversion has **3–10 strategies**, assigned so **all 30**
   built-in strategies appear across the fleet (`2 × targets × strategies-max`
-  must be ≥ 29).
+  must be ≥ 30).
 - Instances are created at `v1`; Get/List run at both spoke versions so the
   apiserver converts hub↔spoke on every call.
 - Every CRD is in the `widgets` category: `kubectl get widgets -n dco-scale`
@@ -527,7 +527,7 @@ go run ./cmd/scalegen --reset --targets 20 --instances 20 --parallel 16 --qps 10
 
 Same workstation as the microbenchmarks (Intel Core Ultra 9 285HX, WSL2,
 kindest/node v1.35, one control-plane node). 100 CRDs × 3 versions, 3–10
-strategies per spoke (all 29 used across the fleet), 100 instances created
+strategies per spoke (all 30 used across the fleet), 100 instances created
 at `v1`, then parallel Get/List at both spokes (`PARALLEL=32`, QPS 100 /
 burst 200). Create of 10,000 objects took **1m38s**. Zero conversion errors.
 
@@ -549,7 +549,7 @@ the serving path.
 
 Latest local run, same workstation and kind topology as 100×100 (Intel Core
 Ultra 9 285HX, WSL2, kindest/node v1.35, one control-plane node). 100 CRDs
-× 3 versions, 3–10 strategies per spoke (all 29 used across the fleet),
+× 3 versions, 3–10 strategies per spoke (all 30 used across the fleet),
 1000 instances created at `v1` (**100,000** objects), then parallel
 Get/List at both spokes (`PARALLEL=60`, QPS 100 / burst 200). Create of
 100,000 objects took **16m38s**. Zero conversion errors.

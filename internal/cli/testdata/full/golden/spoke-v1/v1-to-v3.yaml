@@ -37,6 +37,10 @@ spec:
   replicaCount: 1
   size: Small
   storageGB: "64"
+  store:
+    backend: gcs
+    gcs:
+      bucket: archive
   tags:
     env: dev
     team: core

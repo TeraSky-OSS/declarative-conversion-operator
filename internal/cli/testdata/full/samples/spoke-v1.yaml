@@ -50,6 +50,10 @@ spec:
     region: "eu-central-1"
   bitHigh: 3
   bitLow: 16
+  store:
+    backend: "googleStore"
+    googleStore:
+      name: "archive"
 status:
   phase: "Pending"
   observedGeneration: 1

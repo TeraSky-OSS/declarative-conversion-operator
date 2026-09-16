@@ -241,6 +241,11 @@ func resolveAndBuildOps(rules []Rule, hub, spoke *extv1.JSONSchemaProps, policy 
 			rr.HubPaths = []string{p.HubPath.String()}
 			rr.SpokePaths = []string{p.SpokePath.String()}
 
+		case BranchMapParams:
+			h2sOp, s2hOp, lossless, ruleDiags = resolveBranchMap(idx, p, hub, spoke, claimedHub, claimedSpoke, policy, depth)
+			rr.HubPaths = []string{p.HubPath.String()}
+			rr.SpokePaths = []string{p.SpokePath.String()}
+
 		case CELParams:
 			h2sOp, s2hOp, lossless, ruleDiags = resolveCEL(idx, p, hub, spoke, claimedHub, claimedSpoke)
 			for _, hp := range p.HubPaths {
@@ -943,6 +948,152 @@ func qualifyUnderItemsPath(itemsPath FieldPath, relative string) string {
 		return relative
 	}
 	return itemsPath.String() + "." + relative
+}
+
+// resolveBranchMap wires up a union-typed field's branch correspondence.
+//
+// Coverage is the part that takes the work. A union's branches are
+// ordinary declared properties — see structural_facts_test.go — so the
+// leftover scan sees every leaf inside every branch and would report all
+// of them uncovered. Each mapped branch is therefore claimed as a subtree
+// on both sides, and each branch pair's own rules are resolved against the
+// two branch schemas exactly the way ForEach resolves an array element's.
+//
+// A branch the rule does not name stays unclaimed, so it surfaces as an
+// ordinary uncovered-field error. That is deliberate and stronger than a
+// lossiness warning: a hub branch with no spoke counterpart is data the
+// conversion would silently drop, and the author has to say what happens
+// to it — map it, or Delete it with acknowledgeLossy.
+func resolveBranchMap(idx int, p BranchMapParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool, policy UnmappedFieldPolicy, depth int) (Op, Op, LosslessVerdict, []Diagnostic) {
+	var diags []Diagnostic
+	lossless := LosslessVerdict{HubToSpoke: true, SpokeToHub: true}
+
+	hubNode, err := lookupPath(hub, p.HubPath)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (BranchMap): hub: %v", idx, err))
+	}
+	spokeNode, err := lookupPath(spoke, p.SpokePath)
+	if err != nil {
+		diags = append(diags, errorf(idx, "rule %d (BranchMap): spoke: %v", idx, err))
+	}
+	if len(p.Branches) == 0 {
+		diags = append(diags, errorf(idx, "rule %d (BranchMap): at least one branch mapping is required", idx))
+	}
+	if hubNode == nil || spokeNode == nil {
+		return nil, nil, lossless, diags
+	}
+	if len(hubNode.Properties) == 0 || len(spokeNode.Properties) == 0 {
+		diags = append(diags, errorf(idx, "rule %d (BranchMap): both paths must resolve to objects with declared properties; a union whose branches are not declared properties is not something the engine can address", idx))
+		return nil, nil, lossless, diags
+	}
+
+	if p.Discriminator != "" {
+		for side, node := range map[string]*extv1.JSONSchemaProps{"hub": hubNode, "spoke": spokeNode} {
+			if _, ok := node.Properties[p.Discriminator]; !ok {
+				diags = append(diags, errorf(idx, "rule %d (BranchMap): discriminator %q is not a declared property of the %s union at %q", idx, p.Discriminator, side, p.HubPath))
+			}
+		}
+	}
+
+	var h2sBranches, s2hBranches []compiledBranch
+	hubSeen, spokeSeen := map[string]bool{}, map[string]bool{}
+	for bi, b := range p.Branches {
+		hubBranch, hubOK := hubNode.Properties[b.HubBranch]
+		if !hubOK {
+			diags = append(diags, errorf(idx, "rule %d (BranchMap): branch %d: %q is not a declared property of the hub union at %q", idx, bi, b.HubBranch, p.HubPath))
+		}
+		spokeBranch, spokeOK := spokeNode.Properties[b.SpokeBranch]
+		if !spokeOK {
+			diags = append(diags, errorf(idx, "rule %d (BranchMap): branch %d: %q is not a declared property of the spoke union at %q", idx, bi, b.SpokeBranch, p.SpokePath))
+		}
+
+		// Two hub branches mapping to one spoke branch is expressible and
+		// sometimes intended (three storage backends collapsing to one
+		// "objectStore"), but the collapse cannot be undone: coming back,
+		// the engine cannot tell which hub branch it started from. Same
+		// reasoning as EnumRemap's non-injective check, and the same
+		// verdict.
+		if spokeSeen[b.SpokeBranch] {
+			lossless.SpokeToHub = false
+		}
+		if hubSeen[b.HubBranch] {
+			lossless.HubToSpoke = false
+		}
+		// A collapsed branch is claimed once, by the first mapping that
+		// names it. The claim map records paths, not the rules that took
+		// them, so claiming the same subtree twice from inside one rule
+		// would report this rule as conflicting with itself — and make the
+		// collapse the paragraph above deliberately allows unexpressible.
+		firstHubUse, firstSpokeUse := !hubSeen[b.HubBranch], !spokeSeen[b.SpokeBranch]
+		hubSeen[b.HubBranch], spokeSeen[b.SpokeBranch] = true, true
+
+		if !hubOK || !spokeOK {
+			continue
+		}
+
+		hubBranchPath := append(p.HubPath.Clone(), b.HubBranch)
+		spokeBranchPath := append(p.SpokePath.Clone(), b.SpokeBranch)
+		if firstHubUse {
+			diags = append(diags, claimSubtree(claimedHub, hubBranchPath, &hubBranch, idx, "hub")...)
+		}
+		if firstSpokeUse {
+			diags = append(diags, claimSubtree(claimedSpoke, spokeBranchPath, &spokeBranch, idx, "spoke")...)
+		}
+
+		var nestedH2S, nestedS2H []Op
+		if len(b.Rules) > 0 {
+			var nestedDiags []Diagnostic
+			var nestedVerdict LosslessVerdict
+			nestedH2S, nestedS2H, _, nestedDiags, nestedVerdict = resolveAndBuildOps(b.Rules, &hubBranch, &spokeBranch, policy, depth)
+			for _, d := range nestedDiags {
+				d.Message = fmt.Sprintf("rule %d (BranchMap) branch %q: %s", idx, b.HubBranch, d.Message)
+				switch d.UncoveredSide {
+				case UncoveredSideHub:
+					d.FieldPath = qualifyUnderItemsPath(hubBranchPath, d.FieldPath)
+				case UncoveredSideSpoke:
+					d.FieldPath = qualifyUnderItemsPath(spokeBranchPath, d.FieldPath)
+				}
+				diags = append(diags, d)
+			}
+			lossless = lossless.and(nestedVerdict)
+		}
+
+		h2sBranches = append(h2sBranches, compiledBranch{
+			srcBranch: b.HubBranch, dstBranch: b.SpokeBranch,
+			dstDiscriminator: discriminatorValue(b.SpokeDiscriminatorValue, b.SpokeBranch),
+			nested:           nestedH2S,
+		})
+		s2hBranches = append(s2hBranches, compiledBranch{
+			srcBranch: b.SpokeBranch, dstBranch: b.HubBranch,
+			dstDiscriminator: discriminatorValue(b.HubDiscriminatorValue, b.HubBranch),
+			nested:           nestedS2H,
+		})
+	}
+
+	if p.Discriminator != "" {
+		if d := claim(claimedHub, append(p.HubPath.Clone(), p.Discriminator), idx, "hub"); d != nil {
+			diags = append(diags, *d)
+		}
+		if d := claim(claimedSpoke, append(p.SpokePath.Clone(), p.Discriminator), idx, "spoke"); d != nil {
+			diags = append(diags, *d)
+		}
+	}
+
+	if len(h2sBranches) == 0 {
+		return nil, nil, lossless, diags
+	}
+	h2s := branchMapOp{srcPath: p.HubPath, dstPath: p.SpokePath, discriminator: p.Discriminator, branches: h2sBranches}
+	s2h := branchMapOp{srcPath: p.SpokePath, dstPath: p.HubPath, discriminator: p.Discriminator, branches: s2hBranches}
+	return h2s, s2h, lossless, diags
+}
+
+// discriminatorValue defaults an unset discriminator value to the branch's
+// own property name, which is what it almost always is.
+func discriminatorValue(explicit, branch string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return branch
 }
 
 func resolveTypeCoerce(idx int, p TypeCoerceParams, hub, spoke *extv1.JSONSchemaProps, claimedHub, claimedSpoke map[string]bool) (Op, Op, LosslessVerdict, []Diagnostic) {

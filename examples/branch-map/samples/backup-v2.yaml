@@ -1,0 +1,12 @@
+apiVersion: example.org/v2
+kind: XBackup
+metadata:
+  name: nightly-hub
+spec:
+  schedule: "0 2 * * *"
+  destination:
+    provider: gcs
+    retentionDays: 30
+    gcs:
+      bucket: nightly-backups
+      location: europe-west4

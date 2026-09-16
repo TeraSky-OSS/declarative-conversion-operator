@@ -1077,7 +1077,7 @@ apiserver's write path".
   it yet.
 - **Strategy additions driven by real migrations only.** The `Strategy` enum and
   discriminated union were built for this; the discipline of "a real migration
-  asked for it" is what has kept 29 strategies coherent.
+  asked for it" is what has kept the strategy set coherent.
 
 ## Sequencing
 

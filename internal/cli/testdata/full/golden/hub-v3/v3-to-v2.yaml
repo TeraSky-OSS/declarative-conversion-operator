@@ -40,6 +40,10 @@ spec:
   schemaVersion: v2
   size: L
   storageSize: "500"
+  store:
+    backend: s3
+    s3:
+      bucket: logs
   tags:
     env: prod
     team: platform

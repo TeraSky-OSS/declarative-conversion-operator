@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename;CEL
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename;CEL;BranchMap
 type Strategy string
 
 const (
@@ -105,6 +105,7 @@ const (
 	StrategyDuration               Strategy = "Duration"
 	StrategyMapKeyRename           Strategy = "MapKeyRename"
 	StrategyCEL                    Strategy = "CEL"
+	StrategyBranchMap              Strategy = "BranchMap"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -301,6 +302,54 @@ type JSONPatchParams struct {
 	SpokeToHub []JSONPatchOp `json:"spokeToHub,omitempty"`
 	// +optional
 	LosslessOverride bool `json:"losslessOverride,omitempty"`
+}
+
+// BranchMapParams maps the branches of a union-typed field between hub and
+// spoke — the "one of s3, gcs or azure" shape mature platform APIs express
+// with `oneOf`.
+//
+// The active branch is identified by **which branch property is present**,
+// not by validating the object against each branch schema. That is what a
+// union looks like in a legal CRD: the apiserver requires every property
+// named inside a `oneOf` to also be declared in the parent's own
+// properties, so a union is a set of declared, mutually-exclusive fields.
+//
+// No branch set, or more than one, is a hard runtime conversion error.
+type BranchMapParams struct {
+	// HubPath and SpokePath are the union-typed OBJECT on each side, not a
+	// branch within it.
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	// Discriminator optionally names a sibling property whose value also
+	// identifies the branch (`backend: s3`). It is remapped alongside the
+	// branch, so hub and spoke may spell their branch names differently.
+	// It must be a declared property of both unions.
+	// +optional
+	Discriminator string `json:"discriminator,omitempty"`
+	// +kubebuilder:validation:MinItems=1
+	Branches []BranchMapping `json:"branches"`
+}
+
+// BranchMapping is one branch correspondence.
+type BranchMapping struct {
+	// HubBranch and SpokeBranch are property names inside the two union
+	// objects. Both must be declared properties.
+	HubBranch   string `json:"hubBranch"`
+	SpokeBranch string `json:"spokeBranch"`
+	// HubDiscriminatorValue and SpokeDiscriminatorValue are used only when
+	// BranchMapParams.Discriminator is set. Empty means the branch's own
+	// name, which is the common case.
+	// +optional
+	HubDiscriminatorValue string `json:"hubDiscriminatorValue,omitempty"`
+	// +optional
+	SpokeDiscriminatorValue string `json:"spokeDiscriminatorValue,omitempty"`
+	// Rules apply to this branch pair, with paths relative to the branch
+	// itself — `bucket`, not `spec.backup.s3.bucket`. The same scoping
+	// ForEach gives an array element.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Rules []ConversionRule `json:"rules,omitempty"`
 }
 
 // ForEachParams applies a nested rule list to each element of a hub array
@@ -508,6 +557,8 @@ type ConversionRule struct {
 	MapKeyRename *MapKeyRenameParams `json:"mapKeyRename,omitempty"`
 	// +optional
 	CEL *CELParams `json:"cel,omitempty"`
+	// +optional
+	BranchMap *BranchMapParams `json:"branchMap,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).

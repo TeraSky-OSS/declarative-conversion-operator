@@ -809,3 +809,103 @@ func (o splitListOp) apply(ctx *execContext) error {
 	}
 	return setValue(ctx.output, o.arrayPath, out)
 }
+
+// branchMapOp converts a union-typed field by finding which branch the
+// input has set, writing the corresponding branch on the other side, and
+// remapping the discriminator if there is one.
+//
+// It writes each branch at its own path rather than replacing the union
+// object wholesale. A union object can carry properties that are not
+// branches at all — a retention period alongside `s3` and `gcs` — and
+// those are covered by ordinary rules or by an identityOp. Setting the
+// whole object would make the result depend on rule order, which nothing
+// else in this engine does.
+type branchMapOp struct {
+	srcPath, dstPath FieldPath
+	discriminator    string
+	branches         []compiledBranch
+}
+
+// compiledBranch is one resolved branch correspondence in one direction.
+type compiledBranch struct {
+	srcBranch, dstBranch string
+	// srcDiscriminator is unused at runtime — the branch is identified by
+	// presence — but dstDiscriminator is what gets written when the rule
+	// declares a discriminator.
+	dstDiscriminator string
+	nested           []Op
+}
+
+func (o branchMapOp) apply(ctx *execContext) error {
+	v, ok := getValue(ctx.input, o.srcPath)
+	if !ok {
+		return nil
+	}
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("branchMap: value at %q is not an object", o.srcPath)
+	}
+
+	var present []compiledBranch
+	for _, b := range o.branches {
+		if _, has := obj[b.srcBranch]; has {
+			present = append(present, b)
+		}
+	}
+
+	// Fail closed, in both directions, for the same reason
+	// arrayToMapByKey does on a duplicate key: the alternative to an error
+	// is producing an object that is wrong in a way nothing downstream can
+	// see. A union with no branch set converts to a union with no branch
+	// set, which the destination's own oneOf then rejects at admission
+	// with a message about the schema rather than about the conversion.
+	switch len(present) {
+	case 1:
+	case 0:
+		return fmt.Errorf("branchMap: no branch is set at %q; exactly one of %v must be", o.srcPath, o.branchNames())
+	default:
+		var names []string
+		for _, b := range present {
+			names = append(names, b.srcBranch)
+		}
+		sort.Strings(names)
+		return fmt.Errorf("branchMap: branches %v are all set at %q; exactly one must be", names, o.srcPath)
+	}
+
+	active := present[0]
+	value := obj[active.srcBranch]
+	if len(active.nested) > 0 {
+		branchObj, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("branchMap: branch %q at %q is not an object, so its nested rules cannot apply", active.srcBranch, o.srcPath)
+		}
+		branchCtx := &execContext{input: branchObj, output: map[string]any{}}
+		for _, op := range active.nested {
+			if err := op.apply(branchCtx); err != nil {
+				return fmt.Errorf("branchMap: branch %q: %w", active.srcBranch, err)
+			}
+		}
+		value = branchCtx.output
+	} else {
+		value = deepCopyValue(value)
+	}
+
+	if err := setValue(ctx.output, append(o.dstPath.Clone(), active.dstBranch), value); err != nil {
+		return err
+	}
+	if o.discriminator != "" {
+		if err := setValue(ctx.output, append(o.dstPath.Clone(), o.discriminator), active.dstDiscriminator); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o branchMapOp) branchNames() []string {
+	names := make([]string, 0, len(o.branches))
+	for _, b := range o.branches {
+		names = append(names, b.srcBranch)
+	}
+	sort.Strings(names)
+	return names
+}

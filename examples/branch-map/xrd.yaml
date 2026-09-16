@@ -1,0 +1,93 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xbackups.example.org
+spec:
+  scope: Namespaced
+  group: example.org
+  names:
+    kind: XBackup
+    plural: xbackups
+  versions:
+    # Hub. spec.destination is a union: exactly one of s3 or gcs, with a
+    # `provider` discriminator naming which. Note that both branches are
+    # ordinary declared properties — the apiserver requires every property
+    # named inside a oneOf to also be declared in the parent's own
+    # `properties`, so the oneOf only says which of them may be set.
+    - name: v2
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                schedule:
+                  type: string
+                destination:
+                  type: object
+                  properties:
+                    provider:
+                      type: string
+                      enum: ["s3", "gcs"]
+                    retentionDays:
+                      type: integer
+                    s3:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                        region:
+                          type: string
+                    gcs:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                        location:
+                          type: string
+                  oneOf:
+                    - required: ["s3"]
+                    - required: ["gcs"]
+    # Spoke. Same union, different spelling on every axis: branch names,
+    # discriminator values, the field inside each branch, and the
+    # non-branch sibling next to them.
+    - name: v1
+      served: true
+      referenceable: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                schedule:
+                  type: string
+                destination:
+                  type: object
+                  properties:
+                    provider:
+                      type: string
+                      enum: ["aws", "google"]
+                    retention:
+                      type: integer
+                    awsBucket:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        region:
+                          type: string
+                    googleBucket:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        location:
+                          type: string
+                  oneOf:
+                    - required: ["awsBucket"]
+                    - required: ["googleBucket"]

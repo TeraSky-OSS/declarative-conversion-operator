@@ -286,8 +286,38 @@ func validateOneRule(r teraskyv1alpha1.ConversionRule, depth int) error {
 	if r.CEL != nil {
 		set++
 	}
+	if r.BranchMap != nil {
+		set++
+	}
 	if set != 1 {
 		return fmt.Errorf("strategy %q requires exactly one matching params field to be set, found %d", r.Strategy, set)
+	}
+	if r.BranchMap != nil {
+		if len(r.BranchMap.Branches) == 0 {
+			return errors.New("branchMap: at least one branch mapping is required")
+		}
+		// Structural checks only. Whether a branch names a declared
+		// property is a schema question, answered by the live-schema
+		// analysis stage that runs after this one; what is checkable here
+		// is that the document does not contradict itself.
+		//
+		// Note what is deliberately NOT rejected: two hub branches mapping
+		// to the same spoke branch. Collapsing several backends onto one
+		// is a legitimate migration — it is simply lossy coming back, and
+		// the engine says so, which is what acknowledgeLossy is for.
+		seenHub := map[string]bool{}
+		for i, b := range r.BranchMap.Branches {
+			if strings.TrimSpace(b.HubBranch) == "" || strings.TrimSpace(b.SpokeBranch) == "" {
+				return fmt.Errorf("branchMap: branch %d must name both hubBranch and spokeBranch", i)
+			}
+			if seenHub[b.HubBranch] {
+				return fmt.Errorf("branchMap: hubBranch %q is mapped twice; a branch has exactly one counterpart", b.HubBranch)
+			}
+			seenHub[b.HubBranch] = true
+			if err := validateRules(b.Rules, depth); err != nil {
+				return fmt.Errorf("branchMap: branch %d (%s): %w", i, b.HubBranch, err)
+			}
+		}
 	}
 	if r.ForEach != nil {
 		if depth >= engine.MaxForEachDepth {
