@@ -210,6 +210,15 @@
             "defaultTopologySpread": { "type": ["boolean", "null"] }
           }
         },
+        "sharding": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Automatic assignment across instances. Null leaves it off. Enable it on the default instance before enabling it anywhere else — admission rejects a pool the default instance is not in.",
+          "properties": {
+            "enabled": { "type": ["boolean", "null"] },
+            "weight": { "type": ["integer", "null"], "minimum": 1 }
+          }
+        },
         "startupProbe": {
           "type": "object",
           "additionalProperties": false,

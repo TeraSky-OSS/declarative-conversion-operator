@@ -3541,6 +3541,34 @@ spec:
                 type: object
               serviceAccountName:
                 type: string
+              sharding:
+                description: |-
+                  Sharding opts this instance into the pool that unpinned conversion
+                  configs are distributed across. See ShardingSpec.
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled adds this instance to the pool unpinned configs are
+                      distributed across.
+
+                      While the pool is non-empty it, not spec.default, is what serves
+                      unpinned configs — so the instance marked default must be a member
+                      of it. Admission enforces that, because otherwise enabling sharding
+                      on a second instance would silently drain every unpinned config off
+                      the default one. Enable it on the default instance first.
+                    type: boolean
+                  weight:
+                    default: 1
+                    description: |-
+                      Weight biases this instance's share of the pool, for a fleet whose
+                      instances are not the same size. An instance with weight 2 receives
+                      approximately twice the share of one with weight 1. Weights are
+                      relative, so scaling all of them changes nothing.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
               startupProbe:
                 description: |-
                   StartupProbe bounds how long a replica may take to compile every
@@ -3877,6 +3905,31 @@ spec:
               replicas:
                 format: int32
                 type: integer
+              reportingReplicas:
+                description: |-
+                  ReportingReplicas is how many live replica Leases fed
+                  ServedTargets. A value below ReadyReplicas means at least one
+                  ready replica has not published yet, and the intersection above is
+                  not yet a statement about the whole instance.
+                format: int32
+                type: integer
+              servedTargets:
+                description: |-
+                  ServedTargets is the set of target resources that EVERY live
+                  replica of this instance reports a compiled, servable plan for —
+                  an intersection, not a union, because a target one replica out of
+                  three can serve is a target that fails one request in three.
+
+                  Unlike AssignedConfigs, which is desired state computed by the
+                  shared resolver, this is reported by the replicas themselves: each
+                  publishes its own registry contents into a Lease, and this field
+                  is the aggregate. It is what makes a safe handover possible — the
+                  operator will not repoint a target at this instance until the
+                  instance says it can already serve it.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         type: object
     served: true

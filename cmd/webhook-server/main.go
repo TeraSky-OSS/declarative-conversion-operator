@@ -36,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -165,6 +166,7 @@ func main() {
 		os.Exit(1)
 	}
 	opts.Cache = cacheOpts
+	opts.Client = webhookserver.ClientOptions()
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), opts)
 	if err != nil {
 		logger.Error(err, "unable to start manager")
@@ -197,10 +199,29 @@ func main() {
 	// row covers the webhook-server as well as the manager.
 	metrics := webhookserver.NewMetrics(metricsReg, webhookserver.CombinedGatherer(metricsReg))
 
+	// The publisher writes this replica's servable target set into its own
+	// Lease, which is how the operator knows it is safe to move a target
+	// onto this instance. Its identity comes from the downward API; a
+	// Deployment that predates those env vars leaves it disabled, which
+	// costs nothing but the ability to receive moved work safely.
+	publisher := &webhookserver.TargetPublisher{
+		Client:     mgr.GetClient(),
+		Registry:   registry,
+		ServerName: serverName,
+		Namespace:  os.Getenv("POD_NAMESPACE"),
+		PodName:    os.Getenv("POD_NAME"),
+		PodUID:     types.UID(os.Getenv("POD_UID")),
+	}
+	publisher.Init()
+	if !publisher.Enabled() {
+		logger.Info("served-target publishing is disabled: POD_NAME/POD_NAMESPACE are not set. " +
+			"Conversions are unaffected, but the operator cannot verify this instance is ready before moving a target onto it")
+	}
+
 	reconciler := &webhookserver.Reconciler{
 		Client: mgr.GetClient(), ServerName: serverName, Registry: registry, Metrics: metrics,
 		EnableXRDSupport: enableXRDSupport, EnableCRDSupport: enableCRDSupport,
-		InitialSyncWorkers: initialSyncPar,
+		InitialSyncWorkers: initialSyncPar, Publisher: publisher,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to set up registry reconciler")
@@ -285,6 +306,14 @@ func main() {
 	if err != nil {
 		logger.Error(err, "initial registry sync encountered errors; continuing, affected XRDs will retry via watch events")
 	}
+	// Published synchronously, before readiness rather than after: a
+	// replica that is about to start taking traffic should already be
+	// eligible to receive moved work, not eligible one heartbeat later.
+	if err := publisher.Publish(ctx); err != nil {
+		logger.Error(err, "unable to publish served targets after the initial sync; retrying on the heartbeat")
+	}
+	go publisher.Run(ctx)
+
 	server.SetReady(true)
 	logger.Info("registry synced, marking replica ready",
 		"serverName", serverName,

@@ -40,11 +40,11 @@ Structurally identical to `XRDConversionConfig`'s status, with two native-CRD-sp
 - `status.observedCRDGeneration` instead of `status.observedXRDGeneration`.
 - The health condition is named `CRDHealthy` instead of `XRDHealthy` — `True` once the target `CustomResourceDefinition` exists and its own `Established` condition is `True`.
 
-Every other condition (`Validated`, `WebhookServerReady`, `Applied`, `Stale`, `DeletionBlocked`), phase, and `spokeStatuses` field behaves identically — see [XRDConversionConfig: Status](xrdconversionconfig.md#status) for the full reference.
+Every other condition (`Validated`, `WebhookServerReady`, `Applied`, `Stale`, `DeletionBlocked`, `HandoverReady`), phase, and `spokeStatuses` field behaves identically — see [XRDConversionConfig: Status](xrdconversionconfig.md#status) for the full reference.
 
 ## Ordering and safety
 
-The gate sequence, drift handling, and deletion safety are byte-for-byte the same algorithm as `XRDConversionConfig`'s (see [there](xrdconversionconfig.md#ordering-nothing-touches-the-xrd-until-every-gate-passes) for the full walkthrough) — validate, resolve the assigned `ConversionWebhookServer`, confirm the CRD is `Established`, confirm the server is ready, and only then server-side-apply `spec.conversion` onto the CRD. The same `conversion.terasky.com/allow-unsafe-delete` break-glass annotation applies for deleting a config while the CRD still serves more than one version.
+The gate sequence, drift handling, and deletion safety are byte-for-byte the same algorithm as `XRDConversionConfig`'s (see [there](xrdconversionconfig.md#ordering-nothing-touches-the-xrd-until-every-gate-passes) for the full walkthrough) — validate, resolve the assigned `ConversionWebhookServer`, confirm the CRD is `Established`, confirm the server is ready, confirm the destination can already serve the target if this is a [move between instances](conversionwebhookserver.md#moving-a-target-is-gated-not-immediate), and only then server-side-apply `spec.conversion` onto the CRD. The same `conversion.terasky.com/allow-unsafe-delete` break-glass annotation applies for deleting a config while the CRD still serves more than one version.
 
 Promoting a different version to be the hub works the same way too — including why it's safe under the default drift policy — see [XRDConversionConfig: Changing the hub version](xrdconversionconfig.md#changing-the-hub-version), reading `storage: true`/`storage: false` wherever it says `referenceable`.
 

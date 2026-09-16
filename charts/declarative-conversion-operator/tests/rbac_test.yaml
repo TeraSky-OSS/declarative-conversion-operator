@@ -66,3 +66,34 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  # The one write a webhook-server pod makes has to stay namespaced. A
+  # cluster-wide leases grant would let a conversion pod overwrite any
+  # leader-election Lease in the cluster, which is not a trade worth making
+  # for a bookkeeping annotation.
+  - it: grants webhook-server Lease access through a namespaced Role only
+    asserts:
+      - hasDocuments:
+          count: 4
+      - isKind:
+          of: Role
+        documentIndex: 2
+      - equal:
+          path: metadata.namespace
+          value: NAMESPACE
+        documentIndex: 2
+      - equal:
+          path: rules
+          value:
+            - apiGroups: ["coordination.k8s.io"]
+              resources: ["leases"]
+              verbs: ["get", "create", "update", "patch"]
+        documentIndex: 2
+      # The webhook-server ClusterRole must stay free of it.
+      - notMatchRegex:
+          path: rules[*].apiGroups[*]
+          pattern: coordination.k8s.io
+        documentIndex: 1
+      - isKind:
+          of: RoleBinding
+        documentIndex: 3

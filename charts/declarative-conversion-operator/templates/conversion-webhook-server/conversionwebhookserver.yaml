@@ -64,6 +64,18 @@ spec:
   rollout:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- /*
+    sharding, filtered the same way. Emitting an empty block would be
+    worse than emitting nothing: `sharding: {}` is the opt-in, since the
+    CRD defaults enabled to true inside the block.
+  */}}
+  {{- $sh := .Values.conversionWebhookServer.sharding | default dict }}
+  {{- $shSet := dict }}
+  {{- range $k, $v := $sh }}{{- if not (kindIs "invalid" $v) }}{{- $_ := set $shSet $k $v }}{{- end }}{{- end }}
+  {{- with $shSet }}
+  sharding:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- /* startupProbe is filtered the same way and for the same reason. */}}
   {{- $sp := .Values.conversionWebhookServer.startupProbe | default dict }}
   {{- $spSet := dict }}

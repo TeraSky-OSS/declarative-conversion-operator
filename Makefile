@@ -95,6 +95,10 @@ test-e2e-package-managed: ## Run the e2e test for the XRD conversion guard: repl
 test-e2e-soak: ## Roll the webhook-server repeatedly under sustained reads/writes and assert zero failed and zero WRONG conversions. Slow (~15 min); also runs nightly in CI.
 	./hack/e2e-soak.sh
 
+.PHONY: test-e2e-reassign
+test-e2e-reassign: ## Move a target between ConversionWebhookServers under sustained load and assert zero failed and zero WRONG conversions. Proves a rebalance never leaves a target unserved.
+	./hack/e2e-reassign.sh
+
 .PHONY: test-e2e-load
 test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
 	./hack/e2e-load.sh

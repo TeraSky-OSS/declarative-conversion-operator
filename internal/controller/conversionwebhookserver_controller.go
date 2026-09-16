@@ -26,6 +26,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -41,13 +42,17 @@ import (
 	applymetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	applypolicyv1 "k8s.io/client-go/applyconfigurations/policy/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/servedtargets"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 )
 
@@ -456,6 +461,23 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 	if pullPolicy != "" {
 		container = container.WithImagePullPolicy(pullPolicy)
 	}
+	// The replica's own identity, via the downward API. It uses this to
+	// publish the set of targets it can serve into a Lease of its own —
+	// the signal that lets a target be moved onto this instance without a
+	// window in which nothing serves it. POD_UID is what makes that Lease
+	// a child of the pod, so it is collected with it.
+	container = container.WithEnv(
+		applycorev1.EnvVar().WithName("POD_NAME").WithValueFrom(
+			applycorev1.EnvVarSource().WithFieldRef(
+				applycorev1.ObjectFieldSelector().WithFieldPath("metadata.name"))),
+		applycorev1.EnvVar().WithName("POD_NAMESPACE").WithValueFrom(
+			applycorev1.EnvVarSource().WithFieldRef(
+				applycorev1.ObjectFieldSelector().WithFieldPath("metadata.namespace"))),
+		applycorev1.EnvVar().WithName("POD_UID").WithValueFrom(
+			applycorev1.EnvVarSource().WithFieldRef(
+				applycorev1.ObjectFieldSelector().WithFieldPath("metadata.uid"))),
+	)
+
 	// GOMEMLIMIT, derived from the container's own memory limit.
 	//
 	// The steady registry footprint is small — about 18 KiB per target for
@@ -686,6 +708,21 @@ func (r *ConversionWebhookServerReconciler) updateStatus(ctx context.Context, se
 	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
 	server.Status.AssignedConfigs = refs
 
+	// AssignedConfigs is desired state; ServedTargets is reported state.
+	// Publishing both is the point — the gap between them is exactly the
+	// window in which a target has been given to this instance but the
+	// instance cannot serve it yet, which used to be invisible.
+	served, reporting, truncated, err := readServedTargets(ctx, r.Client, server, r.DefaultNamespace)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		// Publishing a partial intersection would read as a complete one.
+		served = nil
+	}
+	server.Status.ServedTargets = served
+	server.Status.ReportingReplicas = reporting
+
 	return nil
 }
 
@@ -755,8 +792,13 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 		if err := r.List(ctx, &allServers); err != nil {
 			return ctrl.Result{}, err
 		}
-		dependentXRD := assign.ConfigsAssignedTo(xrdConfigs.Items, allServers.Items, server.Name)
-		dependentCRD := assign.ConfigsAssignedTo(crdConfigs.Items, allServers.Items, server.Name)
+		// ServedBy, not IsAssignedTo. During a handover the resolver has
+		// already moved a config to another instance while this one is
+		// still the endpoint the target names and still answering every
+		// ConversionReview for it. Judging by assignment alone would let
+		// that instance be deleted out from under a live target.
+		dependentXRD := assign.ConfigsServedBy(xrdConfigs.Items, allServers.Items, server.Name)
+		dependentCRD := assign.ConfigsServedBy(crdConfigs.Items, allServers.Items, server.Name)
 		if len(dependentXRD)+len(dependentCRD) > 0 {
 			names := make([]string, 0, len(dependentXRD)+len(dependentCRD))
 			for _, c := range dependentXRD {
@@ -773,7 +815,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 			}
 			meta.SetStatusCondition(&server.Status.Conditions, metav1.Condition{
 				Type: teraskyv1alpha1.CWSConditionDeletionBlocked, Status: metav1.ConditionTrue, Reason: "ConfigsStillAssigned",
-				Message: fmt.Sprintf("%d config(s) still resolve to this instance%s: %v. Reassign them or add annotation %q=\"true\" to force.", len(dependentXRD)+len(dependentCRD), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation),
+				Message: fmt.Sprintf("%d config(s) still resolve to this instance, or still have their target pointed at it%s: %v. Reassign them or add annotation %q=\"true\" to force.", len(dependentXRD)+len(dependentCRD), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation),
 			})
 			if err := r.Status().Patch(ctx, server, client.MergeFrom(orig)); err != nil {
 				return ctrl.Result{}, err
@@ -800,9 +842,47 @@ func (r *ConversionWebhookServerReconciler) SetupWithManager(mgr ctrl.Manager) e
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Watches(&teraskyv1alpha1.XRDConversionConfig{}, handler.EnqueueRequestsFromMapFunc(enqueueAllServers(r.Client))).
+		// Replica Leases feed status.servedTargets. The predicate is
+		// load-bearing: every replica renews its Lease on a 30-second
+		// heartbeat, and reconciling a ConversionWebhookServer — which
+		// server-side-applies a Deployment, Service, HPA and PDB — that
+		// often, per replica, for a renewTime that changes nothing this
+		// controller reads, would be pure churn. Only a change to the
+		// reported target set is worth a reconcile.
+		Watches(&coordinationv1.Lease{},
+			handler.EnqueueRequestsFromMapFunc(enqueueServerForLease),
+			builder.WithPredicates(servedTargetsChanged())).
 		WithOptions(controllerOptions(r.MaxConcurrentReconciles)).
 		Named("conversionwebhookserver").
 		Complete(r)
+}
+
+// enqueueServerForLease maps a replica's served-target Lease back to the
+// instance it belongs to, which the Lease's own label names.
+func enqueueServerForLease(_ context.Context, obj client.Object) []reconcile.Request {
+	name := obj.GetLabels()[servedtargets.WebhookServerLabel]
+	if name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name}}}
+}
+
+// servedTargetsChanged passes a Lease event through only when it could
+// change this controller's answer: any create or delete, and an update
+// that alters the reported target set. A renewTime-only update is the
+// heartbeat and is deliberately dropped — staleness is evaluated when the
+// aggregate is next read, not on a timer here.
+func servedTargetsChanged() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+			old, updated := e.ObjectOld.GetAnnotations(), e.ObjectNew.GetAnnotations()
+			return old[servedtargets.TargetsAnnotation] != updated[servedtargets.TargetsAnnotation] ||
+				old[servedtargets.TruncatedAnnotation] != updated[servedtargets.TruncatedAnnotation]
+		},
+	}
 }
 
 func enqueueAllServers(c client.Client) func(ctx context.Context, obj client.Object) []reconcile.Request {

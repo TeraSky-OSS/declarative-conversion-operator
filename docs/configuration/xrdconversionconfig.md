@@ -198,6 +198,7 @@ status:
 | `Applied` | `spec.conversion` has been patched onto the XRD. |
 | `Stale` | The live XRD's schema no longer matches what was last validated (see below). |
 | `DeletionBlocked` | Deletion is being held by the finalizer — see [Deletion safety](#deletion-safety). |
+| `HandoverReady` | The `ConversionWebhookServer` this target was last moved to could already serve it at the moment it was repointed. Only present once a move has happened — a first apply has no previous server to hand over from. `False` (reason `HandoverPending`) means the move is deliberately being held and the target is still served by its current instance; reason `HandoverUnverified` means the destination publishes no served-target Leases, so the move went ahead as earlier releases did without being verified. It is not cleared once the move settles: it is the verdict on the last handover. See [Moving a target between instances](conversionwebhookserver.md#moving-a-target-is-gated-not-immediate). |
 | `ConversionPropagated` | Every CRD Crossplane generates from the target XRD carries the conversion webhook this operator applied. **`Applied` is not the same thing:** `Applied` means the operator patched the XRD; nothing converts anything until Crossplane re-renders `{plural}.{group}` with that webhook block. Reasons: `Propagated`, `NotPropagated`, `GeneratedCRDNotFound`, `CABundleStale`. Per-CRD detail is in `status.generatedCRDs`. |
 | `PackageManaged` | The target XRD is owned by a Crossplane `ConfigurationRevision`, i.e. it ships inside a `Configuration` package. The message names the revision. This is **informational, not a failure** — but it means the package establisher re-writes the XRD with a full `client.Update` on every revision reconcile, stripping `spec.conversion` and this operator's annotations each time. See [Limitations](../limitations.md) and the `dco_manager_conversion_reverts_total` metric. `False` (reason `NotPackageManaged`) means nothing re-establishes the XRD out of band. |
 
@@ -213,7 +214,8 @@ On every reconcile, in order:
 4. Resolve the target `ConversionWebhookServer` (explicit `webhookServerRef`, or whichever instance is `default`).
 5. Confirm the XRD is `Established`.
 6. Confirm the assigned `ConversionWebhookServer`'s Deployment is `Available`, its Service has ready endpoints, and its certificate is ready.
-7. **Only now**: server-side-apply `spec.conversion` onto the XRD, scoped to just that field (plus a couple of tracking annotations) — never a full-object apply, so this never fights any other owner of the XRD.
+7. If this reconcile would **move** the target to a different instance — a changed `webhookServerRef`, or a sharding rebalance — confirm the destination reports it can already serve the target. Until it does the move is held, the XRD keeps naming the current instance, and that instance keeps serving it. See [Moving a target between instances](conversionwebhookserver.md#moving-a-target-is-gated-not-immediate).
+8. **Only now**: server-side-apply `spec.conversion` onto the XRD, scoped to just that field (plus a couple of tracking annotations) — never a full-object apply, so this never fights any other owner of the XRD.
 
 ## Drift handling
 

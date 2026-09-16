@@ -69,7 +69,7 @@ func TestReconcileOneXRD_UpdatesRegistryReadinessMetrics(t *testing.T) {
 		EnableXRDSupport: true, Metrics: metrics,
 	}
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := testutil.ToFloat64(metrics.RegistrySize); got != 1 {

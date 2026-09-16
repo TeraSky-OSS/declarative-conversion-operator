@@ -266,8 +266,12 @@ count by (pod) (dco_webhook_registry_entry_loaded == 1)
 ```
 
 `ConversionWebhookServer.status.assignedConfigs` remains the cluster-level
-**desired** set computed by the shared resolver. Use it together with the
-per-pod gauges above — not as a substitute for them.
+**desired** set computed by the shared resolver. `status.servedTargets` is
+the reported counterpart — the intersection of what every live replica
+publishes it can serve, with `status.reportingReplicas` saying how many fed
+it. Between them they answer "is this instance ready for this target?"
+without a scrape; the per-pod gauges above remain the finer-grained answer
+to *which* replica is missing one.
 
 ### Cold start
 

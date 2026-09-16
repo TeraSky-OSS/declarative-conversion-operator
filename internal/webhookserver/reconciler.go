@@ -88,11 +88,23 @@ type Reconciler struct {
 	// fatal at startup on a cluster without Crossplane installed.
 	EnableXRDSupport bool
 	EnableCRDSupport bool
+	// Publisher, when set, is told after every registry change so this
+	// replica's served-target Lease keeps up with what it can actually
+	// serve. Nil in tests and on a replica with no downward-API
+	// identity; a nil Publisher's Notify is a no-op.
+	Publisher *TargetPublisher
 	// InitialSyncWorkers bounds the parallelism of InitialSync's
 	// startup pass. Zero means DefaultInitialSyncWorkers(). It has no
 	// effect on the watch-driven path, whose concurrency is
 	// controller-runtime's to decide.
 	InitialSyncWorkers int
+	// TargetDrainPeriod is how long this replica keeps serving a target
+	// after the target has stopped naming it. Zero means
+	// DefaultTargetDrainPeriod; see handover.go for why it is not zero.
+	TargetDrainPeriod time.Duration
+	// now is time.Now, overridden in tests that need to advance the drain
+	// clock without sleeping through it.
+	now func() time.Time
 
 	// bulkSync suppresses the per-target registry gauge refresh while a
 	// bulk pass (InitialSync) is running; see syncRegistryMetrics.
@@ -100,6 +112,9 @@ type Reconciler struct {
 
 	mu             sync.Mutex
 	configToTarget map[string]string
+	// drainUntil holds, per config key, the moment this replica may stop
+	// serving a target it no longer owns. See handover.go.
+	drainUntil map[string]time.Time
 }
 
 // reconcileXRD/reconcileCRD are the two watch-driven entry points,
@@ -107,17 +122,19 @@ type Reconciler struct {
 // controller-runtime has no notion of "one Reconciler, two watched
 // types" — each controller needs its own entry point).
 func (r *Reconciler) reconcileXRD(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {
-	if err := r.reconcileOneXRD(ctx, req.Name); err != nil {
+	requeue, err := r.reconcileOneXRD(ctx, req.Name)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
 func (r *Reconciler) reconcileCRD(ctx context.Context, req reconcile.Request) (ctrl.Result, error) {
-	if err := r.reconcileOneCRD(ctx, req.Name); err != nil {
+	requeue, err := r.reconcileOneCRD(ctx, req.Name)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
 func (r *Reconciler) ensureConfigToTarget() {
@@ -125,6 +142,71 @@ func (r *Reconciler) ensureConfigToTarget() {
 	if r.configToTarget == nil {
 		r.configToTarget = map[string]string{}
 	}
+	if r.drainUntil == nil {
+		r.drainUntil = map[string]time.Time{}
+	}
+	r.mu.Unlock()
+}
+
+// timeNow is time.Now unless a test has overridden it.
+func (r *Reconciler) timeNow() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+// drainRemaining decides whether this replica may drop its plan for a
+// target that no longer names it, and how long to wait if not.
+//
+// See handover.go: the apiserver refreshes a CRD's conversion
+// configuration asynchronously after the write that changed it, so for a
+// short window after the operator repoints a target the apiserver is still
+// calling this replica. Dropping the plan the instant the object changes
+// answers those calls with a 503, which the apiserver reports as a failed
+// read or write on a resource that was merely being rebalanced.
+//
+// Returns 0 when the drain has elapsed (or there is nothing to drain), and
+// the remaining time otherwise, which the caller turns into a requeue.
+func (r *Reconciler) drainRemaining(key, targetName string) time.Duration {
+	period := r.TargetDrainPeriod
+	if period == 0 {
+		period = DefaultTargetDrainPeriod
+	}
+	if period < 0 {
+		return 0
+	}
+	// Nothing to protect: this replica has no plan for the target, so
+	// there is no window in which it could answer wrongly. Requeueing for
+	// thirty seconds to remove something that is not there would be pure
+	// churn — and on a replica that serves none of a large fleet, it
+	// would be that churn once per config.
+	if _, held := r.Registry.Get(targetName); !held {
+		r.cancelDrain(key)
+		return 0
+	}
+	now := r.timeNow()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	deadline, started := r.drainUntil[key]
+	if !started {
+		r.drainUntil[key] = now.Add(period)
+		return period
+	}
+	if remaining := deadline.Sub(now); remaining > 0 {
+		return remaining
+	}
+	delete(r.drainUntil, key)
+	return 0
+}
+
+// cancelDrain forgets a pending removal, called whenever the target turns
+// out to still be this replica's after all — a rebalance that reverted, or
+// a move that was abandoned.
+func (r *Reconciler) cancelDrain(key string) {
+	r.mu.Lock()
+	delete(r.drainUntil, key)
 	r.mu.Unlock()
 }
 
@@ -139,7 +221,7 @@ func configKey(kind, name string) string { return kind + "/" + name }
 // pass. It returns an error only for transient infrastructure failures
 // worth an automatic retry; business-logic failures are recorded into the
 // Registry instead.
-func (r *Reconciler) reconcileOneXRD(ctx context.Context, name string) error {
+func (r *Reconciler) reconcileOneXRD(ctx context.Context, name string) (time.Duration, error) {
 	r.ensureConfigToTarget()
 	key := configKey("xrd", name)
 
@@ -147,59 +229,78 @@ func (r *Reconciler) reconcileOneXRD(ctx context.Context, name string) error {
 	err := r.Get(ctx, types.NamespacedName{Name: name}, &cfg)
 	if apierrors.IsNotFound(err) {
 		r.forgetConfig(key)
-		return nil
+		return 0, nil
 	}
 	if err != nil {
-		return fmt.Errorf("getting XRDConversionConfig %q: %w", name, err)
+		return 0, fmt.Errorf("getting XRDConversionConfig %q: %w", name, err)
 	}
 	if !cfg.DeletionTimestamp.IsZero() {
 		r.forgetConfig(key)
-		return nil
+		return 0, nil
 	}
 	r.rememberConfig(key, cfg.Spec.TargetXRD.Name)
 
 	var servers teraskyv1alpha1.ConversionWebhookServerList
 	if err := r.List(ctx, &servers); err != nil {
-		return fmt.Errorf("listing ConversionWebhookServers: %w", err)
+		return 0, fmt.Errorf("listing ConversionWebhookServers: %w", err)
 	}
-	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
-	if err != nil || assigned != r.ServerName {
-		r.Registry.Remove(cfg.Spec.TargetXRD.Name)
-		r.syncRegistryMetrics()
-		return nil //nolint:nilerr // an unresolvable assignment is a bad config, not a transient failure: retrying cannot fix it, and this replica genuinely does not serve the target either way
-	}
+	assigned, assignErr := assign.ResolveAssignment(&cfg, servers.Items)
+	// An unresolvable assignment is a bad config, not a transient failure:
+	// retrying cannot fix it, and this replica does not serve the target
+	// on that basis either way.
+	mine := assignErr == nil && assigned == r.ServerName
 
 	xrd := &unstructured.Unstructured{}
 	xrd.SetGroupVersionKind(xrdadapter.GroupVersionKind)
 	if err := r.Get(ctx, types.NamespacedName{Name: cfg.Spec.TargetXRD.Name}, xrd); err != nil {
 		if apierrors.IsNotFound(err) {
+			if !mine {
+				// A deleted target cannot be pointing at anybody, so
+				// there is nothing for a drain to protect.
+				r.dropTarget(key, cfg.Spec.TargetXRD.Name)
+				return 0, nil
+			}
 			r.recordFailure(cfg.Spec.TargetXRD.Name, "XRDNotFound", fmt.Sprintf("target XRD %q not found", cfg.Spec.TargetXRD.Name))
-			return nil
+			return 0, nil
 		}
-		return fmt.Errorf("getting target XRD %q: %w", cfg.Spec.TargetXRD.Name, err)
+		return 0, fmt.Errorf("getting target XRD %q: %w", cfg.Spec.TargetXRD.Name, err)
 	}
+
+	// Not ours by assignment, and the XRD no longer points its conversion
+	// webhook here either: the handover is over, bar the drain. See
+	// handover.go for why both clauses exist and why the drain does.
+	if !mine && !xrdPointsAtServer(xrd, r.ServerName) {
+		if wait := r.drainRemaining(key, cfg.Spec.TargetXRD.Name); wait > 0 {
+			return wait, nil
+		}
+		r.dropTarget(key, cfg.Spec.TargetXRD.Name)
+		return 0, nil
+	}
+	// Still ours, so any drain in progress was for a move that did not
+	// happen, or reverted.
+	r.cancelDrain(key)
 
 	ruleSets, err := cfg.ToRuleSets()
 	if err != nil {
 		r.recordFailure(cfg.Spec.TargetXRD.Name, "InvalidRules", fmt.Sprintf("invalid rule configuration: %v", err))
-		return nil
+		return 0, nil
 	}
 	report, err := engine.Analyze(engine.AnalyzeInput{Source: xrdadapter.New(xrd), HubVersion: cfg.Spec.HubVersion, Spokes: ruleSets})
 	if err != nil {
 		r.recordFailure(cfg.Spec.TargetXRD.Name, "AnalyzeFailed", fmt.Sprintf("analysis failed: %v", err))
-		return nil
+		return 0, nil
 	}
 	if report.HasErrors() {
 		r.recordFailure(cfg.Spec.TargetXRD.Name, "ValidationErrors", "analysis produced validation errors; keeping any previously compiled plan in place")
-		return nil
+		return 0, nil
 	}
 
 	r.compileAndRegister(cfg.Spec.TargetXRD.Name, cfg.Spec.HubVersion, cfg.Spec.ConversionReviewVersions, report, fmt.Sprintf("gen=%d/%d", xrd.GetGeneration(), cfg.Generation))
-	return nil
+	return 0, nil
 }
 
 // reconcileOneCRD is reconcileOneXRD's counterpart for CRDConversionConfig.
-func (r *Reconciler) reconcileOneCRD(ctx context.Context, name string) error {
+func (r *Reconciler) reconcileOneCRD(ctx context.Context, name string) (time.Duration, error) {
 	r.ensureConfigToTarget()
 	key := configKey("crd", name)
 
@@ -207,54 +308,64 @@ func (r *Reconciler) reconcileOneCRD(ctx context.Context, name string) error {
 	err := r.Get(ctx, types.NamespacedName{Name: name}, &cfg)
 	if apierrors.IsNotFound(err) {
 		r.forgetConfig(key)
-		return nil
+		return 0, nil
 	}
 	if err != nil {
-		return fmt.Errorf("getting CRDConversionConfig %q: %w", name, err)
+		return 0, fmt.Errorf("getting CRDConversionConfig %q: %w", name, err)
 	}
 	if !cfg.DeletionTimestamp.IsZero() {
 		r.forgetConfig(key)
-		return nil
+		return 0, nil
 	}
 	r.rememberConfig(key, cfg.Spec.TargetCRD.Name)
 
 	var servers teraskyv1alpha1.ConversionWebhookServerList
 	if err := r.List(ctx, &servers); err != nil {
-		return fmt.Errorf("listing ConversionWebhookServers: %w", err)
+		return 0, fmt.Errorf("listing ConversionWebhookServers: %w", err)
 	}
-	assigned, err := assign.ResolveAssignment(&cfg, servers.Items)
-	if err != nil || assigned != r.ServerName {
-		r.Registry.Remove(cfg.Spec.TargetCRD.Name)
-		r.syncRegistryMetrics()
-		return nil //nolint:nilerr // an unresolvable assignment is a bad config, not a transient failure: retrying cannot fix it, and this replica genuinely does not serve the target either way
-	}
+	assigned, assignErr := assign.ResolveAssignment(&cfg, servers.Items)
+	mine := assignErr == nil && assigned == r.ServerName
 
 	var crd extv1.CustomResourceDefinition
 	if err := r.Get(ctx, types.NamespacedName{Name: cfg.Spec.TargetCRD.Name}, &crd); err != nil {
 		if apierrors.IsNotFound(err) {
+			if !mine {
+				r.dropTarget(key, cfg.Spec.TargetCRD.Name)
+				return 0, nil
+			}
 			r.recordFailure(cfg.Spec.TargetCRD.Name, "CRDNotFound", fmt.Sprintf("target CRD %q not found", cfg.Spec.TargetCRD.Name))
-			return nil
+			return 0, nil
 		}
-		return fmt.Errorf("getting target CRD %q: %w", cfg.Spec.TargetCRD.Name, err)
+		return 0, fmt.Errorf("getting target CRD %q: %w", cfg.Spec.TargetCRD.Name, err)
 	}
+
+	// See the XRD path, and handover.go.
+	if !mine && !crdPointsAtServer(&crd, r.ServerName) {
+		if wait := r.drainRemaining(key, cfg.Spec.TargetCRD.Name); wait > 0 {
+			return wait, nil
+		}
+		r.dropTarget(key, cfg.Spec.TargetCRD.Name)
+		return 0, nil
+	}
+	r.cancelDrain(key)
 
 	ruleSets, err := cfg.ToRuleSets()
 	if err != nil {
 		r.recordFailure(cfg.Spec.TargetCRD.Name, "InvalidRules", fmt.Sprintf("invalid rule configuration: %v", err))
-		return nil
+		return 0, nil
 	}
 	report, err := engine.Analyze(engine.AnalyzeInput{Source: crdadapter.New(&crd), HubVersion: cfg.Spec.HubVersion, Spokes: ruleSets})
 	if err != nil {
 		r.recordFailure(cfg.Spec.TargetCRD.Name, "AnalyzeFailed", fmt.Sprintf("analysis failed: %v", err))
-		return nil
+		return 0, nil
 	}
 	if report.HasErrors() {
 		r.recordFailure(cfg.Spec.TargetCRD.Name, "ValidationErrors", "analysis produced validation errors; keeping any previously compiled plan in place")
-		return nil
+		return 0, nil
 	}
 
 	r.compileAndRegister(cfg.Spec.TargetCRD.Name, cfg.Spec.HubVersion, cfg.Spec.ConversionReviewVersions, report, fmt.Sprintf("gen=%d/%d", crd.Generation, cfg.Generation))
-	return nil
+	return 0, nil
 }
 
 // compileAndRegister builds the CompiledEntry from an analysis report and
@@ -283,7 +394,7 @@ func (r *Reconciler) compileAndRegister(targetName, hubVersion string, reviewVer
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "success").Inc()
 		r.Metrics.RegistryLastReload.WithLabelValues(targetName).Set(float64(time.Now().Unix()))
 	}
-	r.syncRegistryMetrics()
+	r.registryChanged()
 }
 
 func (r *Reconciler) rememberConfig(key, targetName string) {
@@ -292,19 +403,31 @@ func (r *Reconciler) rememberConfig(key, targetName string) {
 	r.configToTarget[key] = targetName
 }
 
+// dropTarget removes a target this replica no longer serves and clears
+// any drain bookkeeping for it.
+func (r *Reconciler) dropTarget(key, targetName string) {
+	r.cancelDrain(key)
+	r.Registry.Remove(targetName)
+	r.registryChanged()
+}
+
 func (r *Reconciler) forgetConfig(key string) {
 	r.mu.Lock()
 	targetName, ok := r.configToTarget[key]
 	delete(r.configToTarget, key)
+	// A config deleted mid-drain would otherwise leave its deadline
+	// behind forever — one map entry per config that ever churned.
+	delete(r.drainUntil, key)
 	r.mu.Unlock()
 	if ok {
 		r.Registry.Remove(targetName)
-		r.syncRegistryMetrics()
+		r.registryChanged()
 	}
 }
 
-// syncRegistryMetrics refreshes the per-target registry gauges, unless a
-// bulk pass has asked to be excused.
+// registryChanged republishes everything derived from the registry: the
+// per-target gauges, and this replica's served-target Lease. Suppressed
+// while a bulk pass (InitialSync) is running.
 //
 // SyncRegistryMetrics rebuilds every series from a full snapshot, so it is
 // O(targets) per call. On the watch-driven path that is one call per
@@ -313,12 +436,17 @@ func (r *Reconciler) forgetConfig(key string) {
 // exists to shorten, and every intermediate state it publishes is
 // immediately superseded anyway. InitialSync therefore suppresses it and
 // syncs once at the end, which is the only state a scrape can observe: the
-// replica is not in the Service's endpoints until it reports ready.
-func (r *Reconciler) syncRegistryMetrics() {
-	if r.Metrics == nil || r.bulkSync.Load() {
+// replica is not in the Service's endpoints until it reports ready. The
+// same reasoning applies with more force to the Lease, which is an API
+// write.
+func (r *Reconciler) registryChanged() {
+	if r.bulkSync.Load() {
 		return
 	}
-	r.Metrics.SyncRegistryMetrics(r.Registry)
+	if r.Metrics != nil {
+		r.Metrics.SyncRegistryMetrics(r.Registry)
+	}
+	r.Publisher.Notify()
 }
 
 func (r *Reconciler) recordFailure(targetName, reason, msg string) {
@@ -327,7 +455,7 @@ func (r *Reconciler) recordFailure(targetName, reason, msg string) {
 		r.Metrics.RegistryReloadTotal.WithLabelValues(targetName, "error").Inc()
 		r.Metrics.RegistryCompileErr.WithLabelValues(targetName, reason).Inc()
 	}
-	r.syncRegistryMetrics()
+	r.registryChanged()
 }
 
 // InitialSyncStats is what one InitialSync did: how many configs it walked
@@ -386,7 +514,7 @@ func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) 
 		}
 		for _, cfg := range list.Items {
 			work = append(work, func(ctx context.Context) {
-				_ = r.reconcileOneXRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+				_, _ = r.reconcileOneXRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
 			})
 		}
 	}
@@ -397,7 +525,7 @@ func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) 
 		}
 		for _, cfg := range list.Items {
 			work = append(work, func(ctx context.Context) {
-				_ = r.reconcileOneCRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
+				_, _ = r.reconcileOneCRD(ctx, cfg.Name) // best-effort; the watch-driven reconciler retries transient failures.
 			})
 		}
 	}
@@ -406,7 +534,7 @@ func (r *Reconciler) InitialSync(ctx context.Context) (InitialSyncStats, error) 
 	r.bulkSync.Store(true)
 	r.runInitialSyncWork(ctx, work)
 	r.bulkSync.Store(false)
-	r.syncRegistryMetrics()
+	r.registryChanged()
 
 	stats.Duration = time.Since(start)
 	if r.Metrics != nil {

@@ -172,15 +172,16 @@ a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
 - `make test-e2e-legacy-claims` (`hack/e2e-test-legacy-claims.sh`) — `scope: LegacyCluster` with `claimNames`, the shape every cluster upgraded from Crossplane 1.x still runs and the only one that generates a **claim CRD**: proves a claim created at `v1` reads back correctly converted at `v2` and `v3`, that the bare `spec.*` machinery layout (`compositionRef`, `claimRef`, `resourceRef`, `compositeDeletePolicy`, `writeConnectionSecretToRef`) survives conversion on both object classes, that a condition the test itself writes survives alongside Crossplane's, that **both** generated CRDs carry `spec.conversion` and `ConversionPropagated` reaches True, and that `convctl test --live` and `migrate-storage --prune-stored-versions` cover both.
 - `make test-e2e-package-managed` (`hack/e2e-test-package-managed.sh`) — the **XRD conversion guard**: replays the Crossplane package establisher's full non-SSA replace of an XRD in a loop and asserts that not one read at a non-storage version ever comes back unconverted. Then repeats with the guard disabled and asserts the loop **does** catch bad reads — a guard test that cannot fail is not a test. The failure mode is an HTTP 200 with wrong data, so the loop checks converted field values rather than exit codes. Also needs `python3`.
 - `make test-e2e-load` (`hack/e2e-load.sh`) — native-CRD kind cluster, then synthetic `ConversionReview` batches of varying object count/size against the live webhook-server; prints latency/throughput for [Capacity planning](docs/operations/capacity.md).
-- `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 29 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`). Not in the CI matrix.
+- `make test-e2e-reassign` (`hack/e2e-reassign.sh`) — moves a target between two `ConversionWebhookServer` instances, three times (an explicit `webhookServerRef` pin, an unpin, and a sharding-driven move), while sustained reads and writes flow through it, and asserts **zero failed requests and zero wrong values**. Also asserts each move was *verified* against the destination's published served targets rather than taking the unverified fallback, so it cannot pass with the handover mechanism removed. Also needs `python3`.
+- `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 29 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`); set `RESULT_JSON` to write the measurements as JSON. Not in the PR matrix — it runs nightly (`.github/workflows/scale.yml`) at 300 × 20, publishing an artifact and failing on a relative regression.
 
 Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH` (plus `go` for
-`test-e2e-legacy-claims` and `python3` for `test-e2e-package-managed`). The
-five correctness scripts run identically in CI (`.github/workflows/e2e.yml`,
-as a matrix) and locally. `make test-e2e-load` and `make test-e2e-scale` are
-local/capacity targets (`test-e2e-load` also needs `python3` and `curl`) and
-are not in that matrix. Set `KEEP_CLUSTER=1`
-to skip teardown for local debugging.
+`test-e2e-legacy-claims` and `python3` for `test-e2e-package-managed` and
+`test-e2e-reassign`). The six correctness scripts run identically in CI
+(`.github/workflows/e2e.yml`, as a matrix) and locally. `make test-e2e-load`
+and `make test-e2e-scale` are capacity targets (`test-e2e-load` also needs
+`python3` and `curl`) and are not in that matrix; the scale one has its own
+nightly workflow. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
 
 ## License
 

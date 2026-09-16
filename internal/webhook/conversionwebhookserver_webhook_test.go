@@ -18,6 +18,7 @@ package webhook
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -163,5 +164,89 @@ func TestConversionWebhookServerValidator_ValidateDelete_ForceAnnotationBypasses
 	v := &ConversionWebhookServerValidator{Client: c}
 	if _, err := v.ValidateDelete(context.Background(), server); err != nil {
 		t.Fatalf("expected the force-delete annotation to bypass the block, got: %v", err)
+	}
+}
+
+func sharded(name string, isDefault bool) *teraskyv1alpha1.ConversionWebhookServer {
+	s := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	s.Spec.Default = isDefault
+	s.Spec.Sharding = &teraskyv1alpha1.ShardingSpec{}
+	return s
+}
+
+// Enabling sharding on a non-default instance while the default stays out
+// of the pool would move every unpinned config onto the pool in one
+// admission — a fleet-wide reassignment produced by what reads as a local
+// change to one object.
+func TestShardPool_RejectsADefaultOutsideThePool(t *testing.T) {
+	existingDefault := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	existingDefault.Spec.Default = true
+
+	c := newFakeClient(existingDefault).Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+
+	_, err := v.ValidateCreate(context.Background(), sharded("shard-b", false))
+	if err == nil {
+		t.Fatal("expected a pool that excludes the default instance to be rejected")
+	}
+	for _, want := range []string{"default", "sharding pool", "spec.sharding.enabled"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
+	}
+}
+
+// The valid ordering: enable it on the default first, which moves nothing
+// because the pool is then that one instance, then add the others.
+func TestShardPool_AcceptsTheDefaultAsAPoolMember(t *testing.T) {
+	c := newFakeClient().Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+	if _, err := v.ValidateCreate(context.Background(), sharded("default", true)); err != nil {
+		t.Fatalf("enabling sharding on the default instance must be accepted: %v", err)
+	}
+
+	c = newFakeClient(sharded("default", true)).Build()
+	v = &ConversionWebhookServerValidator{Client: c}
+	if _, err := v.ValidateCreate(context.Background(), sharded("shard-b", false)); err != nil {
+		t.Fatalf("adding a second pool member must be accepted: %v", err)
+	}
+}
+
+// A fleet with no default at all is legal once a pool exists — the pool is
+// a complete answer for an unpinned config.
+func TestShardPool_AcceptsAPoolWithNoDefault(t *testing.T) {
+	c := newFakeClient(sharded("shard-a", false)).Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+	if _, err := v.ValidateCreate(context.Background(), sharded("shard-b", false)); err != nil {
+		t.Fatalf("a pool with no default instance must be accepted: %v", err)
+	}
+}
+
+// The check runs against the fleet as it WILL be: turning sharding off on
+// the last pool member, or on the default, has to be allowed even though
+// the stored copy still says otherwise.
+func TestShardPool_JudgesThePostUpdateFleet(t *testing.T) {
+	stored := sharded("default", true)
+	c := newFakeClient(stored).Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+
+	off := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	off.Spec.Default = true
+	disabled := false
+	off.Spec.Sharding = &teraskyv1alpha1.ShardingSpec{Enabled: &disabled}
+
+	if _, err := v.ValidateUpdate(context.Background(), stored, off); err != nil {
+		t.Fatalf("turning sharding off on the last pool member must be accepted: %v", err)
+	}
+}
+
+func TestShardPool_NoPoolIsAlwaysFine(t *testing.T) {
+	existingDefault := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	existingDefault.Spec.Default = true
+	c := newFakeClient(existingDefault).Build()
+	v := &ConversionWebhookServerValidator{Client: c}
+	plain := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}}
+	if _, err := v.ValidateCreate(context.Background(), plain); err != nil {
+		t.Fatalf("a fleet with no sharding at all must be unaffected: %v", err)
 	}
 }

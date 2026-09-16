@@ -19,6 +19,7 @@ package controller
 import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -70,6 +71,12 @@ func ManagerCacheOptions() cache.Options {
 			&corev1.Service{}:                        owned,
 			&autoscalingv2.HorizontalPodAutoscaler{}: owned,
 			&policyv1.PodDisruptionBudget{}:          owned,
+			// The served-target Leases webhook-server replicas publish.
+			// Scoping these is not optional: an unscoped Lease informer
+			// holds one object per node from kube-node-lease, plus every
+			// leader election in the cluster, to read a handful this
+			// operator's own pods wrote.
+			&coordinationv1.Lease{}: owned,
 		},
 	}
 }
@@ -101,7 +108,7 @@ func ManagerClientOptions() client.Options {
 // memory without reading the source.
 func CacheScopeDescription() string {
 	return "Secrets: uncached (read-through to the API server); " +
-		"Deployments/Services/HorizontalPodAutoscalers/PodDisruptionBudgets: " +
+		"Deployments/Services/HorizontalPodAutoscalers/PodDisruptionBudgets/Leases: " +
 		ManagedByLabel + "=" + ManagedByValue + "; " +
 		"XRDConversionConfigs/CRDConversionConfigs/ConversionWebhookServers/CRDs/XRDs: cluster-wide"
 }

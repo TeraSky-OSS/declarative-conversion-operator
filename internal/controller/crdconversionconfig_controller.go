@@ -214,6 +214,13 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 		r.setInvalid(cfg, wasApplied, fmt.Sprintf("could not resolve a ConversionWebhookServer: %v", err))
 		return ctrl.Result{}, r.patchStatus(ctx, orig, cfg)
 	}
+	// Is this reconcile a move? Judged from the URL last applied to the
+	// target, not from status.assignedWebhookServer — that field is
+	// written as soon as the resolver answers, which is before the target
+	// is repointed, so reading it back on the next reconcile would say the
+	// move had already happened and the gate would open after one pass.
+	movingServers := wasApplied && orig.Status.WebhookURL != "" &&
+		!assign.TargetPointsAt(orig.Status.WebhookURL, serverName)
 	cfg.Status.AssignedWebhookServer = serverName
 
 	// Step 5: CRD health gate.
@@ -245,6 +252,33 @@ func (r *CRDConversionConfigReconciler) reconcileNormal(ctx context.Context, cfg
 	meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
 		Type: teraskyv1alpha1.ConditionWebhookServerReady, Status: metav1.ConditionTrue, Reason: "ServerReady", Message: fmt.Sprintf("ConversionWebhookServer %q is Available", serverName),
 	})
+
+	// Step 6b: the handover gate. See the XRD controller's copy of this
+	// comment for the full reasoning; in short, repointing a target at a
+	// new instance before that instance can serve it fails every read and
+	// write of the resource for the duration, and waiting is safe because
+	// the old instance keeps serving a target that still names it.
+	if movingServers {
+		verdict, err := checkHandover(ctx, r.Client, &server, r.DefaultServerNamespace, cfg.Spec.TargetCRD.Name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		meta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+			Type: teraskyv1alpha1.ConditionHandoverReady, Status: boolStatus(verdict.OK),
+			Reason: verdict.Reason, Message: verdict.Message,
+		})
+		if !verdict.OK {
+			setPhasePendingOrStale(&cfg.Status.Conditions, &cfg.Status.Phase, wasApplied, verdict.Reason, verdict.Message)
+			cfg.Status.Message = verdict.Message
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.patchStatus(ctx, orig, cfg)
+		}
+	}
+	// Deliberately not removed when this reconcile is not a move. The
+	// condition is the verdict on the last handover, and it stays true
+	// afterwards — "the instance now serving this target was verified able
+	// to serve it before it was pointed here" does not stop being true.
+	// Leaving it is what makes a HandoverUnverified stick around long
+	// enough for somebody to notice that their replicas cannot publish.
 
 	// Step 7: only now, patch the CRD.
 	caBundle, err := r.readCABundle(ctx, &server)

@@ -110,6 +110,18 @@ func (c *CRDConversionConfig) WebhookServerRefField() *WebhookServerRef {
 	return c.Spec.WebhookServerRef
 }
 
+// ShardKey implements internal/assign's generic ConfigLike constraint —
+// see XRDConversionConfig.ShardKey.
+func (c *CRDConversionConfig) ShardKey() string {
+	return c.Spec.TargetCRD.Name
+}
+
+// AppliedWebhookURL implements internal/assign's ServingConfigLike
+// constraint — see XRDConversionConfig.AppliedWebhookURL.
+func (c *CRDConversionConfig) AppliedWebhookURL() string {
+	return c.Status.WebhookURL
+}
+
 // ConditionCRDHealthy mirrors ConditionXRDHealthy for the native-CRD
 // target: True once the target CustomResourceDefinition exists and its
 // own Established condition is True.

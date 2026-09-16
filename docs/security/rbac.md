@@ -78,10 +78,12 @@ practice:
 
 ## Webhook-server ServiceAccount
 
-Used by every `ConversionWebhookServer` pod. **Read/watch only** — the
-webhook-server binary never mutates cluster state. Each replica runs its
-own informers so it can compile conversion plans without depending on the
+Used by every `ConversionWebhookServer` pod. Each replica runs its own
+informers so it can compile conversion plans without depending on the
 manager at request time.
+
+Cluster-wide it is **read/watch only** — the webhook-server binary never
+mutates an XRD, a CRD, or a conversion config:
 
 | API group | Resource | Verbs | Why |
 |---|---|---|---|
@@ -89,7 +91,27 @@ manager at request time.
 | `apiextensions.crossplane.io` | `compositeresourcedefinitions` | `get`, `list`, `watch` | Read live XRD schemas to (re)compile plans. |
 | `apiextensions.k8s.io` | `customresourcedefinitions` | `get`, `list`, `watch` | Same for native CRDs. |
 
-No access to Secrets, no write verbs, no ability to patch XRDs/CRDs.
+It writes exactly one thing, and that grant is a **namespaced `Role`**, not
+part of the ClusterRole:
+
+| API group | Resource | Verbs | Scope | Why |
+|---|---|---|---|---|
+| `coordination.k8s.io` | `leases` | `get`, `create`, `update`, `patch` | the release namespace only | Each replica publishes the targets it can serve into a Lease of its own, so the operator can verify an instance is ready before moving a target onto it — see [Moving a target between instances](../architecture.md#moving-a-target-between-instances). |
+
+Two deliberate narrowings there. **Namespaced**, because Leases are how
+leader election is implemented across the ecosystem and cluster-wide write
+on them is not a grant to hand out for a bookkeeping annotation. And **no
+`list` or `watch`**: a replica reads back exactly one Lease, by name, so
+the ability to enumerate the namespace's Leases — and with it every
+leader-election holder identity — buys nothing.
+
+A `ConversionWebhookServer` whose `spec.namespace` points elsewhere needs
+the same `Role` and `RoleBinding` created there. Without it the replicas
+still serve conversions; what is lost is the verified handover, and a move
+onto that instance proceeds with `HandoverReady` reason
+`HandoverUnverified` rather than failing.
+
+No access to Secrets, and no ability to patch XRDs or CRDs.
 
 ## Related docs
 

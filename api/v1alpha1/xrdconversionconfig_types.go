@@ -541,6 +541,28 @@ func (c *XRDConversionConfig) WebhookServerRefField() *WebhookServerRef {
 	return c.Spec.WebhookServerRef
 }
 
+// ShardKey is what automatic assignment hashes: the target resource's
+// name, not the config's own.
+//
+// The target is the thing being served — it is the registry key and the
+// /convert/{name} path — so hashing it means renaming a config does not
+// move the resource it converts, and two configs can never disagree about
+// where one target belongs. Since one target may carry at most one config
+// (enforced by a unique field index and by admission), the two keys
+// partition identically; only their stability under a rename differs.
+func (c *XRDConversionConfig) ShardKey() string {
+	return c.Spec.TargetXRD.Name
+}
+
+// AppliedWebhookURL is the URL the operator last wrote into the target's
+// spec.conversion, or empty if it has never applied one. It implements
+// internal/assign's ServingConfigLike constraint: an instance a target
+// still points at is an instance that is still serving it, even after the
+// resolver has reassigned the config elsewhere.
+func (c *XRDConversionConfig) AppliedWebhookURL() string {
+	return c.Status.WebhookURL
+}
+
 // SpokeVersionRules is every rule declared for one spoke version.
 type SpokeVersionRules struct {
 	Version string           `json:"version"`
@@ -714,6 +736,19 @@ const (
 	// reconcile speed — but until it is True, nothing is actually
 	// converting.
 	ConditionConversionPropagated = "ConversionPropagated"
+	// ConditionHandoverReady reports whether the ConversionWebhookServer a
+	// target is being moved TO can already serve it. It appears only once
+	// a move has happened — a target being applied for the first time has
+	// no previous server still covering it, so there is nothing to hand
+	// over. False means the target is deliberately still pointed at its
+	// current server, which is still serving it.
+	//
+	// It is not cleared afterwards: it is the verdict on the last
+	// handover, and "the instance now serving this target was verified
+	// able to serve it before it was pointed here" stays true. That is
+	// also what makes a HandoverUnverified verdict stick around long
+	// enough to be noticed.
+	ConditionHandoverReady = "HandoverReady"
 
 	// ConditionApplied reasons used by FailClosed drift handling.
 	ReasonReverted     = "Reverted"

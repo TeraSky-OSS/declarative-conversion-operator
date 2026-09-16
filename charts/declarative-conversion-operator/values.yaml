@@ -216,6 +216,16 @@ conversionWebhookServer:
     enabled: null
     periodSeconds: null
     failureThreshold: null
+  # Automatic assignment. Off unless you set it. When any instance opts
+  # in, the pool of opted-in instances — not spec.default — is what serves
+  # configs with no explicit webhookServerRef, distributed by rendezvous
+  # hashing on the target name. The instance marked default must be a pool
+  # member while a pool exists, which admission enforces, so enable this
+  # on the chart's own default instance FIRST and on additional instances
+  # afterwards. See docs/configuration/conversionwebhookserver.md.
+  sharding:
+    enabled: null
+    weight: null
   resources:
     requests:
       cpu: 50m

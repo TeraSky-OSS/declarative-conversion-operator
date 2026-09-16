@@ -177,6 +177,11 @@ type ConversionWebhookServerSpec struct {
 	// +optional
 	CacheSelector *metav1.LabelSelector `json:"cacheSelector,omitempty"`
 
+	// Sharding opts this instance into the pool that unpinned conversion
+	// configs are distributed across. See ShardingSpec.
+	// +optional
+	Sharding *ShardingSpec `json:"sharding,omitempty"`
+
 	// StartupProbe bounds how long a replica may take to compile every
 	// assigned plan before the kubelet restarts it. See StartupProbeSpec:
 	// without one, the liveness probe's 30 s is the whole cold-start
@@ -268,6 +273,38 @@ type RolloutSpec struct {
 	DefaultTopologySpread *bool `json:"defaultTopologySpread,omitempty"`
 }
 
+// ShardingSpec opts an instance into automatic assignment: conversion
+// configs that express no preference are distributed across every
+// instance that opts in, instead of all landing on the one marked
+// default.
+//
+// It changes nothing about explicit assignment. A config with
+// spec.webhookServerRef set goes exactly where it says, sharded pool or
+// not — deliberate pinning stays the strongest statement in the system,
+// and tenant isolation is built on it.
+type ShardingSpec struct {
+	// Enabled adds this instance to the pool unpinned configs are
+	// distributed across.
+	//
+	// While the pool is non-empty it, not spec.default, is what serves
+	// unpinned configs — so the instance marked default must be a member
+	// of it. Admission enforces that, because otherwise enabling sharding
+	// on a second instance would silently drain every unpinned config off
+	// the default one. Enable it on the default instance first.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Weight biases this instance's share of the pool, for a fleet whose
+	// instances are not the same size. An instance with weight 2 receives
+	// approximately twice the share of one with weight 1. Weights are
+	// relative, so scaling all of them changes nothing.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	Weight *int32 `json:"weight,omitempty"`
+}
+
 // StartupProbeSpec configures the webhook-server's startupProbe: the
 // budget a replica gets to finish its cold start before the kubelet gives
 // up on it.
@@ -305,6 +342,43 @@ type StartupProbeSpec struct {
 	// +kubebuilder:default=60
 	// +kubebuilder:validation:Minimum=1
 	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
+}
+
+// ShardingEnabled reports whether this instance is a member of the
+// automatic-assignment pool. Absent means no — sharding is opt-in per
+// instance, so an existing fleet behaves exactly as it did before the
+// field existed.
+func (s *ConversionWebhookServerSpec) ShardingEnabled() bool {
+	if s.Sharding == nil {
+		return false
+	}
+	if s.Sharding.Enabled == nil {
+		// `sharding: {}` means enabled: writing the block at all is the
+		// opt-in, and the CRD's own default agrees.
+		return true
+	}
+	return *s.Sharding.Enabled
+}
+
+// ShardWeight is this instance's relative share of the pool, defaulting
+// to 1. A non-positive stored value (only reachable by bypassing
+// admission) is treated as 1 rather than as "never selected", because a
+// weight of zero would silently make a pool member invisible.
+func (s *ConversionWebhookServerSpec) ShardWeight() uint32 {
+	if s.Sharding == nil || s.Sharding.Weight == nil || *s.Sharding.Weight <= 0 {
+		return 1
+	}
+	return uint32(*s.Sharding.Weight)
+}
+
+// WebhookServerServiceName is the Service that fronts one instance's
+// pods. It lives here, in the leaf package, because two independent
+// binaries have to agree on it: the operator names the Service and writes
+// it into the target's spec.conversion, and each webhook-server replica
+// reads that same field back to tell whether a target still points at it
+// during a handover.
+func WebhookServerServiceName(serverName string) string {
+	return serverName + "-webhook-server"
 }
 
 // Startup-probe defaults, mirrored from the kubebuilder markers on
@@ -372,6 +446,28 @@ type ConversionWebhookServerStatus struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	// +optional
 	AssignedConfigs []AssignedConfigRef `json:"assignedConfigs,omitempty"`
+
+	// ServedTargets is the set of target resources that EVERY live
+	// replica of this instance reports a compiled, servable plan for —
+	// an intersection, not a union, because a target one replica out of
+	// three can serve is a target that fails one request in three.
+	//
+	// Unlike AssignedConfigs, which is desired state computed by the
+	// shared resolver, this is reported by the replicas themselves: each
+	// publishes its own registry contents into a Lease, and this field
+	// is the aggregate. It is what makes a safe handover possible — the
+	// operator will not repoint a target at this instance until the
+	// instance says it can already serve it.
+	// +optional
+	// +listType=atomic
+	ServedTargets []string `json:"servedTargets,omitempty"`
+
+	// ReportingReplicas is how many live replica Leases fed
+	// ServedTargets. A value below ReadyReplicas means at least one
+	// ready replica has not published yet, and the intersection above is
+	// not yet a statement about the whole instance.
+	// +optional
+	ReportingReplicas int32 `json:"reportingReplicas,omitempty"`
 }
 
 // Condition type constants for ConversionWebhookServer.

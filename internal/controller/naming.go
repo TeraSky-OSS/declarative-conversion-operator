@@ -16,13 +16,15 @@ limitations under the License.
 
 package controller
 
+import teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
+
 // Naming conventions for the child resources a ConversionWebhookServer
 // reconciles, shared with the XRDConversionConfig reconciler so it can
 // locate a server's Service/Certificate Secret without a second CRD
 // round-trip.
 
 func cwsDeploymentName(server string) string        { return server + "-webhook-server" }
-func cwsServiceName(server string) string           { return server + "-webhook-server" }
+func cwsServiceName(server string) string           { return teraskyv1alpha1.WebhookServerServiceName(server) }
 func cwsCertificateName(server string) string       { return server + "-webhook-server-cert" }
 func cwsCertificateSecretName(server string) string { return server + "-webhook-server-tls" }
 func cwsPDBName(server string) string               { return server + "-webhook-server" }
