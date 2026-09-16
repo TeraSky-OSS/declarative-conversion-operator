@@ -180,12 +180,15 @@ func BenchmarkRouter_SpokeToSpoke_vs_HubHop(b *testing.B) {
 	// measurement.
 	//
 	// The answer, across four orders of magnitude, is a flat ~2x: exactly
-	// 2x the allocations and 2x the bytes at every size, because the
-	// second hop does the same work as the first over an object of the
-	// same shape. There is no fixed per-call overhead to amortise and
-	// nothing that grows super-linearly, which is what makes the "is a
-	// direct spoke-to-spoke plan worth building?" question answerable
-	// once rather than per workload. See docs/operations/capacity.md.
+	// 2x the allocations and 2x the bytes at every size. No fixed per-call
+	// overhead to amortise, nothing super-linear.
+	//
+	// The ~2x itself belongs to this fixture, whose two hops cost about
+	// the same; a strategy mix that is much more expensive in one
+	// direction would shift it. What does not depend on the fixture is
+	// that cost(A->B) is exactly cost(A->hub) + cost(hub->B), because that
+	// is what Router.Convert executes — so a direct plan could save at
+	// most one hop, whatever a hop costs. See docs/operations/capacity.md.
 	for _, elements := range []int{0, 1, 5, 10, 100, 1000} {
 		hubObj := volumesObject(elements)
 		spokeObj, err := Convert(ConvertInput{Plan: v1, Direction: HubToSpoke, Object: hubObj})

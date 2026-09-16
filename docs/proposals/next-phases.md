@@ -1096,12 +1096,14 @@ apiserver's write path".
 > - **Spoke-to-spoke closed as a documented no, which this section already
 >   expected.** What it did not expect is how flat the answer is. Swept from
 >   0 to 1000 `forEach` elements, the second hop costs ~2× at *every* size —
->   exactly 2× the allocations and 2× the bytes — because it does the same
->   work as the first over an object of the same shape. There is no fixed
->   overhead to amortise and nothing super-linear, so the answer does not
->   vary with workload. At realistic object sizes that is 0.6–4 µs inside a
->   request that has already paid milliseconds of apiserver overhead. The
->   2.3× quoted below was one point on that curve, not a constant.
+>   exactly 2× the allocations and 2× the bytes — with no fixed overhead to
+>   amortise and nothing super-linear. The ~2× belongs to that fixture,
+>   whose two hops cost about the same; what does not is the identity under
+>   it, that a spoke-to-spoke conversion costs exactly `A→hub` plus
+>   `hub→B`, so a direct plan could save **at most one hop** whatever a hop
+>   costs. At realistic object sizes that hop is 0.6–4 µs, inside a request
+>   that has already paid milliseconds of apiserver overhead. The 2.3×
+>   quoted below was one point on that curve, not a constant.
 >
 > Two things were added that this section does not mention. A `route` label
 > on `dco_webhook_conversion_objects_total`, because the acceptance criteria

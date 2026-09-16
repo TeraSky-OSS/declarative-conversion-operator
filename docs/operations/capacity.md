@@ -76,12 +76,29 @@ volumes, medians of eight runs):
 | 1000 | 378 µs | 705 µs | 1.9× | 3006 → 6012 |
 
 **The ratio is a flat ~2× across four orders of magnitude**, and the
-allocation counts are exactly 2× at every size. That is the whole
-explanation: the second hop does the same work as the first over an object
-of the same shape. There is no fixed per-call overhead that a direct plan
-would remove and nothing that grows super-linearly — so the answer does not
-change with object size, and this measurement does not need repeating per
-workload.
+allocation counts are exactly 2× at every size. There is no fixed per-call
+overhead that a direct plan would remove, and nothing that grows
+super-linearly.
+
+Be precise about what generalises from that, because the table is one
+fixture — a `forEach` over an array of volumes — and a different strategy
+mix would put different numbers in it. What does not depend on the fixture
+is the identity underneath:
+
+> `cost(A → B) = cost(A → hub) + cost(hub → B)`, exactly, because that is
+> literally what `Router.Convert` executes.
+
+So the most a direct plan could ever save is **one hop**, whatever a hop
+costs for your schemas. The ~2× is what that identity becomes when the two
+hops cost about the same, which is the common case and is what this fixture
+measures; a spoke whose rules are much more expensive in one direction
+would shift the ratio without changing the conclusion, because the saving
+is still bounded by a single hop.
+
+What that hop costs for a given config is already measurable without a new
+benchmark: `dco_webhook_conversion_object_duration_seconds` histograms it
+per direction, on live traffic. The per-strategy table further down gives
+the offline version.
 
 ### Measuring how much spoke-to-spoke traffic you actually have
 
@@ -110,12 +127,16 @@ legacy versions of the same resource at the same time.
 Direct shortcut plans were evaluated and rejected, twice now, and the
 reasoning is worth keeping rather than re-deriving:
 
-- **The saving is bounded by the numbers above.** A realistic composite
-  resource is in the 0–10 element rows, where the second hop costs
+- **The saving is bounded by one hop.** In this fixture, a realistic
+  composite resource is in the 0–10 element rows, where that hop costs
   **0.6–4 µs**. A ConversionReview that reaches this webhook has already
   paid apiserver admission, TLS and JSON round-trips measured in
   milliseconds. Removing 4 µs from that is not observable, let alone under
-  the 1 s p99 ConversionReview alert.
+  the 1 s p99 ConversionReview alert. If your own hop latency is orders of
+  magnitude higher than this — check
+  `dco_webhook_conversion_object_duration_seconds` before assuming it is —
+  the arithmetic is worth redoing, but the other two objections below are
+  not about latency at all.
 - **The cost is not bounded.** Pairwise plans are `O(N²)` in served
   versions, and each plan is compiled, validated and retained per target —
   the memory figures below are per plan. Lazy per-pair compilation would

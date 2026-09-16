@@ -988,9 +988,21 @@ func resolveBranchMap(idx int, p BranchMapParams, hub, spoke *extv1.JSONSchemaPr
 	}
 
 	if p.Discriminator != "" {
-		for side, node := range map[string]*extv1.JSONSchemaProps{"hub": hubNode, "spoke": spokeNode} {
-			if _, ok := node.Properties[p.Discriminator]; !ok {
-				diags = append(diags, errorf(idx, "rule %d (BranchMap): discriminator %q is not a declared property of the %s union at %q", idx, p.Discriminator, side, p.HubPath))
+		// A slice, not a map: map iteration order is unspecified, and
+		// Analyze copies these diagnostics into its report without
+		// re-sorting, so a config wrong on both sides would report its
+		// two errors in a different order from run to run. Each side also
+		// names its own path — the spoke error used to quote HubPath.
+		for _, side := range []struct {
+			name string
+			node *extv1.JSONSchemaProps
+			path FieldPath
+		}{
+			{"hub", hubNode, p.HubPath},
+			{"spoke", spokeNode, p.SpokePath},
+		} {
+			if _, ok := side.node.Properties[p.Discriminator]; !ok {
+				diags = append(diags, errorf(idx, "rule %d (BranchMap): discriminator %q is not a declared property of the %s union at %q", idx, p.Discriminator, side.name, side.path))
 			}
 		}
 	}
@@ -1058,16 +1070,29 @@ func resolveBranchMap(idx int, p BranchMapParams, hub, spoke *extv1.JSONSchemaPr
 			lossless = lossless.and(nestedVerdict)
 		}
 
-		h2sBranches = append(h2sBranches, compiledBranch{
-			srcBranch: b.HubBranch, dstBranch: b.SpokeBranch,
-			dstDiscriminator: discriminatorValue(b.SpokeDiscriminatorValue, b.SpokeBranch),
-			nested:           nestedH2S,
-		})
-		s2hBranches = append(s2hBranches, compiledBranch{
-			srcBranch: b.SpokeBranch, dstBranch: b.HubBranch,
-			dstDiscriminator: discriminatorValue(b.HubDiscriminatorValue, b.HubBranch),
-			nested:           nestedS2H,
-		})
+		// One compiled branch per *source* name, per direction. A collapse
+		// names the same spoke branch twice, and branchMapOp identifies
+		// the active branch by counting entries whose srcBranch is
+		// present — so two entries for `objectStore` would make a
+		// perfectly valid single-branch spoke object look like two
+		// branches set at once, and every conversion back would fail with
+		// the ambiguity error. The first mapping wins, which is the
+		// deterministic reading of "the engine cannot tell which hub
+		// branch it started from".
+		if firstHubUse {
+			h2sBranches = append(h2sBranches, compiledBranch{
+				srcBranch: b.HubBranch, dstBranch: b.SpokeBranch,
+				dstDiscriminator: discriminatorValue(b.SpokeDiscriminatorValue, b.SpokeBranch),
+				nested:           nestedH2S,
+			})
+		}
+		if firstSpokeUse {
+			s2hBranches = append(s2hBranches, compiledBranch{
+				srcBranch: b.SpokeBranch, dstBranch: b.HubBranch,
+				dstDiscriminator: discriminatorValue(b.HubDiscriminatorValue, b.HubBranch),
+				nested:           nestedS2H,
+			})
+		}
 	}
 
 	if p.Discriminator != "" {

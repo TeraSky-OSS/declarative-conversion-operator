@@ -364,20 +364,6 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 				attribute.String("to_version", toVersion),
 			))
 		route := routeLabel(entry.Router.Hub, fromVersion, toVersion)
-		// A spoke-to-spoke conversion is two hops, and each one can be
-		// lossy on its own. Recording both is what makes
-		// dco_webhook_lossy_conversion_total add up for a cluster whose
-		// clients read at two different non-hub versions; the earlier
-		// hub-or-nothing test counted neither hop.
-		switch route {
-		case routeHubToSpoke:
-			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
-		case routeSpokeToHub:
-			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
-		case routeSpokeToSpoke:
-			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
-			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
-		}
 
 		out, err := entry.Router.Convert(obj, fromVersion, toVersion)
 		if err != nil {
@@ -395,6 +381,25 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		objSpan.End()
+		// Counted after the conversion succeeded, not before it was
+		// attempted. The counter means "a lossy conversion was delivered";
+		// an object whose conversion failed is never returned and never
+		// stored, so nothing observable lost anything, and it is already
+		// counted as an error by the two metrics above.
+		//
+		// A spoke-to-spoke conversion is two hops through the hub and each
+		// one can be lossy on its own, so both are recorded. The earlier
+		// hub-or-nothing test counted neither, which left the traffic
+		// class that carries the most loss reporting none.
+		switch route {
+		case routeHubToSpoke:
+			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
+		case routeSpokeToHub:
+			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
+		case routeSpokeToSpoke:
+			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
+			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
+		}
 		out["apiVersion"] = review.Request.DesiredAPIVersion
 		ensureConvertedMetadata(out, obj)
 		b, err := json.Marshal(out)

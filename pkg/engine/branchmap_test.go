@@ -286,11 +286,43 @@ func TestBranchMap_NonInjectiveIsLossyInTheCollapsingDirection(t *testing.T) {
 	// have reported this rule as conflicting with itself — leaving no way
 	// to write a collapse at all.
 	rs.Rules[0].AcknowledgeLossy = true
-	if _, diags, err = Compile(rs, &hub, &spoke); err != nil {
+	plan, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
 	if errs := diagMessages(diags, SeverityError); len(errs) != 0 {
 		t.Fatalf("an acknowledged collapse should compile cleanly, got %v", errs)
+	}
+
+	// Compiling is only half of "expressible". Both hub branches must
+	// reach the shared spoke branch...
+	for _, hubBranch := range []string{"s3", "gcs"} {
+		hubObj := map[string]any{"backup": map[string]any{hubBranch: map[string]any{"bucket": "logs"}}}
+		out, err := Convert(ConvertInput{Plan: plan, Direction: HubToSpoke, Object: hubObj})
+		if err != nil {
+			t.Fatalf("hub->spoke from %q: %v", hubBranch, err)
+		}
+		want := map[string]any{"objectStore": map[string]any{"bucket": "logs"}}
+		if got := out["backup"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("hub->spoke from %q = %#v, want %#v", hubBranch, got, want)
+		}
+	}
+
+	// ...and the way back must work at all. branchMapOp identifies the
+	// active branch by counting entries whose srcBranch is present, so a
+	// second compiled entry for the shared spoke branch made a valid
+	// single-branch object look like two branches set at once and failed
+	// every conversion back. The collapse compiled and could never convert.
+	spokeObj := map[string]any{"backup": map[string]any{"objectStore": map[string]any{"bucket": "logs"}}}
+	back, err := Convert(ConvertInput{Plan: plan, Direction: SpokeToHub, Object: spokeObj})
+	if err != nil {
+		t.Fatalf("spoke->hub on a valid single-branch object: %v", err)
+	}
+	// The first mapping wins — the deterministic reading of "cannot tell
+	// which hub branch it started from", and the reason this is lossy.
+	want := map[string]any{"s3": map[string]any{"bucket": "logs"}}
+	if got := back["backup"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("spoke->hub = %#v, want %#v (the first mapping wins)", got, want)
 	}
 }
 
@@ -343,6 +375,45 @@ func TestBranchMap_RejectsAnUndeclaredDiscriminator(t *testing.T) {
 	}
 	if !saw {
 		t.Fatalf("expected an undeclared discriminator to be rejected, got %v", diagMessages(diags, SeverityError))
+	}
+}
+
+// Each side's diagnostic has to name that side's path. The two are
+// routinely different — a union that was moved as well as reshaped — and
+// an error about the spoke that quotes the hub path sends the reader to a
+// schema where the field is not missing.
+func TestBranchMap_DiscriminatorDiagnosticNamesTheFailingSidesPath(t *testing.T) {
+	hub := objSchema(map[string]extv1.JSONSchemaProps{
+		"backup": unionSchema("backend", map[string]extv1.JSONSchemaProps{
+			"s3": objSchema(map[string]extv1.JSONSchemaProps{"bucket": strSchema()}),
+		}),
+	})
+	spoke := objSchema(map[string]extv1.JSONSchemaProps{
+		"legacyBackup": unionSchema("", map[string]extv1.JSONSchemaProps{
+			"objectStore": objSchema(map[string]extv1.JSONSchemaProps{"bucket": strSchema()}),
+		}),
+	})
+	rs := RuleSet{Rules: []Rule{{Strategy: StrategyBranchMap, Params: BranchMapParams{
+		HubPath: ParsePath("backup"), SpokePath: ParsePath("legacyBackup"),
+		Discriminator: "backend",
+		Branches:      []BranchMapping{{HubBranch: "s3", SpokeBranch: "objectStore"}},
+	}}}}
+	_, diags, err := Compile(rs, &hub, &spoke)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var saw bool
+	for _, msg := range diagMessages(diags, SeverityError) {
+		if !strings.Contains(msg, "discriminator") {
+			continue
+		}
+		saw = true
+		if !strings.Contains(msg, "spoke union at \"legacyBackup\"") {
+			t.Errorf("the spoke diagnostic must name the spoke path, got %q", msg)
+		}
+	}
+	if !saw {
+		t.Fatalf("expected the missing spoke discriminator to be reported, got %v", diagMessages(diags, SeverityError))
 	}
 }
 

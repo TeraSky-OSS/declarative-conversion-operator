@@ -25,6 +25,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/terasky-oss/declarative-conversion-operator/pkg/engine"
@@ -122,6 +123,60 @@ func TestHandleConvert_SpokeToSpokeCountsBothLossyHops(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(metrics.LossyTotal.WithLabelValues("xfoos.example.org", "hub_to_spoke")); got != 1 {
 		t.Errorf("outbound hub->v2 hop: hub_to_spoke counter = %v, want 1", got)
+	}
+}
+
+// A conversion that failed delivered nothing: the object is never returned
+// and never stored, so nothing observable lost anything. Counting it as a
+// lossy conversion would double-signal a failure the objects and reviews
+// counters already record as an error.
+func TestHandleConvert_FailedConversionRecordsNoLoss(t *testing.T) {
+	const hub = "v3"
+	registry := NewRegistry()
+	registry.Set("xfoos.example.org", &CompiledEntry{
+		// v2 has no compiled plan, so routing v1 -> v2 fails on the
+		// second hop, after the first one has already run.
+		Router: &engine.Router{Hub: hub, Plans: map[string]*engine.Plan{
+			"v1": {HubVersion: hub, SpokeVersion: "v1", HubToSpoke: []engine.Op{}, SpokeToHub: []engine.Op{}},
+		}},
+		Lossless: map[string]engine.LosslessVerdict{
+			"v1": {HubToSpoke: true, SpokeToHub: false},
+			"v2": {HubToSpoke: false, SpokeToHub: true},
+		},
+	})
+	metrics := newTestMetrics()
+	s := &Server{Registry: registry, Metrics: metrics}
+
+	obj := map[string]any{"apiVersion": "example.org/v1", "kind": "Foo", "metadata": map[string]any{"name": "x"}}
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("marshaling the sample object: %v", err)
+	}
+	body, err := json.Marshal(extv1.ConversionReview{Request: &extv1.ConversionRequest{
+		UID: "abc", DesiredAPIVersion: "example.org/v2",
+		Objects: []runtime.RawExtension{{Raw: raw}},
+	}})
+	if err != nil {
+		t.Fatalf("marshaling the review: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/convert/xfoos.example.org", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConvert(rec, req)
+
+	var got extv1.ConversionReview
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Response.Result.Status != metav1.StatusFailure {
+		t.Fatalf("expected the conversion to fail, got %+v", got.Response.Result)
+	}
+	for _, direction := range []string{"spoke_to_hub", "hub_to_spoke"} {
+		if n := testutil.ToFloat64(metrics.LossyTotal.WithLabelValues("xfoos.example.org", direction)); n != 0 {
+			t.Errorf("%s counter = %v after a failed conversion, want 0", direction, n)
+		}
+	}
+	if n := testutil.ToFloat64(metrics.ObjectsTotal.WithLabelValues("xfoos.example.org", "v1", "v2", routeSpokeToSpoke, "error")); n != 1 {
+		t.Errorf("the failure should be counted as an error on the objects counter, got %v", n)
 	}
 }
 
