@@ -21,7 +21,29 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
+
+// CombinedGatherer pairs this binary's dedicated metric registry with
+// controller-runtime's package-global one.
+//
+// cmd/webhook-server deliberately does not use controller-runtime's own
+// metrics server — the conversion path must not share a listener with
+// anything else — which used to mean the registry reconciler was the one
+// controller in the system with no workqueue depth, no queue latency and
+// no reconcile error counter exposed anywhere. Gathering both registries
+// from the one handler fixes that without giving controller-runtime a
+// listener of its own.
+//
+// The two registries do not overlap: the dedicated one carries the
+// dco_webhook_* series plus the Go and process collectors, and
+// controller-runtime's carries workqueue_*, controller_runtime_* and
+// rest_client_*. prometheus.Gatherers fails the whole scrape on a
+// duplicate metric name, so that separation is asserted by a test rather
+// than assumed.
+func CombinedGatherer(own prometheus.Gatherer) prometheus.Gatherer {
+	return prometheus.Gatherers{own, ctrlmetrics.Registry}
+}
 
 // Metrics is the webhook server's Prometheus metric set, registered on a
 // dedicated registry (not the global default) so cmd/webhook-server has
@@ -40,6 +62,14 @@ type Metrics struct {
 	RegistryReloadTotal *prometheus.CounterVec
 	RegistryCompileErr  *prometheus.CounterVec
 	Ready               prometheus.Gauge
+
+	// InitialSyncDuration and InitialSyncTargets describe the cold start:
+	// how long this replica spent compiling every assigned plan before it
+	// reported ready, and how many targets that was. Both are written
+	// exactly once, immediately before SetReady(true) — they are the
+	// startup budget an operator sizes a startupProbe against.
+	InitialSyncDuration prometheus.Gauge
+	InitialSyncTargets  prometheus.Gauge
 
 	// gatherer is the registry metrics were registered on, used by
 	// PlainMux's /metrics handler. Must be the underlying Gatherer when
@@ -64,8 +94,8 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 		}, []string{"target", "result"}),
 		ObjectsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "dco_webhook_conversion_objects_total",
-			Help: "Total individual objects converted.",
-		}, []string{"target", "from_version", "to_version", "result"}),
+			Help: "Total individual objects converted. The route label classifies the conversion by shape — hub_to_spoke, spoke_to_hub, spoke_to_spoke, identity — which from_version and to_version cannot, because which version is the hub is a per-target fact and not a label.",
+		}, []string{"target", "from_version", "to_version", "route", "result"}),
 		ObjectDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "dco_webhook_conversion_object_duration_seconds",
 			Help: "Latency of converting one object, excluding request decode. Unlike the review-level histogram this metric's direction label is always exact, so it is the one to use for per-direction capacity planning.",
@@ -111,9 +141,17 @@ func NewMetrics(reg prometheus.Registerer, gatherer prometheus.Gatherer) *Metric
 			Name: "dco_webhook_ready",
 			Help: "1 if this replica's registry has completed its initial sync and is serving traffic.",
 		}),
+		InitialSyncDuration: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dco_webhook_initial_sync_duration_seconds",
+			Help: "Wall-clock seconds this replica spent in the initial registry sync — every assigned plan compiled — before it reported ready. Written once, immediately before readiness; it reads 0 on a replica that is still cold, which dco_webhook_ready disambiguates.",
+		}),
+		InitialSyncTargets: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dco_webhook_initial_sync_targets",
+			Help: "Number of conversion configs this replica walked during its initial sync. Divide the duration by this to get the per-target cold-start cost for your schemas.",
+		}),
 		gatherer: gatherer,
 	}
-	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.ObjectDuration, m.BatchSize, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready)
+	reg.MustRegister(m.ReviewDuration, m.ReviewRequestsTotal, m.ObjectsTotal, m.ObjectDuration, m.BatchSize, m.LossyTotal, m.PanicsTotal, m.RegistrySize, m.RegistryEntryLoaded, m.RegistryLastReload, m.RegistryReloadTotal, m.RegistryCompileErr, m.Ready, m.InitialSyncDuration, m.InitialSyncTargets)
 	return m
 }
 

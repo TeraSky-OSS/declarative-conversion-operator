@@ -1,7 +1,7 @@
 # Examples
 
 The [`examples/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples)
-directory in the repository holds five self-contained conversion stories,
+directory in the repository holds six self-contained conversion stories,
 smallest first. Each one is a directory with a schema (an XRD or a CRD), the
 conversion config for it, sample objects at every served version, and a README
 explaining the scenario — everything `convctl` needs to validate and test the
@@ -17,6 +17,7 @@ isolation, these show a complete, runnable config you can copy and adapt.
 | [`field-rename/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/field-rename) | One field was renamed between two versions — the smallest useful config, and a demonstration of why identical fields need no rule. | [`FieldRename`](../strategies/field-rename.md) |
 | [`enum-remap/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/enum-remap) | The same field's allowed values were abbreviated (`Large` → `L`). Shows which mistakes `validate` catches versus which only `test` catches. | [`EnumRemap`](../strategies/enum-remap.md) |
 | [`for-each/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/for-each) | Every element of an array changed shape, with nested rules scoped to one element. | [`ForEach`](../strategies/for-each.md) |
+| [`branch-map/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/branch-map) | A `oneOf` union field — branch names, discriminator values and inner fields all spelled differently on the two versions. Shows why a union's branches are ordinary declared fields. | [`BranchMap`](../strategies/branch-map.md), [`FieldRename`](../strategies/field-rename.md) |
 | [`crossplane-xr-multiversion/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion) | Staged Crossplane XR lifecycle: one-version XRD + ConfigMap Composition, add a spoke, promote the hub (new Composition + retarget `compositionRef`), add `v3`, promote `v3` as the standard, deprecate `v1` (including `convctl migrate-storage` and dropping the version block). GitOps alternative: [`gitops/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/crossplane-xr-multiversion/gitops) + [`convctl generate kyverno`](../cli.md#convctl-generate-kyverno) (`--gitops-engine simulate\|flux\|argo`). | [`FieldRename`](../strategies/field-rename.md) — see the [lifecycle walkthrough](xr-lifecycle.md) |
 | [`native-crd/`](https://github.com/terasky-oss/declarative-conversion-operator/tree/main/examples/native-crd) | The same model against a plain Kubernetes CRD, with no Crossplane anywhere. | [`FieldRename`](../strategies/field-rename.md), [`Delete`](../strategies/delete.md) |
 

@@ -336,6 +336,9 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		// without it an operator raising the limit is guessing.
 		s.Metrics.BatchSize.WithLabelValues(xrdName).Observe(float64(len(review.Request.Objects)))
 	}
+	// Lossy hops for the objects converted so far, applied only once the
+	// whole review has succeeded — see the switch below.
+	var lossyHops []lossyHop
 	for _, raw := range review.Request.Objects {
 		if err := ctx.Err(); err != nil {
 			s.writeReview(w, review.Request.UID, nil, fmt.Sprintf(
@@ -363,11 +366,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 				attribute.String("from_version", fromVersion),
 				attribute.String("to_version", toVersion),
 			))
-		if fromVersion == entry.Router.Hub {
-			s.recordLossy(entry, xrdName, "hub_to_spoke", toVersion)
-		} else if toVersion == entry.Router.Hub {
-			s.recordLossy(entry, xrdName, "spoke_to_hub", fromVersion)
-		}
+		route := routeLabel(entry.Router.Hub, fromVersion, toVersion)
 
 		out, err := entry.Router.Convert(obj, fromVersion, toVersion)
 		if err != nil {
@@ -379,12 +378,32 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			if s.Metrics != nil {
-				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "error").Inc()
+				s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, route, "error").Inc()
 				s.Metrics.ObjectDuration.WithLabelValues(xrdName, objDirection, "error").Observe(time.Since(objStart).Seconds())
 			}
 			return
 		}
 		objSpan.End()
+		// Accumulated, not recorded yet. The counter means "a lossy
+		// conversion was delivered", and delivery is a property of the
+		// whole ConversionReview: a later object that fails takes the
+		// entire response down with it, so an earlier object that
+		// converted lossily is never returned and never stored either.
+		// Recording here would count loss for an object the apiserver
+		// discarded.
+		//
+		// A spoke-to-spoke conversion is two hops through the hub and each
+		// one can be lossy on its own, so both are noted. The earlier
+		// hub-or-nothing test counted neither, which left the traffic
+		// class that carries the most loss reporting none.
+		switch route {
+		case routeHubToSpoke:
+			lossyHops = append(lossyHops, lossyHop{"hub_to_spoke", toVersion})
+		case routeSpokeToHub:
+			lossyHops = append(lossyHops, lossyHop{"spoke_to_hub", fromVersion})
+		case routeSpokeToSpoke:
+			lossyHops = append(lossyHops, lossyHop{"spoke_to_hub", fromVersion}, lossyHop{"hub_to_spoke", toVersion})
+		}
 		out["apiVersion"] = review.Request.DesiredAPIVersion
 		ensureConvertedMetadata(out, obj)
 		b, err := json.Marshal(out)
@@ -397,7 +416,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		}
 		converted = append(converted, runtime.RawExtension{Raw: b})
 		if s.Metrics != nil {
-			s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, "success").Inc()
+			s.Metrics.ObjectsTotal.WithLabelValues(xrdName, fromVersion, toVersion, route, "success").Inc()
 			s.Metrics.ObjectDuration.WithLabelValues(xrdName, objDirection, "success").Observe(time.Since(objStart).Seconds())
 		}
 	}
@@ -422,8 +441,52 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The review is going out. Only now has anything actually been
+	// delivered, so only now does a lossy conversion count as performed.
+	for _, hop := range lossyHops {
+		s.recordLossy(entry, xrdName, hop.direction, hop.spokeVersion)
+	}
 	s.writeReview(w, review.Request.UID, converted, "")
 	s.observe(xrdName, direction, "success", start)
+}
+
+// lossyHop is one hub<->spoke hop, of one object, that ran in a direction
+// statically known to be lossy. Held until the whole ConversionReview
+// succeeds, because a review that fails delivers none of its objects.
+type lossyHop struct {
+	direction    string
+	spokeVersion string
+}
+
+// Route classes for dco_webhook_conversion_objects_total. They exist
+// because the metric's from_version/to_version pair cannot answer "how
+// much of this traffic is spoke-to-spoke?" on its own: that needs to know
+// which version is the hub, which is a per-target fact and not a label.
+// Deriving it in PromQL would mean hard-coding every target's hub version
+// into the query, and re-editing the query whenever a hub is promoted.
+//
+// The label is a function of labels the series already carries, so it adds
+// no cardinality beyond the four constants below.
+const (
+	routeIdentity     = "identity"
+	routeHubToSpoke   = "hub_to_spoke"
+	routeSpokeToHub   = "spoke_to_hub"
+	routeSpokeToSpoke = "spoke_to_spoke"
+)
+
+// routeLabel classifies a conversion by its shape rather than by version
+// names.
+func routeLabel(hub, from, to string) string {
+	switch {
+	case from == to:
+		return routeIdentity
+	case from == hub:
+		return routeHubToSpoke
+	case to == hub:
+		return routeSpokeToHub
+	default:
+		return routeSpokeToSpoke
+	}
 }
 
 func (s *Server) recordLossy(entry *CompiledEntry, xrdName, direction, spokeVersion string) {

@@ -21,7 +21,7 @@ flowchart LR
     E -->|"pkg/engine.Convert()"| E
 ```
 
-The controller never patches the XRD until *all* of validation, XRD health, and webhook-server health pass — see [XRDConversionConfig: ordering](configuration/xrdconversionconfig.md#ordering-nothing-touches-the-xrd-until-every-gate-passes) for the exact gate sequence.
+The controller never patches the XRD until *all* of validation, XRD health, and webhook-server health pass — and, when the patch would move the target to a different instance, until that instance reports it can already serve it. See [XRDConversionConfig: ordering](configuration/xrdconversionconfig.md#ordering-nothing-touches-the-xrd-until-every-gate-passes) for the exact gate sequence and [Moving a target between instances](#moving-a-target-between-instances) for the last one.
 
 ## The XRD conversion guard
 
@@ -61,6 +61,22 @@ type SchemaSource interface {
 
 `pkg/xrdadapter` is the package that knows Crossplane XRDs exist — it implements `SchemaSource` by reading an XRD's `spec.versions[]`. `pkg/crdadapter` is its sibling for plain native `CustomResourceDefinition`s, reading `spec.versions[].{name,served,storage,schema}` directly (CRDs already use the exact vendored Go types this package needs, so no unstructured conversion is required the way it is for Crossplane). Neither adapter changes anything about `pkg/engine` itself — that's the point of the seam.
 
+**Schemas are normalised once, at the seam.** Before anything flattens a
+schema, `NormalizeSchema` folds each `allOf` branch into its parent and
+resolves local `#/...` references, so `flattenSchema`, every resolver, the
+leftover-field scan and the passthrough tree all see one ordinary,
+junctor-free shape and none of them has to know those constructs existed.
+The result is an analysis artifact and is never written back to a cluster,
+which is what lets the merge keep exactly what the engine reads — the field
+set, types, required-ness, enum vocabularies, opacity — and drop the value
+validations it never looks at.
+
+That the merge cannot *discover* a field is a fact about CRDs, not an
+assumption: the apiserver requires every property named inside a junctor to
+be declared outside it as well. `pkg/engine/structural_facts_test.go` pins
+that, and four related facts, against the apiserver's own validator, so the
+engine's model cannot drift away from what a cluster actually accepts.
+
 **Two entry points, both operating on a precompiled `Plan`:**
 
 - `Compile(rules, hubSchema, spokeSchema) (*Plan, []Diagnostic, error)` — flattens both schemas to leaf paths, resolves every rule's declared path(s) against them, computes per-rule, per-direction losslessness, and fails the whole compile if any hub or spoke leaf path is left unclaimed and isn't structurally identical on both sides. A `Plan` only ever comes out of a successful compile with zero errors.
@@ -77,6 +93,73 @@ Each `ConversionWebhookServer` replica is symmetric and self-sufficient — ther
 - A single config's compile failure is **non-fatal**: the pod keeps serving whatever was last good for that XRD, recording the failure only in metrics and `/debug/registry` — it never crash-loops or de-readies the whole pod over one bad config.
 - **Readiness** gates on both informer cache sync *and* a completed first reconcile pass over every currently-existing config, closing the classic "added to Service endpoints before the registry is populated" gap.
 - A registry miss (a `ConversionReview` for an XRD this replica has no compiled plan for) fails closed with a clear `503`, rather than guessing.
+- A replica holds a compiled plan while **either** the shared resolver assigns the target to its instance **or** the live target's `spec.conversion` still names its Service. The second clause is what makes a handover safe from the losing side — see below.
+
+## Moving a target between instances
+
+Assignment is not static. `spec.webhookServerRef` can be edited, and
+[automatic sharding](configuration/conversionwebhookserver.md#automatic-sharding)
+rebalances unpinned configs when an instance is added or removed. Each of
+those means repointing a target's `spec.conversion` at a different Service,
+and that is the one operation in this design with a genuine race: the
+apiserver starts calling the new Service the moment the write lands, and a
+replica that has not compiled the plan yet answers `503`. Every read and
+write of that resource fails until it has — an outage produced by a
+scaling decision, on resources that had nothing to do with it.
+
+The window is closed from both ends, and neither end requires the operator
+to call a pod:
+
+```
+assignment changes  ──▶  destination replicas compile the plan
+                              │  (they watch the same objects the operator does)
+                              ▼
+                         each publishes its servable target set into its own Lease
+                              │
+                              ▼
+   operator reads those, waits until EVERY live replica reports the target
+                              │
+                              ▼
+                    operator patches spec.conversion → destination
+                              │
+                              ▼
+      source replicas see the target stop naming them, and start a 30s drain
+                              │
+                              ▼
+                         only then do they drop the plan
+```
+
+Until that patch lands the target still names the **source**, and the
+source is still serving it — because a replica keeps a plan for as long as
+the live target points at it, not merely for as long as it is assigned.
+That is what makes "wait" safe rather than merely slower: at no point is
+the target unserved.
+
+**The drain closes the other end of the same window.** The apiserver
+refreshes a CRD's conversion configuration *asynchronously* after the write
+that changed it, so for a moment after the repoint it is still calling the
+source's Service. A replica that dropped its plan the instant the object
+changed would answer those calls with a 503 — reported as a failed read or
+write on a resource that was only being rebalanced. It is the same shape of
+race as the `preStop` sleep one layer down, and it gets the same treatment:
+wait out the propagation rather than try to observe it.
+
+That was not theory. Before the drain existed, `hack/e2e-reassign.sh`
+caught exactly one failed write in 9,456 across three reassignments, with
+the registry-miss message. One in ten thousand is small, and it is not
+zero.
+
+The config's `HandoverReady` condition reports where in that sequence a
+move is. `hack/e2e-reassign.sh` drives three reassignments under sustained
+reads and writes and asserts zero failures and zero wrong values.
+
+**Why a Lease.** The operator's reconcile loop deliberately makes no
+network calls to webhook-server pods, so per-replica state has to be
+published rather than queried. A Lease is owned by its Pod, so it is
+collected with it; `renewTime` is a first-class staleness signal for a pod
+that is alive but wedged; and it is a small dedicated object, so a
+thirty-second heartbeat is not rewriting something other controllers watch.
+The aggregate lands on `ConversionWebhookServer.status.servedTargets`.
 
 ## One cluster, one install
 

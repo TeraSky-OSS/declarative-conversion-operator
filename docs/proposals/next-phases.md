@@ -973,6 +973,76 @@ apiserver's write path".
 
 ## Phase 15 — Scale
 
+> **Shipped.** Every deliverable below landed. Seven things are worth
+> recording, four of them deviations and three of them defects the work
+> turned up rather than confirmed:
+>
+> - **The cold-start work found a defect, not just a missing metric.** A
+>   webhook-server replica *used to* listen on no port at all until its
+>   registry was populated, so both probes got connection-refused until
+>   then — which made the liveness probe's own 3 × 10 s the *entire*
+>   cold-start budget. A replica holding enough targets to exceed thirty
+>   seconds would have been killed and restarted forever, reading as a
+>   crash loop rather than as a slow start. Two changes close it:
+>   `spec.startupProbe` suspends the other two probes while the sync runs,
+>   and the health endpoint now comes up *before* the cache sync, so a cold
+>   replica answers `/healthz`, reports `/readyz` 503, and is visibly alive.
+>   The conversion endpoint still waits for a populated registry.
+> - **The memory work found a second one.** The steady registry is small —
+>   about 18 KiB per target — but compiling churns roughly twenty times
+>   what it retains, and with the default `GOGC` a thousand-target cold
+>   start peaks around 140 MiB against 18 MiB of steady state. The kernel
+>   enforcing a container limit does not wait for the collector, so the
+>   operator now sets `GOMEMLIMIT` from `resources.limits.memory` — which
+>   roughly halves that transient (140 MiB to 61 MiB at a thousand targets)
+>   and, being a soft target rather than a ceiling, does nothing for a live
+>   working set that exceeds the limit. The
+>   chart's 256 MiB default was reviewed and left alone: it was not wrong,
+>   it was unenforceable.
+> - **`--registry-ready-timeout` was considered and deliberately not
+>   added** (15.2 raises it as an open question). An unavailable replica
+>   degrades throughput; a half-loaded one corrupts the answer. Recorded in
+>   [Capacity planning](../operations/capacity.md) so it does not have to be
+>   re-argued.
+> - **The reassignment e2e paid for itself on its first clean run.** Three
+>   moves under load produced exactly one failed write in 9,456. The
+>   apiserver refreshes a CRD's conversion configuration asynchronously
+>   after the write that changed it, so for a moment after a repoint it is
+>   still calling the source — and a replica that dropped its plan the
+>   instant the object changed answered that call with a 503. Replicas now
+>   drain for thirty seconds after a target stops naming them, which is the
+>   same race and the same treatment as the pod's `preStop` sleep one layer
+>   down.
+> - **Sharding needed a prerequisite the issue predicted, and it changed
+>   the webhook-server too.** Per-target readiness is published rather than
+>   queried — each replica writes its servable set into a Lease, and
+>   `status.servedTargets` is the intersection — because the operator's
+>   reconcile loop must not call pods. The half that is not obvious is on
+>   the *losing* side: a replica now holds a plan while either the resolver
+>   assigns the target to it **or** the live target still names its Service.
+>   Without that, waiting for the destination would itself be the outage.
+>   It also fixes a race that predates sharding: editing `webhookServerRef`
+>   by hand always had this window.
+> - **Rendezvous hashing, not the "consistent hashing" the issue names.**
+>   Same intent, better disruption property and no virtual-node count to
+>   tune. See the design note on
+>   [#157](https://github.com/terasky-oss/declarative-conversion-operator/issues/157).
+> - **The nightly scale run is 300 CRDs, not the 1000 named here.** A
+>   standard hosted runner is four shared vCPUs hosting an entire
+>   single-node control plane, and applying CRDs is apiserver-CPU-bound.
+>   300 × 20 completes in ~25 minutes with real headroom; an aspirational
+>   number that always fails would be worth less than a smaller one that
+>   always runs. The envelope is a workflow input so the ceiling can be
+>   raised on evidence, and a run at a different envelope skips the
+>   comparison rather than reporting a false regression.
+>
+> One item was widened. 15.5 says "no new metrics need registering"; that
+> is true of the manager, which serves controller-runtime's registry
+> directly, and false of the webhook-server, which deliberately serves a
+> dedicated one — so its registry reconciler was the only controller in the
+> system with no queue-depth signal anywhere. Its `/metrics` now gathers
+> both registries.
+
 - **Automatic sharding.** `assign.ResolveAssignment` supports explicit and
   default assignment; add a policy that balances N targets across M
   `ConversionWebhookServer` instances, with a `spec.shardCount` and rebalance
@@ -995,19 +1065,87 @@ apiserver's write path".
 
 ## Phase 16 — Engine and strategy expansion
 
+> **Shipped.** All three deliverables landed, and two of them came out
+> differently from the way this section describes them:
+>
+> - **The `$ref`/`allOf` item was reframed by its own investigation, and it
+>   turned out to be a correctness fix rather than a capability.** Before
+>   designing anything, the work asserted what apiextensions actually
+>   accepts — against the apiserver's own validator, in
+>   `pkg/engine/structural_facts_test.go`, so the engine's model cannot
+>   drift from what a cluster accepts. One of the five facts decides
+>   everything: **every property named inside a junctor must also be
+>   declared outside it.** A junctor in a legal CRD can therefore only
+>   *constrain* fields the engine already sees; it can never introduce one.
+>   So flattening through an `allOf` is not a discovery, and marking a node
+>   opaque because it carried one was not incomplete — it was wrong. A node
+>   with `allOf: [{required: [bucket]}]` had its entire field set disappear
+>   because of a constraint. `$ref` is reframed too: it is rejected outright
+>   in a CRD, so resolving it serves only the offline path, where an
+>   unresolvable reference is an authoring mistake that deserves a message
+>   naming the reference rather than an opaque leaf.
+> - **The same fact decided how `branchMap` works.** Because a branch is an
+>   ordinary declared, addressable property, the active branch is identified
+>   by *which branch property is present* rather than by validating the
+>   object against each branch schema — structural matching would put a JSON
+>   Schema validator on the apiserver's admission path to learn what a map
+>   lookup already knows. It also forced the un-hiding: once a branch's
+>   leaves are visible, a complete mapping has to claim all of them, so
+>   `oneOf`/`anyOf` over declared properties stopped being opaque. The
+>   int-or-string shape, which has no type of its own, still is.
+> - **Spoke-to-spoke closed as a documented no, which this section already
+>   expected.** What it did not expect is how flat the answer is. Swept from
+>   0 to 1000 `forEach` elements, the whole two-hop route costs ~2× a
+>   single hop at *every* size — exactly 2× the allocations and 2× the
+>   bytes — with no fixed overhead to amortise and nothing super-linear.
+>   That second hop therefore adds about one hop's worth, not two. The ~2×
+>   belongs to that fixture,
+>   whose two hops cost about the same; what does not is the identity under
+>   it, that a spoke-to-spoke conversion costs exactly `A→hub` plus
+>   `hub→B`, so a direct plan could save **at most one hop** whatever a hop
+>   costs. At realistic object sizes that hop is 0.6–4 µs, inside a request
+>   that has already paid milliseconds of apiserver overhead. The 2.3×
+>   quoted below was one point on that curve, not a constant.
+>
+> Two things were added that this section does not mention. A `route` label
+> on `dco_webhook_conversion_objects_total`, because the acceptance criteria
+> asked to measure real spoke-to-spoke frequency and the existing labels
+> cannot: whether a version pair is spoke-to-spoke depends on which version
+> is the hub, which is a per-target fact rather than a label. And a fix it
+> surfaced — `dco_webhook_lossy_conversion_total` used a hub-or-nothing test,
+> so a spoke-to-spoke conversion, which can lose something on each of its two
+> hops, counted neither. The traffic class carrying the most loss was
+> reporting none.
+
 - ~~**Required-field satisfaction analysis**~~ — **shipped in 12.3**, where it
   belonged: it converts a production admission failure into a compile-time
   error, which is the same job as the rest of that deliverable.
-- **`oneOf` / `anyOf` branch mapping.** Currently opaque and documented as out
-  of scope. Union-typed API fields are common in mature XRDs, and a branch-aware
-  strategy (`branchMap`) would unblock migrations that today need `jsonPatch`.
-- **`$ref` / `allOf` flattening** so shared sub-schemas stop being opaque units.
-- **Spoke-to-spoke shortcut plans**, if the 2.3× hub-hop cost ever shows up in
-  a real profile. Listed for completeness; the measured numbers do not justify
-  it yet.
+- ~~**`oneOf` / `anyOf` branch mapping.** Currently opaque and documented as
+  out of scope.~~ — **shipped in 16.1** as [`branchMap`](../strategies/branch-map.md),
+  and the premise was half wrong: a union's branches were never out of reach,
+  only hidden. In a CRD every property named inside a junctor must also be
+  declared outside it, so a branch is an ordinary addressable field; what
+  16.1 added is the *correspondence* between hub and spoke branches, plus a
+  fix for the engine treating such a node as opaque. `jsonPatch` is no longer
+  the only way to touch one.
+- ~~**`$ref` / `allOf` flattening** so shared sub-schemas stop being opaque
+  units.~~ — **shipped in 16.2**, as a correctness fix rather than a
+  capability: a junctor can only constrain fields the engine already sees, so
+  a node with `allOf: [{required: [bucket]}]` was losing its entire field set
+  because of a constraint.
+- ~~**Spoke-to-spoke shortcut plans**, if the 2.3× hub-hop cost ever shows up
+  in a real profile.~~ — **investigated in 16.3 and deliberately not built.**
+  The 2.3× was one point on a curve that turns out to be flat. A
+  spoke-to-spoke conversion costs exactly `A→hub` plus `hub→B`, so a direct
+  plan could save **at most one hop** — 0.6–4 µs at realistic object sizes,
+  inside a request that has already paid milliseconds of apiserver overhead,
+  against `O(N²)` compiled plans and a third mapping to keep consistent with
+  the two it shortcuts. The reasoning and the per-size table are in
+  [Capacity planning](../operations/capacity.md#spoke-to-spoke-vs-hub-hop);
+  `Router.Convert` stays the seam for anyone revisiting it.
 - **Strategy additions driven by real migrations only.** The `Strategy` enum and
   discriminated union were built for this; the discipline of "a real migration
-  asked for it" is what has kept 29 strategies coherent.
+  asked for it" is what has kept the strategy set coherent.
 
 ## Sequencing
 

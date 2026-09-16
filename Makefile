@@ -62,6 +62,15 @@ lint-fix: golangci-lint ## Run golangci-lint with --fix. Not every linter can au
 bench: ## Run microbenchmarks (times are not asserted; see docs/operations/capacity.md).
 	go test -run=^$$ -bench=. -benchmem -count=1 -benchtime=200ms ./pkg/engine/ ./internal/webhookserver/
 
+.PHONY: bench-mem
+bench-mem: ## Run the memory benchmarks behind the sizing table in docs/operations/capacity.md.
+	@echo "== bytes retained per compiled plan, and allocation churn per compile =="
+	go test -run=^$$ -bench 'BenchmarkCompiledPlanRetained|BenchmarkCompilePeakAlloc' -benchtime 200x -count=1 ./pkg/engine/
+	@echo
+	@echo "== registry footprint per target, and the transient peak during initial sync =="
+	@echo "   (one fleet is built per iteration, so -benchtime 1x; read B/target, B/peak, B/steady)"
+	go test -run=^$$ -bench 'BenchmarkRegistryRetained|BenchmarkInitialSyncPeak' -benchtime 1x -count=1 ./internal/webhookserver/
+
 .PHONY: test-e2e
 test-e2e: ## Run the real end-to-end test: kind + cert-manager + Crossplane + this operator, both features enabled, proving the conversion webhook works against a live apiserver. Requires docker, kind, kubectl, and helm on PATH. Set KEEP_CLUSTER=1 to skip teardown for debugging.
 	./hack/e2e-test.sh
@@ -86,12 +95,16 @@ test-e2e-package-managed: ## Run the e2e test for the XRD conversion guard: repl
 test-e2e-soak: ## Roll the webhook-server repeatedly under sustained reads/writes and assert zero failed and zero WRONG conversions. Slow (~15 min); also runs nightly in CI.
 	./hack/e2e-soak.sh
 
+.PHONY: test-e2e-reassign
+test-e2e-reassign: ## Move a target between ConversionWebhookServers under sustained load and assert zero failed and zero WRONG conversions. Proves a rebalance never leaves a target unserved.
+	./hack/e2e-reassign.sh
+
 .PHONY: test-e2e-load
 test-e2e-load: ## Synthetic ConversionReview load against a kind cluster (native CRD). Prints latency/throughput for docs/operations/capacity.md.
 	./hack/e2e-load.sh
 
 .PHONY: test-e2e-scale
-test-e2e-scale: ## Cluster-scale Get/List through the live conversion webhook (native CRDs). Configurable via TARGETS/INSTANCES/PARALLEL. See docs/operations/capacity.md.
+test-e2e-scale: ## Cluster-scale Get/List through the live conversion webhook (native CRDs). Configurable via TARGETS/INSTANCES/PARALLEL; set RESULT_JSON to write the measurements as JSON. Also runs nightly in CI. See docs/operations/capacity.md.
 	./hack/e2e-scale.sh
 
 ##@ Build

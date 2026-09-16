@@ -66,6 +66,7 @@ func main() {
 		enableXRDSupport     bool
 		enableCRDSupport     bool
 		enableXRDGuard       bool
+		maxConcurrent        int
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metrics endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -78,12 +79,21 @@ func main() {
 	flag.BoolVar(&enableXRDGuard, "enable-xrd-conversion-guard", true, "Register a mutating admission webhook on compositeresourcedefinitions that re-injects spec.conversion into writes that would drop it. "+
 		"Exists because Crossplane's package establisher writes established objects with a full client.Update rather than a Server-Side Apply, stripping the field on every revision reconcile. "+
 		"Both upstream write paths carry a TODO to move to SSA; turn this off once a Crossplane version lands that no longer needs it. Requires --enable-xrd-support.")
+	flag.IntVar(&maxConcurrent, "max-concurrent-reconciles", controller.DefaultMaxConcurrentReconciles,
+		"How many objects each controller reconciles at once. The shipped dashboard plots workqueue depth per controller; "+
+			"raise this when depth is persistently non-zero and the apiserver has the headroom, since the cost is QPS. "+
+			"A given object is never reconciled by two workers at once regardless of this value.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	logger := ctrl.Log.WithName("manager")
+
+	if maxConcurrent < 1 {
+		fmt.Fprintf(os.Stderr, "--max-concurrent-reconciles must be at least 1, got %d\n", maxConcurrent)
+		os.Exit(1)
+	}
 
 	namespace := currentNamespace()
 
@@ -136,9 +146,10 @@ func main() {
 	// active.
 	if enableXRDSupport {
 		if err := (&controller.XRDConversionConfigReconciler{
-			Client:                 mgr.GetClient(),
-			Scheme:                 mgr.GetScheme(),
-			DefaultServerNamespace: namespace,
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			DefaultServerNamespace:  namespace,
+			MaxConcurrentReconciles: maxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			logger.Error(err, "unable to create controller", "controller", "XRDConversionConfig")
 			os.Exit(1)
@@ -148,9 +159,10 @@ func main() {
 	}
 	if enableCRDSupport {
 		if err := (&controller.CRDConversionConfigReconciler{
-			Client:                 mgr.GetClient(),
-			Scheme:                 mgr.GetScheme(),
-			DefaultServerNamespace: namespace,
+			Client:                  mgr.GetClient(),
+			Scheme:                  mgr.GetScheme(),
+			DefaultServerNamespace:  namespace,
+			MaxConcurrentReconciles: maxConcurrent,
 		}).SetupWithManager(mgr); err != nil {
 			logger.Error(err, "unable to create controller", "controller", "CRDConversionConfig")
 			os.Exit(1)
@@ -159,12 +171,13 @@ func main() {
 		logger.Info("native CRD support disabled (--enable-crd-support=false)")
 	}
 	if err := (&controller.ConversionWebhookServerReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		DefaultNamespace: namespace,
-		DefaultImage:     defaultImage,
-		EnableXRDSupport: enableXRDSupport,
-		EnableCRDSupport: enableCRDSupport,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		DefaultNamespace:        namespace,
+		DefaultImage:            defaultImage,
+		EnableXRDSupport:        enableXRDSupport,
+		EnableCRDSupport:        enableCRDSupport,
+		MaxConcurrentReconciles: maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create controller", "controller", "ConversionWebhookServer")
 		os.Exit(1)

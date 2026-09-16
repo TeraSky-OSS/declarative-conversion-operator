@@ -86,7 +86,7 @@ kubectl get xrdconversionconfig xpostgresqlinstances-conversion -o yaml
 
 ## Examples
 
-[`examples/`](examples/) holds five self-contained conversion stories, smallest first — a field rename, an enum remap, a `forEach` array reshape, a three-version Crossplane XR migration, and the same model against a plain native CRD. Each directory has a schema, a config, sample objects at every served version, and a README explaining the scenario, and each is independently runnable offline:
+[`examples/`](examples/) holds six self-contained conversion stories, smallest first — a field rename, an enum remap, a `forEach` array reshape, a `oneOf` union branch mapping, a three-version Crossplane XR migration, and the same model against a plain native CRD. Each directory has a schema, a config, sample objects at every served version, and a README explaining the scenario, and each is independently runnable offline:
 
 ```console
 go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yaml \
@@ -95,7 +95,7 @@ go run ./cmd/convctl test --config examples/field-rename/xrdconversionconfig.yam
 
 ## Conversion strategies
 
-`fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `fromAnnotation` / `fromLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, up to two nested levels), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`, `quantity`, `duration`, `mapKeyRename`, `cel` (always-lossy value-math escape hatch). Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
+`fieldRename`, `scalarToObject` / `objectToScalar`, `singletonArrayToObject` / `objectToSingletonArray`, `fieldsToMap` / `mapToFields`, `toAnnotation` / `toLabel`, `fromAnnotation` / `fromLabel`, `enumRemap`, `defaultValue`, `constant`, `delete`, `jsonPatch` (escape hatch), `forEach` (per-array-element, up to two nested levels), `typeCoerce`, `scalarToFields` / `fieldsToScalar`, `arrayToMapByKey` / `mapToArrayByKey`, `numericScale`, `listJoin` / `listSplit`, `quantity`, `duration`, `mapKeyRename`, `cel` (always-lossy value-math escape hatch), `branchMap` (maps the branches of a `oneOf` union between versions). Every rule that the engine determines is lossy in any direction requires `acknowledgeLossy: true` plus an optional `reason` — this is enforced by both the admission webhook and the controller, and the default posture is fail-closed: any hub or spoke field left uncovered by a rule (and not structurally identical on both sides) is a validation error, not a silent pass.
 
 A few of the newer strategies are worth calling out specifically:
 
@@ -104,6 +104,7 @@ A few of the newer strategies are worth calling out specifically:
 - **`arrayToMapByKey`** / **`mapToArrayByKey`** convert a list of objects into a map keyed by one of their fields, and back — the standard "list-map versus map" API-evolution pattern. Array→map is lossless (a duplicate or missing key is a hard runtime error, never a silent drop); map→array is always treated as lossy, since the reconstructed array is emitted sorted by key rather than reproducing whatever order the original array had.
 - **`numericScale`** rescales a numeric field by a fixed factor (`hubValue == spokeValue * factor`) — e.g. stored megabytes displayed as gigabytes. Whichever direction lands on an integer-typed field is treated as lossy, since the division/multiplication may not land on a whole number for every possible input.
 - **`listJoin`** / **`listSplit`** convert an array of scalars into a single delimited string, and back. Always lossless; an element that happens to contain the separator as a substring will fail to round-trip cleanly, which is correctly surfaced by `convctl test` as a genuine data problem rather than an expected characteristic of the strategy.
+- **`branchMap`** maps the branches of a `oneOf` union — the "exactly one of `s3`, `gcs` or `azure`" shape — between versions, remapping an optional discriminator alongside and running nested rules scoped to each branch. In a CRD the apiserver requires every property named inside a `oneOf` to also be declared in the parent's own `properties`, so a branch is an ordinary addressable field and the active one is identified by which branch property is present, not by validating against each branch schema. Converting an object with no branch set, or with more than one, is a hard error in both directions; collapsing two hub branches onto one spoke branch is expressible but lossy coming back.
 
 `internal/cli/testdata/full` exercises all of these (and every other built-in strategy) end to end across a 3-version fixture — it's the best starting point for seeing exact YAML shapes in context.
 
@@ -166,21 +167,22 @@ a [kind](https://kind.sigs.k8s.io/) cluster, builds this repo's
 `manager`/`webhook-server` images and loads them straight into the cluster
 (no registry push), and installs the operator via its own Helm chart:
 
-- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 29 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
+- `make test-e2e` (`hack/e2e-test.sh`) — both features enabled (the common case): installs cert-manager and [Crossplane](https://crossplane.io) (v2 — this operator targets Crossplane's current `apiextensions.crossplane.io/v2` XRD API), applies a real `CompositeResourceDefinition` + `XRDConversionConfig` covering all 30 built-in strategies, and confirms composite resources created at every served version read back correctly converted at every other version.
 - `make test-e2e-crd-only` (`hack/e2e-test-crd-only.sh`) — `features.crossplane.enabled=false`, Crossplane never installed at all: confirms the manager comes up healthy with no Crossplane CRDs on the cluster, that a `CRDConversionConfig` against a plain native CRD converts correctly, and that an `XRDConversionConfig` is rejected outright by the admission webhook.
 - `make test-e2e-crossplane-only` (`hack/e2e-test-crossplane-only.sh`) — `features.nativeCRD.enabled=false`: confirms XRD/Crossplane conversion is unaffected by disabling native CRD support, and that a `CRDConversionConfig` is rejected outright.
 - `make test-e2e-legacy-claims` (`hack/e2e-test-legacy-claims.sh`) — `scope: LegacyCluster` with `claimNames`, the shape every cluster upgraded from Crossplane 1.x still runs and the only one that generates a **claim CRD**: proves a claim created at `v1` reads back correctly converted at `v2` and `v3`, that the bare `spec.*` machinery layout (`compositionRef`, `claimRef`, `resourceRef`, `compositeDeletePolicy`, `writeConnectionSecretToRef`) survives conversion on both object classes, that a condition the test itself writes survives alongside Crossplane's, that **both** generated CRDs carry `spec.conversion` and `ConversionPropagated` reaches True, and that `convctl test --live` and `migrate-storage --prune-stored-versions` cover both.
 - `make test-e2e-package-managed` (`hack/e2e-test-package-managed.sh`) — the **XRD conversion guard**: replays the Crossplane package establisher's full non-SSA replace of an XRD in a loop and asserts that not one read at a non-storage version ever comes back unconverted. Then repeats with the guard disabled and asserts the loop **does** catch bad reads — a guard test that cannot fail is not a test. The failure mode is an HTTP 200 with wrong data, so the loop checks converted field values rather than exit codes. Also needs `python3`.
 - `make test-e2e-load` (`hack/e2e-load.sh`) — native-CRD kind cluster, then synthetic `ConversionReview` batches of varying object count/size against the live webhook-server; prints latency/throughput for [Capacity planning](docs/operations/capacity.md).
-- `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 29 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`). Not in the CI matrix.
+- `make test-e2e-reassign` (`hack/e2e-reassign.sh`) — moves a target between two `ConversionWebhookServer` instances, three times (an explicit `webhookServerRef` pin, an unpin, and a sharding-driven move), while sustained reads and writes flow through it, and asserts **zero failed requests and zero wrong values**. Also asserts each move was *verified* against the destination's published served targets rather than taking the unverified fallback, so it cannot pass with the handover mechanism removed. Also needs `python3`.
+- `make test-e2e-scale` (`hack/e2e-scale.sh`) — native-CRD kind cluster, then a generated fleet of CRDs (3 versions each, 3–10 strategies per spoke, all 30 strategies used) plus parallel Get/List of live CRs through the apiserver conversion path. Override `TARGETS`, `INSTANCES`, and `PARALLEL` (for example `TARGETS=100 INSTANCES=100 PARALLEL=32`); set `RESULT_JSON` to write the measurements as JSON. Not in the PR matrix — it runs nightly (`.github/workflows/scale.yml`) at 300 × 20, publishing an artifact and failing on a relative regression.
 
 Requires `docker`, `kind`, `kubectl`, and `helm` on `PATH` (plus `go` for
-`test-e2e-legacy-claims` and `python3` for `test-e2e-package-managed`). The
-five correctness scripts run identically in CI (`.github/workflows/e2e.yml`,
-as a matrix) and locally. `make test-e2e-load` and `make test-e2e-scale` are
-local/capacity targets (`test-e2e-load` also needs `python3` and `curl`) and
-are not in that matrix. Set `KEEP_CLUSTER=1`
-to skip teardown for local debugging.
+`test-e2e-legacy-claims` and `python3` for `test-e2e-package-managed` and
+`test-e2e-reassign`). The six correctness scripts run identically in CI
+(`.github/workflows/e2e.yml`, as a matrix) and locally. `make test-e2e-load`
+and `make test-e2e-scale` are capacity targets (`test-e2e-load` also needs
+`python3` and `curl`) and are not in that matrix; the scale one has its own
+nightly workflow. Set `KEEP_CLUSTER=1` to skip teardown for local debugging.
 
 ## License
 

@@ -1,6 +1,6 @@
 # Examples
 
-Five conversion stories, smallest first. Most directories hold a schema, a
+Six conversion stories, smallest first. Most directories hold a schema, a
 conversion config, and `samples/` — everything `convctl` needs offline.
 [`crossplane-xr-multiversion/`](crossplane-xr-multiversion/) is a **staged**
 walkthrough (XRD + Composition that writes a ConfigMap) rather than a single
@@ -13,6 +13,7 @@ installing the operator itself (CRDs → `ConversionWebhookServer` → config).
 | [`field-rename/`](field-rename/) | One field was renamed between two versions. | `FieldRename` |
 | [`enum-remap/`](enum-remap/) | The same field's allowed values were abbreviated. | `EnumRemap` |
 | [`for-each/`](for-each/) | Each element of an array changed shape. | `ForEach` + `FieldRename` |
+| [`branch-map/`](branch-map/) | A `oneOf` union field whose branch names, discriminator values and inner fields all differ between versions. | `BranchMap` + `FieldRename` |
 | [`crossplane-xr-multiversion/`](crossplane-xr-multiversion/) | Staged XRD lifecycle: v1 + ConfigMap Composition, add v2, promote the hub, add v3, promote v3 as the standard, deprecate v1 (migrate storage, drop the version block). | `FieldRename` |
 | [`native-crd/`](native-crd/) | The same model against a plain Kubernetes CRD instead of a Crossplane XRD. | `FieldRename`, `Delete` |
 

@@ -107,3 +107,13 @@ tests:
     asserts:
       - isKind:
           of: NetworkPolicy
+
+  - it: passes the reconcile concurrency through to the manager
+    templates:
+      - manager/deployment.yaml
+    set:
+      manager.maxConcurrentReconciles: 4
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-concurrent-reconciles=4

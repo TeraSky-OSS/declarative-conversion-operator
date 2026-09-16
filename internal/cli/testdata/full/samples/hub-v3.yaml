@@ -50,6 +50,10 @@ spec:
     app: "widget"
     region: "us-east-1"
   packed: 1025
+  store:
+    backend: "s3"
+    s3:
+      bucket: "logs"
 status:
   phase: "Ready"
   observedGeneration: 5

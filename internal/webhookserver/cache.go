@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -202,4 +203,20 @@ func CountMatchingLabels(all []labels.Set, sel labels.Selector) int {
 		}
 	}
 	return n
+}
+
+// ClientOptions keeps the served-target Lease out of the cache.
+//
+// A replica writes exactly one Lease, its own, and reads it back only to
+// build the next update. Caching that would cost a Lease informer, and a
+// Lease informer is not a small thing to add: on any cluster there is
+// already one per node in kube-node-lease, plus every leader election in
+// every namespace. Read-through is a single GET every thirty seconds
+// against an object this process wrote itself.
+func ClientOptions() client.Options {
+	return client.Options{
+		Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&coordinationv1.Lease{}},
+		},
+	}
 }

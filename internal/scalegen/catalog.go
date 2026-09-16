@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
@@ -201,7 +202,50 @@ func slots() []Slot {
 				SpokeToHub: `has(object.spec) && has(object.spec.bitHigh) && has(object.spec.bitLow) ? {"spec.packed": int(object.spec.bitHigh) * 256 + int(object.spec.bitLow)} : {}`,
 			}}),
 			SpokeSpec: map[string]any{"bitHigh": 4, "bitLow": 1}},
+		{Name: v1a.StrategyBranchMap,
+			HubProps: map[string]extv1.JSONSchemaProps{"store": unionProp("backend", map[string]extv1.JSONSchemaProps{
+				"s3":  objProp(map[string]extv1.JSONSchemaProps{"bucket": strProp()}),
+				"gcs": objProp(map[string]extv1.JSONSchemaProps{"bucket": strProp()}),
+			})},
+			SpokeProps: map[string]extv1.JSONSchemaProps{"store": unionProp("backend", map[string]extv1.JSONSchemaProps{
+				"objectStore": objProp(map[string]extv1.JSONSchemaProps{"name": strProp()}),
+				"googleStore": objProp(map[string]extv1.JSONSchemaProps{"name": strProp()}),
+			})},
+			Rule: v1a.ConversionRule{Strategy: v1a.StrategyBranchMap, BranchMap: &v1a.BranchMapParams{
+				HubPath: "spec.store", SpokePath: "spec.store", Discriminator: "backend",
+				Branches: []v1a.BranchMapping{
+					{HubBranch: "s3", SpokeBranch: "objectStore", Rules: []v1a.ConversionRule{
+						{Strategy: v1a.StrategyFieldRename, FieldRename: &v1a.FieldRenameParams{HubPath: "bucket", SpokePath: "name"}},
+					}},
+					{HubBranch: "gcs", SpokeBranch: "googleStore", Rules: []v1a.ConversionRule{
+						{Strategy: v1a.StrategyFieldRename, FieldRename: &v1a.FieldRenameParams{HubPath: "bucket", SpokePath: "name"}},
+					}},
+				},
+			}},
+			SpokeSpec: map[string]any{"store": map[string]any{"backend": "objectStore", "objectStore": map[string]any{"name": "logs"}}}},
 	}
+}
+
+// unionProp is the shape a CRD actually accepts for a union: every branch
+// is a declared, optional property and the oneOf only says which of them
+// may be set. See pkg/engine/structural_facts_test.go.
+func unionProp(discriminator string, branches map[string]extv1.JSONSchemaProps) extv1.JSONSchemaProps {
+	props := map[string]extv1.JSONSchemaProps{discriminator: strProp()}
+	names := make([]string, 0, len(branches))
+	for name := range branches {
+		names = append(names, name)
+	}
+	// Sorted so a generated CRD is byte-identical between runs at the same
+	// seed, which is what makes --reset idempotent.
+	sort.Strings(names)
+	oneOf := make([]extv1.JSONSchemaProps, 0, len(names))
+	for _, name := range names {
+		props[name] = branches[name]
+		oneOf = append(oneOf, extv1.JSONSchemaProps{Required: []string{name}})
+	}
+	p := objProp(props)
+	p.OneOf = oneOf
+	return p
 }
 
 func mergeProps(dst map[string]extv1.JSONSchemaProps, src map[string]extv1.JSONSchemaProps) {

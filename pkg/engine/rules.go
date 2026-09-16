@@ -49,6 +49,7 @@ const (
 	StrategyDuration               Strategy = "Duration"
 	StrategyMapKeyRename           Strategy = "MapKeyRename"
 	StrategyCEL                    Strategy = "CEL"
+	StrategyBranchMap              Strategy = "BranchMap"
 )
 
 // UnmappedFieldPolicy controls what happens when a field exists in a hub or
@@ -457,6 +458,47 @@ type CELParams struct {
 }
 
 func (CELParams) isRuleParams() {}
+
+// BranchMapParams maps the branches of a union-typed field between hub and
+// spoke — the "one of s3, gcs or azure" shape that mature platform APIs
+// express with `oneOf`.
+//
+// **The branch is identified by which property is present**, not by
+// validating the object against each branch schema. That is not a
+// simplification of the general case, it is what a union looks like in a
+// legal CRD: the apiserver requires every property named inside a `oneOf`
+// to also be declared in the parent's own properties, so a union is a set
+// of declared, optional, mutually-exclusive fields and the `oneOf` only
+// says which of them may be set. Structural matching would mean running a
+// full JSON Schema validator on the admission critical path to learn
+// something a map lookup already knows.
+//
+// Discriminator, when set, names a sibling property whose value also
+// identifies the branch (`backend: s3`). It is remapped alongside, so hub
+// and spoke may spell their branch names differently.
+//
+// Neither direction writes the union object wholesale: each branch is
+// written at its own path, so a rule covering some *other* property of the
+// same object cannot be clobbered by rule ordering.
+type BranchMapParams struct {
+	HubPath, SpokePath FieldPath
+	Discriminator      string
+	Branches           []BranchMapping
+}
+
+func (BranchMapParams) isRuleParams() {}
+
+// BranchMapping is one branch correspondence. Rules, when present, are
+// resolved against the two branches' own schemas with paths relative to
+// the branch — the same scoping ForEach gives an array element.
+type BranchMapping struct {
+	HubBranch, SpokeBranch string
+	// HubDiscriminatorValue/SpokeDiscriminatorValue are used only when
+	// BranchMapParams.Discriminator is set. Empty means "the branch name",
+	// which is the common case.
+	HubDiscriminatorValue, SpokeDiscriminatorValue string
+	Rules                                          []Rule
+}
 
 // RuleSet is every rule declared for one hub<->spoke version pair.
 type RuleSet struct {

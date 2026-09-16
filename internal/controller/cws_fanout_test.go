@@ -136,3 +136,83 @@ func TestMapServerToAssignedCRDConfigs_FiltersAssignment(t *testing.T) {
 		t.Fatalf("expected only cfg-a for srv-a, got %#v", reqs)
 	}
 }
+
+// Adding a sharded instance moves a share of the unpinned configs onto it.
+// The fan-out on that create must enqueue exactly those, and reach them
+// through the same paced handler as every other CWS-driven fan-out —
+// rebalancing a fleet is the largest burst this watch ever produces, so it
+// is the one that most needs the pacing.
+func TestMapServerToAssignedXRDConfigs_ShardedFanoutIsBoundedAndPaced(t *testing.T) {
+	poolA := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "srv-a"}}
+	poolA.Spec.Default = true
+	poolA.Spec.Sharding = &teraskyv1alpha1.ShardingSpec{}
+	poolB := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "srv-b"}}
+	poolB.Spec.Sharding = &teraskyv1alpha1.ShardingSpec{}
+
+	const total = 400
+	objs := []runtime.Object{poolA, poolB}
+	for i := 0; i < total; i++ {
+		objs = append(objs, renameRuleXRDConfig(fmt.Sprintf("cfg-%03d", i), fmt.Sprintf("x%d.example.org", i)))
+	}
+	// Pinned configs are never rebalanced, whatever the pool does.
+	pinned := renameRuleXRDConfig("pinned", "pinned.example.org")
+	pinned.Spec.WebhookServerRef = &teraskyv1alpha1.WebhookServerRef{Name: "srv-a"}
+	objs = append(objs, pinned)
+
+	c := newFakeClient(objs...).Build()
+	reqs, err := mapServerToAssignedXRDConfigs(context.Background(), c, poolB)
+	if err != nil {
+		t.Fatalf("mapServerToAssignedXRDConfigs: %v", err)
+	}
+
+	// Roughly half of the unpinned configs, and none of the pinned one.
+	if len(reqs) == 0 || len(reqs) == total+1 {
+		t.Fatalf("srv-b was enqueued %d of %d configs; a shard should take a share, not none or all", len(reqs), total+1)
+	}
+	if len(reqs) < total/4 || len(reqs) > (3*total)/4 {
+		t.Errorf("srv-b was enqueued %d of %d unpinned configs, want roughly half", len(reqs), total)
+	}
+	for _, r := range reqs {
+		if r.Name == "pinned" {
+			t.Fatal("a config pinned to srv-a was enqueued as belonging to srv-b")
+		}
+	}
+
+	if spread := enqueue.FanoutSpread(len(reqs), enqueue.CWSConfigEnqueueQPS); spread == 0 {
+		t.Fatalf("a rebalance of %d configs must be paced, not dumped into the workqueue at once", len(reqs))
+	}
+}
+
+// Removing a sharded instance has to re-reconcile the configs it used to
+// hold, computed from the pre-delete view — after the object is gone there
+// is nothing left to derive them from.
+func TestMapServerTransition_ShardRemoval_EnqueuesItsFormerConfigs(t *testing.T) {
+	poolA := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "srv-a"}}
+	poolA.Spec.Default = true
+	poolA.Spec.Sharding = &teraskyv1alpha1.ShardingSpec{}
+	poolB := &teraskyv1alpha1.ConversionWebhookServer{ObjectMeta: metav1.ObjectMeta{Name: "srv-b"}}
+	poolB.Spec.Sharding = &teraskyv1alpha1.ShardingSpec{}
+
+	const total = 200
+	objs := []runtime.Object{poolA}
+	var names []string
+	for i := 0; i < total; i++ {
+		name := fmt.Sprintf("cfg-%03d", i)
+		names = append(names, name)
+		objs = append(objs, renameRuleXRDConfig(name, fmt.Sprintf("x%d.example.org", i)))
+	}
+
+	// The live list no longer contains srv-b; only the deleted object's own
+	// view can say what it used to serve.
+	c := newFakeClient(objs...).Build()
+	reqs, err := mapXRDConfigsForServerViews(context.Background(), c, "srv-b", poolB)
+	if err != nil {
+		t.Fatalf("mapXRDConfigsForServerViews: %v", err)
+	}
+	if len(reqs) == 0 {
+		t.Fatal("deleting a pool member enqueued nothing; the configs it held would keep pointing at a Service that no longer exists")
+	}
+	if len(reqs) >= len(names) {
+		t.Fatalf("enqueued %d of %d configs for a removed shard, want only its own share", len(reqs), len(names))
+	}
+}

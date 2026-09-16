@@ -36,6 +36,11 @@ jobs:
             script: hack/e2e-test-legacy-claims.sh
           - name: kind + Crossplane + cert-manager, package-managed XRD conversion guard
             script: hack/e2e-test-package-managed.sh
+          # Moving a target between webhook servers under load. This is the
+          # claim automatic sharding rests on, and the only place in CI that
+          # would notice the window reopening.
+          - name: kind + cert-manager, reassignment under load
+            script: hack/e2e-reassign.sh
     steps:
       - name: Checkout
         uses: actions/checkout@v7

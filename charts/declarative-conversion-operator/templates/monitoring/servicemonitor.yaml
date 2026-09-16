@@ -10,6 +10,15 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  # Copied onto every series this scrape produces, so the shipped
+  # controller-health panels and alerts can tell this operator's
+  # controller-runtime metrics — workqueue_*, controller_runtime_* — from
+  # any other operator's in the same Prometheus. Those metric names are
+  # library-wide, not ours, and without a label to select on an alert
+  # about somebody else's reconcile backlog would arrive attributed to
+  # this chart.
+  targetLabels:
+    - app.kubernetes.io/name
   selector:
     matchLabels:
       {{- include "declarative-conversion-operator.managerSelectorLabels" . | nindent 6 }}
@@ -33,6 +42,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  # See the manager ServiceMonitor above.
+  targetLabels:
+    - app.kubernetes.io/name
   namespaceSelector:
     any: true
   selector:

@@ -1,0 +1,53 @@
+apiVersion: terasky.com/v1alpha1
+kind: XRDConversionConfig
+metadata:
+  name: xbackups-conversion
+spec:
+  targetXRD:
+    name: xbackups.example.org
+  hubVersion: v2
+  spokes:
+    - version: v1
+      rules:
+        # The union itself. hubPath/spokePath name the union OBJECT, not a
+        # branch within it — branchMap writes each branch at its own path
+        # rather than replacing the object, which is what leaves room for
+        # the retentionDays rule below.
+        - strategy: BranchMap
+          branchMap:
+            hubPath: spec.destination
+            spokePath: spec.destination
+            # A sibling property whose value also identifies the branch.
+            # Remapped alongside it, so the two sides may spell their
+            # branch names differently — as they do here.
+            discriminator: provider
+            branches:
+              - hubBranch: s3
+                spokeBranch: awsBucket
+                hubDiscriminatorValue: s3
+                spokeDiscriminatorValue: aws
+                # Paths are relative to the branch: `bucket`, not
+                # `spec.destination.s3.bucket`. `region` has the same shape
+                # on both sides, so it needs no rule.
+                rules:
+                  - strategy: FieldRename
+                    fieldRename:
+                      hubPath: bucket
+                      spokePath: name
+              - hubBranch: gcs
+                spokeBranch: googleBucket
+                hubDiscriminatorValue: gcs
+                spokeDiscriminatorValue: google
+                rules:
+                  - strategy: FieldRename
+                    fieldRename:
+                      hubPath: bucket
+                      spokePath: name
+
+        # A non-branch property of the same union object. An ordinary rule
+        # reaches it, because branchMap claimed only the branches and the
+        # discriminator — not the object wholesale.
+        - strategy: FieldRename
+          fieldRename:
+            hubPath: spec.destination.retentionDays
+            spokePath: spec.destination.retention

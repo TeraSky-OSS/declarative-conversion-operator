@@ -78,11 +78,18 @@ rules:
     resources: ["conversionwebhookservers/status", "crdconversionconfigs/status", "xrdconversionconfigs/status"]
     verbs: ["get", "patch", "update"]
 ---
-# RBAC for cmd/webhook-server pods. Deliberately minimal and read-only:
-# each replica runs its own controller-runtime informers directly against
-# the API server so it can compile its own in-memory registry without
-# depending on the operator manager at request time. Nothing here grants
-# write access — the webhook-server binary never mutates any object.
+# RBAC for cmd/webhook-server pods. Deliberately minimal: each replica runs
+# its own controller-runtime informers directly against the API server so
+# it can compile its own in-memory registry without depending on the
+# operator manager at request time.
+#
+# Cluster-wide, this is read-only — the webhook-server never mutates an
+# XRD, a CRD, or a conversion config. The one thing it does write is its
+# own served-target Lease, and that grant is a namespaced Role (below)
+# rather than part of this ClusterRole, so a webhook-server pod cannot
+# touch a Lease anywhere else in the cluster. Leases are how leader
+# election is implemented across the ecosystem; cluster-wide write on them
+# is not a grant to hand out for a bookkeeping annotation.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -103,4 +110,57 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
   {{- end }}
+---
+# The one write a webhook-server replica makes: its own served-target
+# Lease, which is what lets the operator verify an instance can already
+# serve a target before moving that target onto it.
+#
+# Namespaced, and in the namespace the chart's own ConversionWebhookServer
+# instance actually runs in — spec.namespace, which defaults to the release
+# namespace but does not have to equal it. A ConversionWebhookServer
+# created outside this chart needs the same Role and RoleBinding in its own
+# namespace. Without it the replicas still serve conversions perfectly
+# well; what is lost is the verified handover, and the config reports
+# HandoverReady with reason HandoverUnverified rather than failing.
+#
+# No list or watch: a replica reads back exactly one Lease, by name, and
+# enumerating the namespace's Leases would hand it every leader-election
+# holder identity for nothing.
+#
+# What this is NOT: an own-Lease restriction. RBAC cannot express "only the
+# Lease named after your own pod" — resourceNames needs names known when
+# the Role is written, and these are derived from generated pod names. A
+# compromised webhook-server pod can therefore get/update/patch any Lease
+# in this namespace, including the operator's own leader-election Lease.
+# The bound that does hold is the namespace: give an instance its own
+# spec.namespace if that residual matters to you, and this grant reaches
+# nothing else. See docs/security/rbac.md.
+{{- $cwsNamespace := default .Release.Namespace .Values.conversionWebhookServer.namespace }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server-leases
+  namespace: {{ $cwsNamespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server-leases
+  namespace: {{ $cwsNamespace }}
+  labels:
+    {{- include "declarative-conversion-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "declarative-conversion-operator.fullname" . }}-webhook-server-leases
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "declarative-conversion-operator.webhookServerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 {{- end }}

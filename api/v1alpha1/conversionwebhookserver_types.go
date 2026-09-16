@@ -177,6 +177,17 @@ type ConversionWebhookServerSpec struct {
 	// +optional
 	CacheSelector *metav1.LabelSelector `json:"cacheSelector,omitempty"`
 
+	// Sharding opts this instance into the pool that unpinned conversion
+	// configs are distributed across. See ShardingSpec.
+	// +optional
+	Sharding *ShardingSpec `json:"sharding,omitempty"`
+
+	// StartupProbe bounds how long a replica may take to compile every
+	// assigned plan before the kubelet restarts it. See StartupProbeSpec:
+	// it polls /readyz, so its budget is a deadline on the sync itself.
+	// +optional
+	StartupProbe *StartupProbeSpec `json:"startupProbe,omitempty"`
+
 	// Rollout controls how a replica leaves service during a rolling
 	// update or a node drain. The defaults are chosen so that a rollout
 	// causes zero failed conversions; see RolloutSpec.
@@ -261,6 +272,154 @@ type RolloutSpec struct {
 	DefaultTopologySpread *bool `json:"defaultTopologySpread,omitempty"`
 }
 
+// ShardingSpec opts an instance into automatic assignment: conversion
+// configs that express no preference are distributed across every
+// instance that opts in, instead of all landing on the one marked
+// default.
+//
+// It changes nothing about explicit assignment. A config with
+// spec.webhookServerRef set goes exactly where it says, sharded pool or
+// not — deliberate pinning stays the strongest statement in the system,
+// and tenant isolation is built on it.
+type ShardingSpec struct {
+	// Enabled adds this instance to the pool unpinned configs are
+	// distributed across.
+	//
+	// While the pool is non-empty it, not spec.default, is what serves
+	// unpinned configs — so the instance marked default must be a member
+	// of it. Admission enforces that, because otherwise enabling sharding
+	// on a second instance would silently drain every unpinned config off
+	// the default one. Enable it on the default instance first.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Weight biases this instance's share of the pool, for a fleet whose
+	// instances are not the same size. An instance with weight 2 receives
+	// approximately twice the share of one with weight 1. Weights are
+	// relative, so scaling all of them changes nothing.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	Weight *int32 `json:"weight,omitempty"`
+}
+
+// StartupProbeSpec configures the webhook-server's startupProbe: the
+// budget a replica gets to finish its cold start before the kubelet gives
+// up on it.
+//
+// The probe polls /readyz, not /healthz. The plain endpoint carrying
+// /healthz comes up before the registry sync, so a startupProbe pointed at
+// it would succeed within milliseconds and bound nothing; /readyz stays
+// false until the initial sync completes, which is what makes this a
+// deadline on the sync. While the probe is in flight the kubelet runs
+// neither of the other two, so a slow sync is not also fighting the
+// liveness probe's own 3 × 10 s.
+//
+// The deadline matters because the initial sync retries infrastructure
+// failures without a limit. Without it, a replica wedged mid-sync stays
+// liveness-healthy and never ready: out of the Service, never restarted,
+// and visible only as a gap in readyReplicas.
+//
+// PeriodSeconds × FailureThreshold is the budget. The defaults give five
+// minutes, against a measured cold start of well under a second for a
+// thousand 50-leaf targets (see docs/operations/capacity.md) — the margin
+// is for informer cache sync on a large cluster, which dominates and is
+// not this operator's to control. Erring long is deliberate: an
+// over-tight threshold turns a slow start into a crash loop, while an
+// over-long one only delays the restart of a pod that is not taking
+// traffic anyway.
+type StartupProbeSpec struct {
+	// Enabled renders the startupProbe, and defaults to true. Setting it
+	// to false removes the deadline on the cold start entirely: the
+	// liveness probe reads /healthz, which answers before the sync begins,
+	// so nothing then restarts a replica that never finishes syncing.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=5
+	// +kubebuilder:validation:Minimum=1
+	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=1
+	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
+}
+
+// ShardingEnabled reports whether this instance is a member of the
+// automatic-assignment pool. Absent means no — sharding is opt-in per
+// instance, so an existing fleet behaves exactly as it did before the
+// field existed.
+func (s *ConversionWebhookServerSpec) ShardingEnabled() bool {
+	if s.Sharding == nil {
+		return false
+	}
+	if s.Sharding.Enabled == nil {
+		// `sharding: {}` means enabled: writing the block at all is the
+		// opt-in, and the CRD's own default agrees.
+		return true
+	}
+	return *s.Sharding.Enabled
+}
+
+// ShardWeight is this instance's relative share of the pool, defaulting
+// to 1. A non-positive stored value (only reachable by bypassing
+// admission) is treated as 1 rather than as "never selected", because a
+// weight of zero would silently make a pool member invisible.
+func (s *ConversionWebhookServerSpec) ShardWeight() uint32 {
+	if s.Sharding == nil || s.Sharding.Weight == nil || *s.Sharding.Weight <= 0 {
+		return 1
+	}
+	return uint32(*s.Sharding.Weight)
+}
+
+// WebhookServerServiceName is the Service that fronts one instance's
+// pods. It lives here, in the leaf package, because two independent
+// binaries have to agree on it: the operator names the Service and writes
+// it into the target's spec.conversion, and each webhook-server replica
+// reads that same field back to tell whether a target still points at it
+// during a handover.
+func WebhookServerServiceName(serverName string) string {
+	return serverName + "-webhook-server"
+}
+
+// Startup-probe defaults, mirrored from the kubebuilder markers on
+// StartupProbeSpec so the controller can reason about the values an unset
+// field will actually produce rather than about the literal nil.
+const (
+	DefaultStartupProbePeriodSeconds    int32 = 5
+	DefaultStartupProbeFailureThreshold int32 = 60
+)
+
+// StartupProbeEnabled reports whether the webhook-server's startupProbe
+// should be rendered, with the same default the CRD carries.
+func (s *ConversionWebhookServerSpec) StartupProbeEnabled() bool {
+	if s.StartupProbe == nil || s.StartupProbe.Enabled == nil {
+		return true
+	}
+	return *s.StartupProbe.Enabled
+}
+
+// StartupProbeTiming returns the period and failure threshold the
+// startupProbe should be rendered with. Their product is the cold-start
+// budget.
+func (s *ConversionWebhookServerSpec) StartupProbeTiming() (periodSeconds, failureThreshold int32) {
+	periodSeconds, failureThreshold = DefaultStartupProbePeriodSeconds, DefaultStartupProbeFailureThreshold
+	if s.StartupProbe == nil {
+		return periodSeconds, failureThreshold
+	}
+	if s.StartupProbe.PeriodSeconds != nil {
+		periodSeconds = *s.StartupProbe.PeriodSeconds
+	}
+	if s.StartupProbe.FailureThreshold != nil {
+		failureThreshold = *s.StartupProbe.FailureThreshold
+	}
+	return periodSeconds, failureThreshold
+}
+
 // AssignedConfigRef is one XRDConversionConfig the resolver currently
 // assigns to this instance. This reflects DESIRED assignment as computed
 // by the shared resolver, not proof that every replica has actually loaded
@@ -292,6 +451,28 @@ type ConversionWebhookServerStatus struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	// +optional
 	AssignedConfigs []AssignedConfigRef `json:"assignedConfigs,omitempty"`
+
+	// ServedTargets is the set of target resources that EVERY live
+	// replica of this instance reports a compiled, servable plan for —
+	// an intersection, not a union, because a target one replica out of
+	// three can serve is a target that fails one request in three.
+	//
+	// Unlike AssignedConfigs, which is desired state computed by the
+	// shared resolver, this is reported by the replicas themselves: each
+	// publishes its own registry contents into a Lease, and this field
+	// is the aggregate. It is what makes a safe handover possible — the
+	// operator will not repoint a target at this instance until the
+	// instance says it can already serve it.
+	// +optional
+	// +listType=atomic
+	ServedTargets []string `json:"servedTargets,omitempty"`
+
+	// ReportingReplicas is how many live replica Leases fed
+	// ServedTargets. A value below ReadyReplicas means at least one
+	// ready replica has not published yet, and the intersection above is
+	// not yet a statement about the whole instance.
+	// +optional
+	ReportingReplicas int32 `json:"reportingReplicas,omitempty"`
 }
 
 // Condition type constants for ConversionWebhookServer.

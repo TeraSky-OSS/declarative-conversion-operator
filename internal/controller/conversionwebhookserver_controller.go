@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -40,13 +42,17 @@ import (
 	applymetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	applypolicyv1 "k8s.io/client-go/applyconfigurations/policy/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	teraskyv1alpha1 "github.com/terasky-oss/declarative-conversion-operator/api/v1alpha1"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/assign"
+	"github.com/terasky-oss/declarative-conversion-operator/internal/servedtargets"
 	"github.com/terasky-oss/declarative-conversion-operator/internal/watchmap"
 )
 
@@ -86,6 +92,11 @@ type ConversionWebhookServerReconciler struct {
 	// for a webhook-server pod exactly the same way it is for the manager.
 	EnableXRDSupport bool
 	EnableCRDSupport bool
+
+	// MaxConcurrentReconciles bounds how many objects this controller
+	// reconciles at once. Zero leaves controller-runtime's own default
+	// (1) in place. See internal/controller/concurrency.go.
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=terasky.com,resources=conversionwebhookservers,verbs=get;list;watch;create;update;patch;delete
@@ -432,8 +443,72 @@ func (r *ConversionWebhookServerReconciler) reconcileDeployment(ctx context.Cont
 		WithResources(applycorev1.ResourceRequirements().
 			WithRequests(server.Spec.Resources.Requests).
 			WithLimits(server.Spec.Resources.Limits))
+
+	// The startupProbe is the cold-start budget: period x failureThreshold
+	// is how long a replica may take to compile every assigned plan before
+	// the kubelet restarts it.
+	//
+	// It polls /readyz, not /healthz, and the distinction is the whole
+	// point. The plain endpoint — /healthz, /readyz, /metrics — comes up
+	// before the registry sync (see cmd/webhook-server/main.go), so
+	// /healthz answers within milliseconds of process start and a
+	// startupProbe pointed at it would succeed immediately and bound
+	// nothing. /readyz is false until InitialSync completes, so probing it
+	// is what turns the threshold into a real deadline on the sync.
+	//
+	// That deadline matters because the sync retries infrastructure
+	// failures without a limit. Without it, a replica wedged mid-sync
+	// stays liveness-healthy and not-ready forever: out of the Service,
+	// never restarted, and visible only as a gap in readyReplicas.
+	//
+	// While the startupProbe is in flight the kubelet runs neither of the
+	// other two probes, so a slow sync is not also fighting the liveness
+	// probe's own 3 x 10 s.
+	if server.Spec.StartupProbeEnabled() {
+		period, threshold := server.Spec.StartupProbeTiming()
+		container = container.WithStartupProbe(applycorev1.Probe().
+			WithHTTPGet(applycorev1.HTTPGetAction().WithPath("/readyz").WithPort(intstr.FromInt32(webhookServerMetricsPort)).WithScheme(corev1.URISchemeHTTP)).
+			WithPeriodSeconds(period).WithFailureThreshold(threshold))
+	}
 	if pullPolicy != "" {
 		container = container.WithImagePullPolicy(pullPolicy)
+	}
+	// The replica's own identity, via the downward API. It uses this to
+	// publish the set of targets it can serve into a Lease of its own —
+	// the signal that lets a target be moved onto this instance without a
+	// window in which nothing serves it. POD_UID is what makes that Lease
+	// a child of the pod, so it is collected with it.
+	container = container.WithEnv(
+		applycorev1.EnvVar().WithName("POD_NAME").WithValueFrom(
+			applycorev1.EnvVarSource().WithFieldRef(
+				applycorev1.ObjectFieldSelector().WithFieldPath("metadata.name"))),
+		applycorev1.EnvVar().WithName("POD_NAMESPACE").WithValueFrom(
+			applycorev1.EnvVarSource().WithFieldRef(
+				applycorev1.ObjectFieldSelector().WithFieldPath("metadata.namespace"))),
+		applycorev1.EnvVar().WithName("POD_UID").WithValueFrom(
+			applycorev1.EnvVarSource().WithFieldRef(
+				applycorev1.ObjectFieldSelector().WithFieldPath("metadata.uid"))),
+	)
+
+	// GOMEMLIMIT, derived from the container's own memory limit.
+	//
+	// The steady registry footprint is small — about 18 KiB per target for
+	// a 50-leaf two-version schema — but compiling those plans churns
+	// roughly twenty times what it retains, and with the default GOGC the
+	// heap is allowed to grow to twice the live set before a collection.
+	// Measured, a thousand-target cold start peaks around 142 MiB of heap
+	// against 18 MiB of steady registry. A memory *limit* is enforced by
+	// the kernel, which does not wait for the GC; GOMEMLIMIT is what makes
+	// the GC aware of the same number. With it at 64 MiB the same run
+	// peaks at 61 MiB instead, taking longer to do it — which is the
+	// trade a limit is asking for.
+	//
+	// Only set when a memory limit exists (there is nothing to derive it
+	// from otherwise) and only when the operator has not set it itself.
+	if memLimitBytes, ok := webhookServerMemoryLimitBytes(server); ok && !hasEnvVar(server.Spec.ExtraEnv, goMemLimitEnv) {
+		container = container.WithEnv(applycorev1.EnvVar().
+			WithName(goMemLimitEnv).
+			WithValue(strconv.FormatInt(memLimitBytes, 10)))
 	}
 	for _, e := range server.Spec.ExtraEnv {
 		ec, err := viaJSON[applycorev1.EnvVarApplyConfiguration](e)
@@ -645,6 +720,21 @@ func (r *ConversionWebhookServerReconciler) updateStatus(ctx context.Context, se
 	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
 	server.Status.AssignedConfigs = refs
 
+	// AssignedConfigs is desired state; ServedTargets is reported state.
+	// Publishing both is the point — the gap between them is exactly the
+	// window in which a target has been given to this instance but the
+	// instance cannot serve it yet, which used to be invisible.
+	served, reporting, truncated, err := readServedTargets(ctx, r.Client, server, r.DefaultNamespace)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		// Publishing a partial intersection would read as a complete one.
+		served = nil
+	}
+	server.Status.ServedTargets = served
+	server.Status.ReportingReplicas = reporting
+
 	return nil
 }
 
@@ -714,8 +804,13 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 		if err := r.List(ctx, &allServers); err != nil {
 			return ctrl.Result{}, err
 		}
-		dependentXRD := assign.ConfigsAssignedTo(xrdConfigs.Items, allServers.Items, server.Name)
-		dependentCRD := assign.ConfigsAssignedTo(crdConfigs.Items, allServers.Items, server.Name)
+		// ServedBy, not IsAssignedTo. During a handover the resolver has
+		// already moved a config to another instance while this one is
+		// still the endpoint the target names and still answering every
+		// ConversionReview for it. Judging by assignment alone would let
+		// that instance be deleted out from under a live target.
+		dependentXRD := assign.ConfigsServedBy(xrdConfigs.Items, allServers.Items, server.Name)
+		dependentCRD := assign.ConfigsServedBy(crdConfigs.Items, allServers.Items, server.Name)
 		if len(dependentXRD)+len(dependentCRD) > 0 {
 			names := make([]string, 0, len(dependentXRD)+len(dependentCRD))
 			for _, c := range dependentXRD {
@@ -732,7 +827,7 @@ func (r *ConversionWebhookServerReconciler) reconcileDelete(ctx context.Context,
 			}
 			meta.SetStatusCondition(&server.Status.Conditions, metav1.Condition{
 				Type: teraskyv1alpha1.CWSConditionDeletionBlocked, Status: metav1.ConditionTrue, Reason: "ConfigsStillAssigned",
-				Message: fmt.Sprintf("%d config(s) still resolve to this instance%s: %v. Reassign them or add annotation %q=\"true\" to force.", len(dependentXRD)+len(dependentCRD), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation),
+				Message: fmt.Sprintf("%d config(s) still resolve to this instance, or still have their target pointed at it%s: %v. Reassign them or add annotation %q=\"true\" to force.", len(dependentXRD)+len(dependentCRD), suffix, names, teraskyv1alpha1.AllowForceDeleteAnnotation),
 			})
 			if err := r.Status().Patch(ctx, server, client.MergeFrom(orig)); err != nil {
 				return ctrl.Result{}, err
@@ -759,8 +854,47 @@ func (r *ConversionWebhookServerReconciler) SetupWithManager(mgr ctrl.Manager) e
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Watches(&teraskyv1alpha1.XRDConversionConfig{}, handler.EnqueueRequestsFromMapFunc(enqueueAllServers(r.Client))).
+		// Replica Leases feed status.servedTargets. The predicate is
+		// load-bearing: every replica renews its Lease on a 30-second
+		// heartbeat, and reconciling a ConversionWebhookServer — which
+		// server-side-applies a Deployment, Service, HPA and PDB — that
+		// often, per replica, for a renewTime that changes nothing this
+		// controller reads, would be pure churn. Only a change to the
+		// reported target set is worth a reconcile.
+		Watches(&coordinationv1.Lease{},
+			handler.EnqueueRequestsFromMapFunc(enqueueServerForLease),
+			builder.WithPredicates(servedTargetsChanged())).
+		WithOptions(controllerOptions(r.MaxConcurrentReconciles)).
 		Named("conversionwebhookserver").
 		Complete(r)
+}
+
+// enqueueServerForLease maps a replica's served-target Lease back to the
+// instance it belongs to, which the Lease's own label names.
+func enqueueServerForLease(_ context.Context, obj client.Object) []reconcile.Request {
+	name := obj.GetLabels()[servedtargets.WebhookServerLabel]
+	if name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name}}}
+}
+
+// servedTargetsChanged passes a Lease event through only when it could
+// change this controller's answer: any create or delete, and an update
+// that alters the reported target set. A renewTime-only update is the
+// heartbeat and is deliberately dropped — staleness is evaluated when the
+// aggregate is next read, not on a timer here.
+func servedTargetsChanged() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+			old, updated := e.ObjectOld.GetAnnotations(), e.ObjectNew.GetAnnotations()
+			return old[servedtargets.TargetsAnnotation] != updated[servedtargets.TargetsAnnotation] ||
+				old[servedtargets.TruncatedAnnotation] != updated[servedtargets.TruncatedAnnotation]
+		},
+	}
 }
 
 func enqueueAllServers(c client.Client) func(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -784,6 +918,47 @@ func enqueueAllServers(c client.Client) func(ctx context.Context, obj client.Obj
 // spec.rollout is optional as a whole: an instance created before the field
 // existed, or one that simply omits it, has to get the same safe behaviour
 // as one that spells it out.
+
+// goMemLimitEnv and goMemLimitFraction: the Go runtime's soft memory
+// limit, set to a fraction of the container's hard one. The headroom is
+// for everything the Go heap is not — goroutine stacks, the runtime's own
+// bookkeeping, and whatever the allocator has not returned to the OS yet.
+// 90% is the conventional figure and leaves ~25 MiB at the chart's default
+// 256 MiB limit.
+const (
+	goMemLimitEnv      = "GOMEMLIMIT"
+	goMemLimitFraction = 90
+)
+
+// webhookServerMemoryLimitBytes returns the GOMEMLIMIT value to set from
+// the instance's own memory limit, and whether there is one to derive it
+// from. A limit too small to leave any headroom yields no value rather
+// than a nonsensically tiny one — the pod has bigger problems than its GC
+// pacing at that point.
+func webhookServerMemoryLimitBytes(server *teraskyv1alpha1.ConversionWebhookServer) (int64, bool) {
+	limit, ok := server.Spec.Resources.Limits[corev1.ResourceMemory]
+	if !ok {
+		return 0, false
+	}
+	bytes := limit.Value()
+	if bytes <= 0 {
+		return 0, false
+	}
+	derived := bytes / 100 * goMemLimitFraction
+	if derived <= 0 {
+		return 0, false
+	}
+	return derived, true
+}
+
+func hasEnvVar(env []corev1.EnvVar, name string) bool {
+	for _, e := range env {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}
 
 func rolloutPreStopSeconds(server *teraskyv1alpha1.ConversionWebhookServer) int32 {
 	if server.Spec.Rollout == nil || server.Spec.Rollout.PreStopSleepSeconds == nil {

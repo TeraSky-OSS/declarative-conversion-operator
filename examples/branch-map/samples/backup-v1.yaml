@@ -1,0 +1,12 @@
+apiVersion: example.org/v1
+kind: XBackup
+metadata:
+  name: nightly-legacy
+spec:
+  schedule: "0 3 * * *"
+  destination:
+    provider: aws
+    retention: 14
+    awsBucket:
+      name: legacy-backups
+      region: eu-central-1

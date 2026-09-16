@@ -68,6 +68,7 @@
       "additionalProperties": false,
       "properties": {
         "replicaCount": { "type": "integer", "minimum": 0 },
+        "maxConcurrentReconciles": { "type": "integer", "minimum": 1 },
         "leaderElection": {
           "type": "object",
           "additionalProperties": false,
@@ -209,6 +210,25 @@
             "defaultTopologySpread": { "type": ["boolean", "null"] }
           }
         },
+        "sharding": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Automatic assignment across instances. Null leaves it off. Enable it on the default instance before enabling it anywhere else — admission rejects a pool the default instance is not in.",
+          "properties": {
+            "enabled": { "type": ["boolean", "null"] },
+            "weight": { "type": ["integer", "null"], "minimum": 1 }
+          }
+        },
+        "startupProbe": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How long a replica may take to compile every assigned plan before the kubelet restarts it. periodSeconds x failureThreshold is the cold-start budget; null leaves the CRD's own default of 5 x 60, i.e. five minutes.",
+          "properties": {
+            "enabled": { "type": ["boolean", "null"] },
+            "periodSeconds": { "type": ["integer", "null"], "minimum": 1 },
+            "failureThreshold": { "type": ["integer", "null"], "minimum": 1 }
+          }
+        },
         "resources": { "$ref": "#/definitions/resources" },
         "certificate": { "$ref": "#/definitions/certificate" },
         "service": {
@@ -246,7 +266,10 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "labels": { "type": "object", "additionalProperties": { "type": "string" } },
-            "propagationLagFor": { "$ref": "#/definitions/positiveDuration" }
+            "propagationLagFor": { "$ref": "#/definitions/positiveDuration" },
+            "workqueueDepthThreshold": { "type": "integer", "minimum": 0 },
+            "workqueueBacklogFor": { "$ref": "#/definitions/positiveDuration" },
+            "reconcileErrorRateThreshold": { "type": "number", "minimum": 0 }
           }
         }
       }

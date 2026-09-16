@@ -172,28 +172,46 @@ func BenchmarkRouter_SpokeToSpoke_vs_HubHop(b *testing.B) {
 		}},
 	}, &hubSchema, &v2Spoke)
 	router := &Router{Hub: "v3", Plans: map[string]*Plan{"v1": v1, "v2": v2}}
-	hubObj := volumesObject(1000)
-	spokeObj, err := Convert(ConvertInput{Plan: v1, Direction: HubToSpoke, Object: hubObj})
-	if err != nil {
-		b.Fatal(err)
-	}
 
-	b.Run("hub_to_spoke", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			if _, err := router.Convert(hubObj, "v3", "v1"); err != nil {
-				b.Fatal(err)
-			}
+	// Swept rather than pinned at the 1000-element worst case, because the
+	// ratio is the whole question and a single point cannot show whether
+	// it holds. 0-10 volumes is what a composite resource actually
+	// carries; 1000 is the bound, kept for continuity with the Phase 9
+	// measurement.
+	//
+	// The answer, across four orders of magnitude, is a flat ~2x: exactly
+	// 2x the allocations and 2x the bytes at every size. No fixed per-call
+	// overhead to amortise, nothing super-linear.
+	//
+	// The ~2x itself belongs to this fixture, whose two hops cost about
+	// the same; a strategy mix that is much more expensive in one
+	// direction would shift it. What does not depend on the fixture is
+	// that cost(A->B) is exactly cost(A->hub) + cost(hub->B), because that
+	// is what Router.Convert executes — so a direct plan could save at
+	// most one hop, whatever a hop costs. See docs/operations/capacity.md.
+	for _, elements := range []int{0, 1, 5, 10, 100, 1000} {
+		hubObj := volumesObject(elements)
+		spokeObj, err := Convert(ConvertInput{Plan: v1, Direction: HubToSpoke, Object: hubObj})
+		if err != nil {
+			b.Fatal(err)
 		}
-	})
-	b.Run("spoke_to_spoke", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			if _, err := router.Convert(spokeObj, "v1", "v2"); err != nil {
-				b.Fatal(err)
+		b.Run(fmt.Sprintf("elements=%d/hub_to_spoke", elements), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := router.Convert(hubObj, "v3", "v1"); err != nil {
+					b.Fatal(err)
+				}
 			}
-		}
-	})
+		})
+		b.Run(fmt.Sprintf("elements=%d/spoke_to_spoke", elements), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := router.Convert(spokeObj, "v1", "v2"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 func jsonPatchReplaceRule(field, h2s, s2h string) Rule {

@@ -35,7 +35,7 @@ func TestReconcileOneXRD_HappyPath_Compiles(t *testing.T) {
 	c := newFakeClient(xrd, cfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true}
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	entry, ok := r.Registry.Get("xfoos.example.org")
@@ -54,7 +54,7 @@ func TestReconcileOneXRD_ConfigNotFound_Forgets(t *testing.T) {
 	r.configToTarget[configKey("xrd", "cfg")] = "xfoos.example.org"
 	r.Registry.Set("xfoos.example.org", &CompiledEntry{})
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := r.Registry.Get("xfoos.example.org"); ok {
@@ -75,7 +75,7 @@ func TestReconcileOneXRD_DeletionTimestamp_Forgets(t *testing.T) {
 	r.configToTarget[configKey("xrd", "cfg")] = "xfoos.example.org"
 	r.Registry.Set("xfoos.example.org", &CompiledEntry{})
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := r.Registry.Get("xfoos.example.org"); ok {
@@ -93,9 +93,11 @@ func TestReconcileOneXRD_NotAssignedToThisReplica_Removed(t *testing.T) {
 	c := newFakeClient(xrd, cfg, otherServer).Build()
 	registry := NewRegistry()
 	registry.Set("xfoos.example.org", &CompiledEntry{Router: nil})
-	r := &Reconciler{Client: c, ServerName: "this-srv", Registry: registry, EnableXRDSupport: true}
+	// Drain disabled: this test is about the assignment decision, and the
+	// drain has its own tests.
+	r := &Reconciler{Client: c, ServerName: "this-srv", Registry: registry, EnableXRDSupport: true, TargetDrainPeriod: -1}
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := r.Registry.Get("xfoos.example.org"); ok {
@@ -112,7 +114,7 @@ func TestReconcileOneXRD_TargetXRDMissing_RecordsFailure(t *testing.T) {
 	c := newFakeClient(cfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true}
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	entry, ok := r.Registry.Get("missing.example.org")
@@ -132,7 +134,7 @@ func TestReconcileOneXRD_InvalidRules_RecordsFailure(t *testing.T) {
 	c := newFakeClient(xrd, cfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true}
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	entry, ok := r.Registry.Get("xfoos.example.org")
@@ -152,7 +154,7 @@ func TestReconcileOneXRD_AnalysisErrors_RecordsFailure(t *testing.T) {
 	c := newFakeClient(xrd, cfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true}
 
-	if err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneXRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	entry, ok := r.Registry.Get("xfoos.example.org")
@@ -171,7 +173,7 @@ func TestReconcileOneCRD_HappyPath_Compiles(t *testing.T) {
 	c := newFakeClient(crd, cfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableCRDSupport: true}
 
-	if err := r.reconcileOneCRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneCRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	entry, ok := r.Registry.Get("foos.example.org")
@@ -189,7 +191,7 @@ func TestReconcileOneCRD_TargetCRDMissing_RecordsFailure(t *testing.T) {
 	c := newFakeClient(cfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableCRDSupport: true}
 
-	if err := r.reconcileOneCRD(context.Background(), "cfg"); err != nil {
+	if _, err := r.reconcileOneCRD(context.Background(), "cfg"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	entry, ok := r.Registry.Get("missing.example.org")
@@ -210,8 +212,12 @@ func TestInitialSync_PopulatesRegistryForEnabledKinds(t *testing.T) {
 	c := newFakeClient(xrd, xrdCfg, crd, crdCfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: true, EnableCRDSupport: true}
 
-	if err := r.InitialSync(context.Background()); err != nil {
+	stats, err := r.InitialSync(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if stats.Targets != 2 {
+		t.Fatalf("expected the stats to report both configs, got %d", stats.Targets)
 	}
 	if _, ok := r.Registry.Get("xfoos.example.org"); !ok {
 		t.Fatalf("expected the XRD's config to have been synced")
@@ -231,8 +237,12 @@ func TestInitialSync_DisabledKindsAreSkipped(t *testing.T) {
 	c := newFakeClient(xrd, xrdCfg, server).Build()
 	r := &Reconciler{Client: c, ServerName: "srv", Registry: NewRegistry(), EnableXRDSupport: false, EnableCRDSupport: false}
 
-	if err := r.InitialSync(context.Background()); err != nil {
+	stats, err := r.InitialSync(context.Background())
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if stats.Targets != 0 {
+		t.Fatalf("expected no targets to be walked, got %d", stats.Targets)
 	}
 	if r.Registry.Len() != 0 {
 		t.Fatalf("expected nothing to sync when both kinds are disabled, got len=%d", r.Registry.Len())

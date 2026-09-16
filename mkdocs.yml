@@ -113,6 +113,7 @@ nav:
       - Duration: strategies/duration.md
       - Map Key Rename: strategies/map-key-rename.md
       - CEL: strategies/cel.md
+      - Branch Map: strategies/branch-map.md
   - Contributing:
       - Adding a strategy: contributing/adding-a-strategy.md
   - FAQ: faq.md

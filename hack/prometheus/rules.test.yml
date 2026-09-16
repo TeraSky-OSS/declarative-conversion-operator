@@ -470,3 +470,124 @@ tests:
             exp_annotations:
               summary: "The conversion webhook panicked while converting xfoos.example.org"
               description: "A recovered panic is always a bug in declarative-conversion-operator, and every request that hits it fails a write on the apiserver's admission path. The pod log carries the stack trace. No `for:` delay: one panic is already worth waking up for."
+
+  # --- ControllerWorkqueueBacklog ---
+  - name: a sustained queue depth fires
+    interval: 1m
+    input_series:
+      # Depth climbs and stays there: the controller is not draining.
+      - series: 'workqueue_depth{app_kubernetes_io_name="declarative-conversion-operator",job="dco-manager",controller="xrdconversionconfig",priority=""}'
+        values: "0 2 6 12 18 24 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ControllerWorkqueueBacklog
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ControllerWorkqueueBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: dco-manager
+              controller: xrdconversionconfig
+            exp_annotations:
+              summary: "Reconcile backlog on controller xrdconversionconfig"
+              description: "job=dco-manager. This controller's workqueue has stayed above the backlog threshold, so config changes are converging slowly or not at all — expect stale phases and a lagging ConversionPropagated to follow. Check reconcile latency and error rate on the same dashboard row, then raise --max-concurrent-reconciles if the apiserver has the headroom."
+
+  - name: a burst that drains does not fire
+    interval: 1m
+    input_series:
+      # A bulk apply spikes the queue well past the threshold and then it
+      # empties. This is the shape the `for:` exists to tolerate — alerting
+      # on it would make the panel useless on any cluster where configs are
+      # applied in batches.
+      - series: 'workqueue_depth{app_kubernetes_io_name="declarative-conversion-operator",job="dco-manager",controller="xrdconversionconfig",priority=""}'
+        values: "0 40 35 20 8 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ControllerWorkqueueBacklog
+        exp_alerts: []
+
+  - name: a depth at the threshold does not fire
+    interval: 1m
+    input_series:
+      # Exactly 10 is not "> 10". Asserted because an off-by-one here would
+      # page on a queue that is merely busy.
+      - series: 'workqueue_depth{app_kubernetes_io_name="declarative-conversion-operator",job="dco-manager",controller="conversionwebhookserver",priority=""}'
+        values: "10+0x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ControllerWorkqueueBacklog
+        exp_alerts: []
+
+  # --- ControllerReconcileErrors ---
+  - name: a sustained reconcile error rate fires
+    interval: 1m
+    input_series:
+      # 30 errors per minute = 0.5/s, well above the 0.1/s threshold.
+      - series: 'controller_runtime_reconcile_errors_total{app_kubernetes_io_name="declarative-conversion-operator",job="dco-manager",controller="crdconversionconfig"}'
+        values: "0+30x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ControllerReconcileErrors
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ControllerReconcileErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: dco-manager
+              controller: crdconversionconfig
+            exp_annotations:
+              summary: "Sustained reconcile errors on controller crdconversionconfig"
+              description: "job=dco-manager. Reconciles are returning errors faster than the threshold and being retried with backoff, which both delays convergence and feeds the workqueue depth. Unlike dco_manager_analyze_failures_total this counts infrastructure failures too — a lost API connection, a rejected write — so check the controller's logs rather than the config's status first."
+
+  - name: the occasional retried error does not fire
+    interval: 1m
+    input_series:
+      # One error every ten minutes: a config in permanent error being
+      # retried under backoff. Real, already reported by the config's own
+      # status, and not worth a second alert.
+      - series: 'controller_runtime_reconcile_errors_total{app_kubernetes_io_name="declarative-conversion-operator",job="dco-manager",controller="crdconversionconfig"}'
+        values: "0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 3 3 3 3 3 3 3 3 3 3 4"
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ControllerReconcileErrors
+        exp_alerts: []
+
+  # workqueue_* and controller_runtime_* are controller-runtime's names, not
+  # this operator's: every controller-runtime workload in the cluster emits
+  # them. Without a selector, somebody else's reconcile backlog would page
+  # whoever owns this chart's alerts.
+  - name: another operator's backlog does not fire this operator's alert
+    interval: 1m
+    input_series:
+      - series: 'workqueue_depth{app_kubernetes_io_name="some-other-operator",job="other",controller="widgets",priority=""}'
+        values: "50+0x30"
+      - series: 'controller_runtime_reconcile_errors_total{app_kubernetes_io_name="some-other-operator",job="other",controller="widgets"}'
+        values: "0+60x40"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ControllerWorkqueueBacklog
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ControllerReconcileErrors
+        exp_alerts: []
+
+  # The webhook-server's own registry reconciler is in scope: it is this
+  # operator's controller, it just lives in the other binary.
+  - name: the webhook-server's own reconcile backlog does fire
+    interval: 1m
+    input_series:
+      - series: 'workqueue_depth{app_kubernetes_io_name="declarative-conversion-webhook-server",job="dco-webhook",controller="webhookserver-registry-xrd",priority=""}'
+        values: "30+0x30"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ControllerWorkqueueBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: dco-webhook
+              controller: webhookserver-registry-xrd
+            exp_annotations:
+              summary: "Reconcile backlog on controller webhookserver-registry-xrd"
+              description: "job=dco-webhook. This controller's workqueue has stayed above the backlog threshold, so config changes are converging slowly or not at all — expect stale phases and a lagging ConversionPropagated to follow. Check reconcile latency and error rate on the same dashboard row, then raise --max-concurrent-reconciles if the apiserver has the headroom."

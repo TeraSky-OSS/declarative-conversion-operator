@@ -52,6 +52,10 @@ helm upgrade declarative-conversion-operator charts/declarative-conversion-opera
 | `certManager.issuerRef` | Issuer/ClusterIssuer for `ConversionWebhookServer` certificates | bootstrap self-signed `ClusterIssuer` |
 | `admissionWebhook.certificate.issuerRef` | Issuer/ClusterIssuer for this operator's own admission-webhook certificate (a separate trust surface) | bootstrap self-signed `ClusterIssuer` |
 | `conversionWebhookServer.autoscaling.enabled` | Use an HPA instead of a fixed replica count for the default instance | `false` |
+| `conversionWebhookServer.sharding.enabled` / `.weight` | Distribute configs with no explicit `webhookServerRef` across every instance that opts in. Enable it on this (default) instance **before** any other, or admission rejects the pool | `null` (off) / `null` (1) |
+| `conversionWebhookServer.startupProbe.periodSeconds` / `.failureThreshold` | The cold-start budget before the kubelet restarts a replica. Their product; the CRD default is five minutes | `null` (5) / `null` (60) |
+| `manager.maxConcurrentReconciles` | Objects each controller reconciles at once. Raise when the dashboard's workqueue depth stays non-zero | `1` |
+| `metrics.prometheusRule.workqueueDepthThreshold` / `.workqueueBacklogFor` / `.reconcileErrorRateThreshold` | Thresholds for the two controller-health alerts | `10` / `15m` / `0.1` |
 | `metrics.serviceMonitor.enabled` | Create Prometheus Operator `ServiceMonitor`s (opt-in; not auto-detected) | `false` |
 | `metrics.prometheusRule.enabled` | Create a `PrometheusRule` with built-in conversion/manager alerts | `false` |
 | `dashboards.enabled` | Create Grafana sidecar dashboard ConfigMaps (`grafana_dashboard: "1"`): Conversion Overview, Conversion Target Detail, and Conversion Platform Stability | `false` |

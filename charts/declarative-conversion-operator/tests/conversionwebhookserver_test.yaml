@@ -32,6 +32,43 @@ tests:
       - isNull:
           path: spec.rollout.defaultTopologySpread
 
+  - it: emits no sharding block when nothing is set
+    asserts:
+      # An empty `sharding: {}` would be the opt-in, since the CRD defaults
+      # enabled to true inside the block — so "nothing set" has to render
+      # nothing at all, not an empty map.
+      - isNull:
+          path: spec.sharding
+
+  - it: emits only the sharding keys that were set
+    set:
+      conversionWebhookServer.sharding.weight: 3
+    asserts:
+      - equal:
+          path: spec.sharding.weight
+          value: 3
+      - isNull:
+          path: spec.sharding.enabled
+
+  - it: emits no startupProbe block when nothing is set
+    asserts:
+      - isNull:
+          path: spec.startupProbe
+
+  - it: emits only the startupProbe keys that were set
+    set:
+      conversionWebhookServer.startupProbe.failureThreshold: 120
+    asserts:
+      - equal:
+          path: spec.startupProbe.failureThreshold
+          value: 120
+      # Same reasoning as rollout above: an explicit null here would
+      # override the CRD's default period with nothing.
+      - isNull:
+          path: spec.startupProbe.periodSeconds
+      - isNull:
+          path: spec.startupProbe.enabled
+
   - it: emits no extraArgs when nothing is set
     asserts:
       - isNull:

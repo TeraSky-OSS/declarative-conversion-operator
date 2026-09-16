@@ -244,3 +244,28 @@ spec:
             spokeToHub: '{"spec.packed": int(object.spec.bitHigh) * 256 + int(object.spec.bitLow)}'
           acknowledgeLossy: true
           reason: "integer packing via CEL is an escape hatch the engine cannot prove lossless"
+
+        # A union field: the hub offers s3/gcs, the v1 spoke spells the same
+        # two branches objectStore/googleStore and names the inner field
+        # differently. The branch that is set decides which nested rules
+        # run; the discriminator is remapped alongside.
+        - strategy: BranchMap
+          branchMap:
+            hubPath: spec.store
+            spokePath: spec.store
+            discriminator: backend
+            branches:
+              - hubBranch: s3
+                spokeBranch: objectStore
+                rules:
+                  - strategy: FieldRename
+                    fieldRename:
+                      hubPath: bucket
+                      spokePath: name
+              - hubBranch: gcs
+                spokeBranch: googleStore
+                rules:
+                  - strategy: FieldRename
+                    fieldRename:
+                      hubPath: bucket
+                      spokePath: name

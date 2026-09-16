@@ -78,10 +78,12 @@ practice:
 
 ## Webhook-server ServiceAccount
 
-Used by every `ConversionWebhookServer` pod. **Read/watch only** — the
-webhook-server binary never mutates cluster state. Each replica runs its
-own informers so it can compile conversion plans without depending on the
+Used by every `ConversionWebhookServer` pod. Each replica runs its own
+informers so it can compile conversion plans without depending on the
 manager at request time.
+
+Cluster-wide it is **read/watch only** — the webhook-server binary never
+mutates an XRD, a CRD, or a conversion config:
 
 | API group | Resource | Verbs | Why |
 |---|---|---|---|
@@ -89,7 +91,39 @@ manager at request time.
 | `apiextensions.crossplane.io` | `compositeresourcedefinitions` | `get`, `list`, `watch` | Read live XRD schemas to (re)compile plans. |
 | `apiextensions.k8s.io` | `customresourcedefinitions` | `get`, `list`, `watch` | Same for native CRDs. |
 
-No access to Secrets, no write verbs, no ability to patch XRDs/CRDs.
+It writes exactly one thing, and that grant is a **namespaced `Role`**, not
+part of the ClusterRole:
+
+| API group | Resource | Verbs | Scope | Why |
+|---|---|---|---|---|
+| `coordination.k8s.io` | `leases` | `get`, `create`, `update`, `patch` | the release namespace only | Each replica publishes the targets it can serve into a Lease of its own, so the operator can verify an instance is ready before moving a target onto it — see [Moving a target between instances](../architecture.md#moving-a-target-between-instances). |
+
+Two deliberate narrowings there. **Namespaced**, because Leases are how
+leader election is implemented across the ecosystem and cluster-wide write
+on them is not a grant to hand out for a bookkeeping annotation. And **no
+`list` or `watch`**: a replica reads back exactly one Lease, by name, so
+the ability to enumerate the namespace's Leases — and with it every
+leader-election holder identity — buys nothing.
+
+**What this is not: an own-Lease restriction.** RBAC cannot express "only
+the Lease named after your own pod" — `resourceNames` needs names known
+when the `Role` is written, and these are derived from generated pod names.
+So a compromised webhook-server pod can `get`, `update` or `patch` *any*
+Lease in its namespace, which by default includes this operator's own
+leader-election Lease; disrupting that would stall reconciles until the
+lease expired. The bound that does hold is the namespace.
+
+If that residual matters to you, give the instance its own
+`spec.namespace`. The chart creates the `Role` in whatever namespace the
+default instance runs in, so an instance isolated in its own namespace
+leaves this grant reaching nothing else. A `ConversionWebhookServer`
+created outside the chart needs the same `Role` and `RoleBinding` in its
+own namespace; without them the replicas still serve conversions, and what
+is lost is the verified handover — a move onto that instance waits 30
+seconds for a report that cannot come, then proceeds with `HandoverReady`
+reason `HandoverUnverified` rather than failing.
+
+No access to Secrets, and no ability to patch XRDs or CRDs.
 
 ## Related docs
 

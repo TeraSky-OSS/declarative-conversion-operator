@@ -17,6 +17,8 @@ limitations under the License.
 package webhookserver
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -174,3 +176,14 @@ func renameRuleCRDConfig(name, targetCRD string) *teraskyv1alpha1.CRDConversionC
 		},
 	}
 }
+
+// fakeClock lets a test walk the drain period without sleeping through
+// thirty seconds of it.
+type fakeClock struct{ t time.Time }
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{t: time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)}
+}
+
+func (c *fakeClock) Now() time.Time          { return c.t }
+func (c *fakeClock) Advance(d time.Duration) { c.t = c.t.Add(d) }

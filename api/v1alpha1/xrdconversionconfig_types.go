@@ -72,7 +72,7 @@ const (
 )
 
 // Strategy names one of the engine's built-in conversion strategies.
-// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename;CEL
+// +kubebuilder:validation:Enum=FieldRename;ScalarToObject;ObjectToScalar;SingletonArrayToObject;ObjectToSingletonArray;FieldsToMap;MapToFields;ToAnnotation;ToLabel;FromAnnotation;FromLabel;EnumRemap;DefaultValue;Constant;Delete;JSONPatch;ForEach;TypeCoerce;ScalarToFields;FieldsToScalar;ArrayToMapByKey;MapToArrayByKey;NumericScale;ListJoin;ListSplit;Quantity;Duration;MapKeyRename;CEL;BranchMap
 type Strategy string
 
 const (
@@ -105,6 +105,7 @@ const (
 	StrategyDuration               Strategy = "Duration"
 	StrategyMapKeyRename           Strategy = "MapKeyRename"
 	StrategyCEL                    Strategy = "CEL"
+	StrategyBranchMap              Strategy = "BranchMap"
 )
 
 // TargetXRDRef identifies the Crossplane CompositeResourceDefinition this
@@ -301,6 +302,59 @@ type JSONPatchParams struct {
 	SpokeToHub []JSONPatchOp `json:"spokeToHub,omitempty"`
 	// +optional
 	LosslessOverride bool `json:"losslessOverride,omitempty"`
+}
+
+// BranchMapParams maps the branches of a union-typed field between hub and
+// spoke — the "one of s3, gcs or azure" shape mature platform APIs express
+// with `oneOf`.
+//
+// The active branch is identified by **which branch property is present**,
+// not by validating the object against each branch schema. That is what a
+// union looks like in a legal CRD: the apiserver requires every property
+// named inside a `oneOf` to also be declared in the parent's own
+// properties, so a union is a set of declared, mutually-exclusive fields.
+//
+// No branch set, or more than one, is a hard runtime conversion error.
+// That is oneOf's contract — exactly one — and not anyOf's, which permits
+// overlap. BranchMap fits an anyOf whose branches are mutually exclusive
+// in practice; one that genuinely allows two at once has no single
+// correspondence to map, and is better handled with ordinary rules over
+// the individual branch properties.
+type BranchMapParams struct {
+	// HubPath and SpokePath are the union-typed OBJECT on each side, not a
+	// branch within it.
+	HubPath   string `json:"hubPath"`
+	SpokePath string `json:"spokePath"`
+	// Discriminator optionally names a sibling property whose value also
+	// identifies the branch (`backend: s3`). It is remapped alongside the
+	// branch, so hub and spoke may spell their branch names differently.
+	// It must be a declared property of both unions.
+	// +optional
+	Discriminator string `json:"discriminator,omitempty"`
+	// +kubebuilder:validation:MinItems=1
+	Branches []BranchMapping `json:"branches"`
+}
+
+// BranchMapping is one branch correspondence.
+type BranchMapping struct {
+	// HubBranch and SpokeBranch are property names inside the two union
+	// objects. Both must be declared properties.
+	HubBranch   string `json:"hubBranch"`
+	SpokeBranch string `json:"spokeBranch"`
+	// HubDiscriminatorValue and SpokeDiscriminatorValue are used only when
+	// BranchMapParams.Discriminator is set. Empty means the branch's own
+	// name, which is the common case.
+	// +optional
+	HubDiscriminatorValue string `json:"hubDiscriminatorValue,omitempty"`
+	// +optional
+	SpokeDiscriminatorValue string `json:"spokeDiscriminatorValue,omitempty"`
+	// Rules apply to this branch pair, with paths relative to the branch
+	// itself — `bucket`, not `spec.backup.s3.bucket`. The same scoping
+	// ForEach gives an array element.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Rules []ConversionRule `json:"rules,omitempty"`
 }
 
 // ForEachParams applies a nested rule list to each element of a hub array
@@ -508,6 +562,8 @@ type ConversionRule struct {
 	MapKeyRename *MapKeyRenameParams `json:"mapKeyRename,omitempty"`
 	// +optional
 	CEL *CELParams `json:"cel,omitempty"`
+	// +optional
+	BranchMap *BranchMapParams `json:"branchMap,omitempty"`
 
 	// AcknowledgeLossy must be true if this rule is lossy in any
 	// direction, or validation fails (fail-closed default posture).
@@ -539,6 +595,28 @@ type RuleWhen struct {
 // to know about the other.
 func (c *XRDConversionConfig) WebhookServerRefField() *WebhookServerRef {
 	return c.Spec.WebhookServerRef
+}
+
+// ShardKey is what automatic assignment hashes: the target resource's
+// name, not the config's own.
+//
+// The target is the thing being served — it is the registry key and the
+// /convert/{name} path — so hashing it means renaming a config does not
+// move the resource it converts, and two configs can never disagree about
+// where one target belongs. Since one target may carry at most one config
+// (enforced by a unique field index and by admission), the two keys
+// partition identically; only their stability under a rename differs.
+func (c *XRDConversionConfig) ShardKey() string {
+	return c.Spec.TargetXRD.Name
+}
+
+// AppliedWebhookURL is the URL the operator last wrote into the target's
+// spec.conversion, or empty if it has never applied one. It implements
+// internal/assign's ServingConfigLike constraint: an instance a target
+// still points at is an instance that is still serving it, even after the
+// resolver has reassigned the config elsewhere.
+func (c *XRDConversionConfig) AppliedWebhookURL() string {
+	return c.Status.WebhookURL
 }
 
 // SpokeVersionRules is every rule declared for one spoke version.
@@ -714,6 +792,19 @@ const (
 	// reconcile speed — but until it is True, nothing is actually
 	// converting.
 	ConditionConversionPropagated = "ConversionPropagated"
+	// ConditionHandoverReady reports whether the ConversionWebhookServer a
+	// target is being moved TO can already serve it. It appears only once
+	// a move has happened — a target being applied for the first time has
+	// no previous server still covering it, so there is nothing to hand
+	// over. False means the target is deliberately still pointed at its
+	// current server, which is still serving it.
+	//
+	// It is not cleared afterwards: it is the verdict on the last
+	// handover, and "the instance now serving this target was verified
+	// able to serve it before it was pointed here" stays true. That is
+	// also what makes a HandoverUnverified verdict stick around long
+	// enough to be noticed.
+	ConditionHandoverReady = "HandoverReady"
 
 	// ConditionApplied reasons used by FailClosed drift handling.
 	ReasonReverted     = "Reverted"

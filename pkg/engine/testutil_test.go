@@ -61,3 +61,16 @@ func diagMessages(diags []Diagnostic, sev Severity) []string {
 	}
 	return out
 }
+
+// jsonRaw wraps a raw JSON literal for an enum entry.
+func jsonRaw(s string) extv1.JSON { return extv1.JSON{Raw: []byte(s)} }
+
+// withProp returns a copy of schema with one extra declared property.
+func withProp(schema extv1.JSONSchemaProps, name string, prop extv1.JSONSchemaProps) extv1.JSONSchemaProps {
+	out := *schema.DeepCopy()
+	if out.Properties == nil {
+		out.Properties = map[string]extv1.JSONSchemaProps{}
+	}
+	out.Properties[name] = prop
+	return out
+}

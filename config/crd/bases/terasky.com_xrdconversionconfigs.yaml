@@ -113,6 +113,75 @@ spec:
                             - keyField
                             - spokePath
                             type: object
+                          branchMap:
+                            description: |-
+                              BranchMapParams maps the branches of a union-typed field between hub and
+                              spoke — the "one of s3, gcs or azure" shape mature platform APIs express
+                              with `oneOf`.
+
+                              The active branch is identified by **which branch property is present**,
+                              not by validating the object against each branch schema. That is what a
+                              union looks like in a legal CRD: the apiserver requires every property
+                              named inside a `oneOf` to also be declared in the parent's own
+                              properties, so a union is a set of declared, mutually-exclusive fields.
+
+                              No branch set, or more than one, is a hard runtime conversion error.
+                              That is oneOf's contract — exactly one — and not anyOf's, which permits
+                              overlap. BranchMap fits an anyOf whose branches are mutually exclusive
+                              in practice; one that genuinely allows two at once has no single
+                              correspondence to map, and is better handled with ordinary rules over
+                              the individual branch properties.
+                            properties:
+                              branches:
+                                items:
+                                  description: BranchMapping is one branch correspondence.
+                                  properties:
+                                    hubBranch:
+                                      description: |-
+                                        HubBranch and SpokeBranch are property names inside the two union
+                                        objects. Both must be declared properties.
+                                      type: string
+                                    hubDiscriminatorValue:
+                                      description: |-
+                                        HubDiscriminatorValue and SpokeDiscriminatorValue are used only when
+                                        BranchMapParams.Discriminator is set. Empty means the branch's own
+                                        name, which is the common case.
+                                      type: string
+                                    rules:
+                                      description: |-
+                                        Rules apply to this branch pair, with paths relative to the branch
+                                        itself — `bucket`, not `spec.backup.s3.bucket`. The same scoping
+                                        ForEach gives an array element.
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    spokeBranch:
+                                      type: string
+                                    spokeDiscriminatorValue:
+                                      type: string
+                                  required:
+                                  - hubBranch
+                                  - spokeBranch
+                                  type: object
+                                minItems: 1
+                                type: array
+                              discriminator:
+                                description: |-
+                                  Discriminator optionally names a sibling property whose value also
+                                  identifies the branch (`backend: s3`). It is remapped alongside the
+                                  branch, so hub and spoke may spell their branch names differently.
+                                  It must be a declared property of both unions.
+                                type: string
+                              hubPath:
+                                description: |-
+                                  HubPath and SpokePath are the union-typed OBJECT on each side, not a
+                                  branch within it.
+                                type: string
+                              spokePath:
+                                type: string
+                            required:
+                            - branches
+                            - hubPath
+                            - spokePath
+                            type: object
                           cel:
                             description: |-
                               CELParams is an always-lossy escape hatch. Both expressions receive the
@@ -705,6 +774,7 @@ spec:
                             - Duration
                             - MapKeyRename
                             - CEL
+                            - BranchMap
                             type: string
                           toAnnotation:
                             description: ToMetadataParams backs both ToAnnotation
@@ -1072,6 +1142,7 @@ spec:
                             - Duration
                             - MapKeyRename
                             - CEL
+                            - BranchMap
                             type: string
                           warnings:
                             items:

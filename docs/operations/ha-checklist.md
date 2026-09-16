@@ -49,6 +49,30 @@ them leads to over-provisioning the wrong one.
       ```
 
       An empty result means every ready replica can serve that target.
+- [ ] **Know your cold-start budget.** A replica compiles every assigned plan
+      before it can serve. The health endpoint (`/healthz`, `/readyz`,
+      `/metrics`) listens from the start, so the replica is visibly alive
+      throughout; `/readyz` stays `503` and the *conversion* endpoint does
+      not listen at all until the registry is populated. The `startupProbe`
+      (`conversionWebhookServer.startupProbe`, five minutes by default)
+      polls `/readyz`, so its `periodSeconds × failureThreshold` is a
+      deadline on the sync — and while it is in flight the kubelet runs
+      neither of the other two probes, so a slow sync is not also fighting
+      the liveness probe's 3 × 10 s. Size it from
+      `dco_webhook_initial_sync_duration_seconds`: too tight turns a slow
+      start into a crash loop, too loose only delays the restart of a pod
+      that is not taking traffic anyway.
+      Check the measured figure after a scale-out and raise
+      `failureThreshold` if it is close:
+
+      ```promql
+      max(dco_webhook_initial_sync_duration_seconds)
+      ```
+
+      The compile itself is under a second for a thousand targets; what
+      makes a cold start slow is the informer cache sync in front of it,
+      which `spec.cacheSelector` is the lever for. See
+      [Capacity planning](capacity.md#cold-start-how-long-before-a-replica-can-serve).
 
 ## Rolling updates
 

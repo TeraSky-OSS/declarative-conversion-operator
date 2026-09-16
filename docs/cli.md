@@ -188,7 +188,7 @@ fuzz-1  (conversion)  v3 → v2  error  jsonPatch: apply: move operation does no
 ```
 
 That example is not hypothetical: it is what `--fuzz` reports against this
-repository's own full-coverage fixture, which exercises all 29 strategies.
+repository's own full-coverage fixture, which exercises all 30 strategies.
 Four classes come out of it. Three are the same shape — a rule that assumes
 an optional field is present — and the fourth is a schema that admits a
 lexical form its rule cannot represent:

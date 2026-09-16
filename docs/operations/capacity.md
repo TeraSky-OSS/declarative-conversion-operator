@@ -61,19 +61,100 @@ patch documents over many tiny ones.
 ## Spoke-to-spoke vs hub hop
 
 Router always goes spoke A → hub → spoke B (`O(N)` compiled plans, never
-pairwise). For a 1000-element `forEach` object:
+pairwise). Phase 9 measured that at a single worst-case point; Phase 16
+swept it, because one point cannot show whether the ratio holds
+(`BenchmarkRouter_SpokeToSpoke_vs_HubHop`, `forEach` over an array of
+volumes, medians of eight runs):
 
-| Route | ns/op | vs hub→spoke |
-|---|---:|---|
-| hub → spoke | 328k | 1.0× |
-| spoke → spoke | 765k | 2.3× |
+| `forEach` elements | hub → spoke | spoke → spoke | ratio | allocations |
+|---:|---:|---:|---:|---|
+| 0 | 0.4 µs | 1.0 µs | 2.4× | 5 → 10 |
+| 1 | 0.8 µs | 1.8 µs | 2.2× | 9 → 18 |
+| 5 | 2.2 µs | 4.9 µs | 2.2× | 21 → 42 |
+| 10 | 4.2 µs | 8.4 µs | 2.0× | 36 → 72 |
+| 100 | 38 µs | 79 µs | 2.1× | 306 → 612 |
+| 1000 | 378 µs | 705 µs | 1.9× | 3006 → 6012 |
 
-Spoke-to-spoke is essentially two Converts. Even in this worst-case array
-shape it stays under 1 ms. The apiserver stores at the hub version, so
-spoke-to-spoke is rare in production. Direct shortcut plans were evaluated
-and rejected: they would push compilation toward `O(N²)` spoke pairs for a
-gain that does not show up under the 1s p99 ConversionReview alert. Hub-and-
-spoke remains the only routing mode.
+**The ratio is a flat ~2× across four orders of magnitude**, and the
+allocation counts are exactly 2× at every size. There is no fixed per-call
+overhead that a direct plan would remove, and nothing that grows
+super-linearly.
+
+Be precise about what generalises from that, because the table is one
+fixture — a `forEach` over an array of volumes — and a different strategy
+mix would put different numbers in it. What does not depend on the fixture
+is the identity underneath:
+
+> `cost(A → B) = cost(A → hub) + cost(hub → B)`, exactly, because that is
+> literally what `Router.Convert` executes.
+
+So the most a direct plan could ever save is **one hop**, whatever a hop
+costs for your schemas. The ~2× is what that identity becomes when the two
+hops cost about the same, which is the common case and is what this fixture
+measures; a spoke whose rules are much more expensive in one direction
+would shift the ratio without changing the conclusion, because the saving
+is still bounded by a single hop.
+
+What that hop costs for a given config is already measurable without a new
+benchmark: `dco_webhook_conversion_object_duration_seconds` histograms it
+per direction, on live traffic. The per-strategy table further down gives
+the offline version.
+
+### Measuring how much spoke-to-spoke traffic you actually have
+
+`dco_webhook_conversion_objects_total` carries a `route` label —
+`hub_to_spoke`, `spoke_to_hub`, `spoke_to_spoke`, `identity`. It exists
+because `from_version` and `to_version` cannot answer the question on their
+own: deciding whether a pair is spoke-to-spoke needs to know which version
+is the hub, which is a per-target fact rather than a label, so a PromQL
+query would have to hard-code every target's hub version and be re-edited
+whenever a hub is promoted.
+
+```promql
+sum by (route) (rate(dco_webhook_conversion_objects_total[5m]))
+  / ignoring(route) group_left
+sum(rate(dco_webhook_conversion_objects_total[5m]))
+```
+
+The "Conversion route mix" panel on the shipped **Conversion stability**
+dashboard is this query. Spoke-to-spoke only happens when a client reads at
+one non-hub version an object that a client at a *different* non-hub
+version wrote — in practice, when a controller and a human prefer different
+legacy versions of the same resource at the same time.
+
+### The recommendation: no direct plans
+
+Direct shortcut plans were evaluated and rejected, twice now, and the
+reasoning is worth keeping rather than re-deriving:
+
+- **The saving is bounded by one hop.** In this fixture, a realistic
+  composite resource is in the 0–10 element rows, where that hop costs
+  **0.6–4 µs**. A ConversionReview that reaches this webhook has already
+  paid apiserver admission, TLS and JSON round-trips measured in
+  milliseconds. Removing 4 µs from that is not observable, let alone under
+  the 1 s p99 ConversionReview alert. If your own hop latency is orders of
+  magnitude higher than this — check
+  `dco_webhook_conversion_object_duration_seconds` before assuming it is —
+  the arithmetic is worth redoing, but the other two objections below are
+  not about latency at all.
+- **The cost is not bounded.** Pairwise plans are `O(N²)` in served
+  versions, and each plan is compiled, validated and retained per target —
+  the memory figures below are per plan. Lazy per-pair compilation would
+  keep the common case `O(N)` but would move plan compilation onto the
+  conversion path, where a first request for a new pair pays compilation
+  latency inside the apiserver's timeout.
+- **The correctness surface doubles.** A direct plan is a third mapping to
+  keep consistent with the two it shortcuts, and any disagreement between
+  them is a conversion that silently depends on which route it took.
+
+**Hub-and-spoke remains the only routing mode.** The seam for anyone
+revisiting this is `Router.Convert` in
+[`pkg/engine/convert.go`](https://github.com/terasky-oss/declarative-conversion-operator/blob/main/pkg/engine/convert.go):
+it is the single place that decides the route, it already has both plans in
+hand, and a per-pair cache keyed on `(from, to)` would slot in there without
+touching any strategy. Bring the `route` panel showing spoke-to-spoke as a
+material share of traffic, and an object size in the rows where 2× is worth
+paying for.
 
 ## Memory: the manager
 
@@ -127,6 +208,123 @@ every replica is symmetric and caches the same set. The chart's default limit
 is 256 MiB, which the cluster above fits with room to spare after this change
 and did not before. A cluster with substantially more or larger CRDs should
 raise it or set a `cacheSelector`.
+
+There are three terms, and they are not the same size:
+
+| Term | What it scales with | Measured |
+|---|---|---|
+| **Informer cache** | every CRD and XRD the replica watches, schemas included | the 121 MiB above, for 300 two-version 200-property CRDs — **the dominant term** |
+| **Compiled registry** | number of targets × their schema size | ~18 KiB per target (see below) |
+| **Cold-start transient** | allocation churn while compiling, not anything retained | 8–13× the steady registry, depending on fleet size — **what an OOM kill is decided against** |
+
+#### Bytes per compiled plan
+
+`make bench-mem`, `BenchmarkCompiledPlanRetained` in `pkg/engine`. Live heap
+either side of building N plans and holding them all — not `-benchmem`'s
+`B/op`, which counts the garbage a compile produces as well as what survives
+it:
+
+| Leaves (per version) | Retained per plan | Churned per compile | Ratio |
+|---|---:|---:|---:|
+| 10 | 2.5 KiB | 47 KiB | 19× |
+| 100 | 21 KiB | 467 KiB | 22× |
+| 1000 | 234 KiB | 4.7 MiB | 20× |
+
+Retained cost is linear in leaf count, about **240 bytes per leaf**. The
+number that matters operationally is the third column: **a compile churns
+roughly twenty times what it keeps.**
+
+#### Registry footprint
+
+`BenchmarkRegistryRetained` in `internal/webhookserver`, over a fleet of
+two-version targets of 50 leaves each with one `FieldRename` rule per leaf —
+so each target carries one compiled plan:
+
+| Targets | Retained per target | Registry total |
+|---|---:|---:|
+| 10 | 83 KiB | 0.8 MiB |
+| 100 | 18.6 KiB | 1.8 MiB |
+| 1000 | 18.4 KiB | 18 MiB |
+
+The 10-target row is fixed per-replica overhead divided by ten, not a real
+per-target cost; from a hundred targets up the figure is flat at ~18 KiB.
+**A thousand targets is 18 MiB of registry** — small enough that the registry
+is never the reason a replica needs a bigger limit.
+
+#### Peak versus steady state
+
+`BenchmarkInitialSyncPeak`, sampling live heap every 2 ms through the cold
+start:
+
+| Targets | Steady registry | Peak during sync | Ratio |
+|---|---:|---:|---:|
+| 100 | 1.8 MiB | 23–26 MiB | ~13× |
+| 1000 | 18 MiB | 140 MiB | ~8× |
+
+The ratio falls as the fleet grows because the fixed per-replica overhead
+stops dominating, not because the transient gets cheaper in absolute terms.
+
+This is the finding worth acting on. The peak is not memory the replica
+needs; it is memory the garbage collector has not reclaimed yet, because
+with the default `GOGC` the heap is allowed to double the live set before a
+collection — and a cold start allocates twenty times what it keeps, as fast
+as it can, across every core.
+
+The kernel enforcing a container memory limit does not wait for the GC.
+**`GOMEMLIMIT` is what makes the GC aware of the same number**, so the
+operator sets it on every webhook-server container at 90% of
+`spec.resources.limits.memory` whenever a limit is set. With it, the same
+thousand-target run peaks at 61 MiB instead of 140 MiB, taking 1.6 s instead
+of 0.45 s — which is the trade a memory limit is asking for. Set
+`GOMEMLIMIT` yourself in `spec.extraEnv` to override the derived value; the
+operator leaves an explicit one alone.
+
+!!! warning "`GOMEMLIMIT` is a soft target, not a cap"
+    It makes the collector work harder as the heap approaches the number —
+    it cannot free memory that is still live, and it does not cover
+    allocations outside the Go runtime. Against a **transient** peak, which
+    is what the table above measures, that is exactly the right lever. Against
+    a **live** working set larger than the limit it does nothing except
+    collect continuously, and the container is OOM-killed anyway, now with a
+    CPU burn in front of it.
+
+    So `GOMEMLIMIT` is not a substitute for sizing the limit. Size it for the
+    live set — registry plus informer cache, the two terms below — and leave
+    headroom on top. What `GOMEMLIMIT` changes is how much headroom the
+    cold-start transient needs: measured at a thousand targets it took the
+    peak from 140 MiB to 61 MiB. Much smaller, not zero, and not a
+    guaranteed ceiling — the collector can be outrun.
+
+#### Worked example
+
+A cluster with **1000 targets averaging 200 leaves per version**, on the
+chart's default 256 MiB limit:
+
+- Registry: 200 leaves × 240 B ≈ 48 KiB per plan, ×1000 ≈ **48 MiB**.
+- Informer cache: the schemas those targets live in. Extrapolating the
+  measured 121 MiB for 300 two-version 200-property CRDs gives roughly
+  **400 MiB** — this term alone blows the default limit.
+- Cold-start transient: several hundred MiB on top without `GOMEMLIMIT`,
+  substantially less with it — see the note below.
+
+So: **set `cacheSelector`, or raise the limit to ~1 GiB.** The registry is
+not the problem at any plausible scale; the informer cache is, and it is the
+one term this operator can only narrow, never shrink.
+
+Note which term `GOMEMLIMIT` can and cannot help with here, because this
+example is the case that makes the distinction concrete. The ~400 MiB
+informer cache is **live**, so no GC setting brings it under a 256 MiB
+limit — only `cacheSelector` or a bigger limit will. The cold-start
+transient is the one term it does move, and it shrinks it by roughly half
+rather than removing it: budget for a reduced transient on top of whatever
+limit the live set demands, not for none.
+
+The chart's 256 MiB default was reviewed against these numbers and left
+alone. It is right for the cluster it is a default for — a few dozen
+targets, a few hundred CRDs — and raising it would silently raise the
+scheduling floor for every install to serve the minority that need it. What
+was wrong was that the Go runtime had no idea the limit existed, so the
+cold-start transient was sized by `GOGC` alone. `GOMEMLIMIT` tells it.
 
 ### How these numbers were taken
 
@@ -194,6 +392,108 @@ At 10,000 synthetic configs with a selector matching 1% (`tenant=a`):
 That is a 99% reduction in cached objects. Memory scales with that store, so
 the same ratio applies to RAM. Use a selector per tenant (or per team) when
 one cluster holds many configs but each webhook instance only serves a slice.
+
+## Cold start: how long before a replica can serve
+
+A replica does not answer conversions until its registry holds a compiled
+plan for every target assigned to it. That startup pass — `InitialSync` — is
+the whole of the cold start, and it is what a `startupProbe` has to be sized
+against.
+
+`BenchmarkInitialSync` in `internal/webhookserver/initialsync_bench_test.go`
+walks N targets, each a two-version XRD of 50 leaves per version with one
+`FieldRename` rule per leaf, and compiles them all:
+
+| Targets | Serial | Parallel (GOMAXPROCS=24) | Speed-up |
+|---|---:|---:|---:|
+| 10 | 12 ms | 8 ms | 1.5× |
+| 100 | 73 ms | 50 ms | 1.5× |
+| 1000 | 825 ms | 391 ms | 2.1× |
+
+Compilation is CPU-bound and independent per target, so `InitialSync` runs a
+bounded worker pool — `GOMAXPROCS` by default, `--initial-sync-workers` to
+override. The benchmark's client is a fake backed by one mutex, so its
+API-read term is more serialised than a real informer cache and the speed-up
+above is a floor, not a ceiling.
+
+**A thousand targets is under a second of compile.** The cold-start budget is
+therefore dominated not by this operator but by the informer cache sync in
+front of it: a replica watching every CRD and XRD on a large cluster spends
+most of its startup waiting for those LISTs. That is what
+`spec.cacheSelector` reduces, and it is why the default budget is minutes
+rather than seconds.
+
+### The startup probe
+
+`ConversionWebhookServer.spec.startupProbe` renders a `startupProbe` on the
+webhook-server container; `periodSeconds × failureThreshold` is the budget,
+defaulting to 5 × 60, i.e. five minutes.
+
+It polls **`/readyz`**, which is what makes the budget real. The plain
+endpoint carrying `/healthz`, `/readyz` and `/metrics` comes up *before* the
+registry sync, so `/healthz` answers within milliseconds of process start; a
+`startupProbe` pointed at it would succeed immediately and bound nothing.
+`/readyz` stays false until the initial sync completes, so
+`periodSeconds × failureThreshold` is a deadline on the sync itself.
+
+The kubelet runs neither of the other two probes while a `startupProbe` is
+in flight, so a slow sync is not simultaneously fighting the liveness
+probe's own 3 × 10 s. Once the probe succeeds, liveness (`/healthz`) and
+readiness (`/readyz`) take over as usual.
+
+Two things the deadline buys, beyond not crash-looping a slow replica:
+
+- **The initial sync retries infrastructure failures without a limit** — a
+  failed read of a target, a failed server list — because a watch-driven
+  reconciler will not necessarily re-deliver an event for what failed. That
+  is the right behaviour for a transient failure and the wrong one for a
+  permanent one, and the `startupProbe` is what distinguishes them.
+- **Without it a wedged replica is invisible.** It would stay
+  liveness-healthy and never ready: out of the Service, never restarted,
+  showing up only as a gap in `readyReplicas`.
+
+Erring long is deliberate. An over-tight threshold turns a slow start into a
+crash loop; an over-long one only delays the restart of a pod that is not
+taking traffic anyway.
+
+### Measuring your own
+
+Two metrics and a log line, published once per replica at the moment it
+reports ready:
+
+```promql
+# Cold start, per replica
+dco_webhook_initial_sync_duration_seconds
+
+# Targets that cold start compiled
+dco_webhook_initial_sync_targets
+
+# Per-target cost for your schemas
+dco_webhook_initial_sync_duration_seconds / dco_webhook_initial_sync_targets
+```
+
+```
+registry synced, marking replica ready  serverName=default targets=812 workers=8 elapsed=1.412s
+```
+
+Set `failureThreshold` from the slowest cold start you observe, with room to
+spare — it is a deadline on exactly the interval this metric measures. The
+plain HTTP endpoint (`/healthz`, `/readyz`, `/metrics`) comes up *before*
+the cache sync, so a replica that is still cold is visibly alive and
+scrapeable rather than indistinguishable from a hung process, and the
+`startupProbe` is polling a live listener rather than collecting
+connection-refused.
+
+### Reporting ready anyway after a timeout
+
+Considered and deliberately not implemented. A `--registry-ready-timeout`
+that let a replica join the Service with a partially-populated registry
+would have it answer ConversionReviews for targets it has not compiled yet
+with a failure — which the apiserver turns into a failed write on a
+resource that has nothing to do with the slow config. An unavailable replica
+degrades throughput; a half-loaded one corrupts the answer. The
+`startupProbe` is the supported lever, and the current fail-closed ordering
+stands.
 
 ## Registry copy-on-write at 100+ entries
 
@@ -275,17 +575,19 @@ native-CRD kind cluster, then **generates** a fleet of CRDs and drives real
 apiserver Get/List (which invoke the conversion webhook) in parallel:
 
 - Each CRD has **3 versions** (`v3` storage hub, `v1`/`v2` spokes).
-- Each spoke conversion has **3–10 strategies**, assigned so **all 29**
+- Each spoke conversion has **3–10 strategies**, assigned so **all 30**
   built-in strategies appear across the fleet (`2 × targets × strategies-max`
-  must be ≥ 29).
+  must be ≥ 30).
 - Instances are created at `v1`; Get/List run at both spoke versions so the
   apiserver converts hub↔spoke on every call.
 - Every CRD is in the `widgets` category: `kubectl get widgets -n dco-scale`
   lists the whole fleet. Re-apply with `--reset` if older CRDs lack the
   category.
 
-Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars — this is
-**not** in the CI e2e matrix; 100×100 and 100×1000 are local capacity runs.
+Defaults are a smoke size (4 CRDs × 5 CRs). Override with env vars. The
+100×100 and 100×1000 figures below are **local** capacity runs on a
+workstation; the envelope CI exercises unattended is the nightly one
+described under [The nightly scale run](#the-nightly-scale-run).
 
 ```console
 # smoke (default)
@@ -306,7 +608,7 @@ go run ./cmd/scalegen --reset --targets 20 --instances 20 --parallel 16 --qps 10
 
 Same workstation as the microbenchmarks (Intel Core Ultra 9 285HX, WSL2,
 kindest/node v1.35, one control-plane node). 100 CRDs × 3 versions, 3–10
-strategies per spoke (all 29 used across the fleet), 100 instances created
+strategies per spoke (all 30 used across the fleet), 100 instances created
 at `v1`, then parallel Get/List at both spokes (`PARALLEL=32`, QPS 100 /
 burst 200). Create of 10,000 objects took **1m38s**. Zero conversion errors.
 
@@ -328,7 +630,7 @@ the serving path.
 
 Latest local run, same workstation and kind topology as 100×100 (Intel Core
 Ultra 9 285HX, WSL2, kindest/node v1.35, one control-plane node). 100 CRDs
-× 3 versions, 3–10 strategies per spoke (all 29 used across the fleet),
+× 3 versions, 3–10 strategies per spoke (all 30 used across the fleet),
 1000 instances created at `v1` (**100,000** objects), then parallel
 Get/List at both spokes (`PARALLEL=60`, QPS 100 / burst 200). Create of
 100,000 objects took **16m38s**. Zero conversion errors.
@@ -349,6 +651,84 @@ is the bottleneck, not conversion. Re-run with
 `TARGETS=100 INSTANCES=1000 PARALLEL=60 make test-e2e-scale` after changing
 the serving path.
 
+### The nightly scale run
+
+`.github/workflows/scale.yml` runs `hack/e2e-scale.sh` on a schedule at
+**300 CRDs × 20 objects** (6,000 objects, 900 served versions), publishes
+`scale-result.json` as a 90-day artifact, renders it into the job summary,
+and compares it against the previous successful run.
+
+That is where the numbers in this section come from from now on. A local
+run on a workstation is still the right tool for investigating a change;
+the scheduled run is what notices one nobody was looking for.
+
+**Regression detection is relative, never absolute.** Absolute timings on a
+hosted runner vary by a factor of two between runs for reasons that have
+nothing to do with this code, so a threshold tight enough to catch a real
+regression would fire constantly. The check fails when a measurement
+exceeds a configurable multiple — 1.5× by default — of the *same
+measurement in the previous run at the same envelope, under the same report
+schema*. Below a noise floor (20 ms, 1 s, 32 MiB depending on the unit) a
+ratio is not treated as a signal: a p50 that moved from 2 ms to 4 ms is a
+2× regression by arithmetic and scheduler noise by every other reading.
+
+Two things are checked absolutely rather than as a trend, because for them
+zero is the only acceptable value: any Get/List error, and a run that
+issued no requests at all — which would otherwise report zero of everything
+and look like a pass.
+
+A failure names the measurement. The summary's comparison table marks the
+offending row **REGRESSED** and the job log repeats it as
+`FAIL: listV1 p50: 90.0 ms -> 190.0 ms (2.11x, threshold 1.50x)`, so the
+first question ("what got slower?") is answered without downloading
+anything.
+
+The artifact carries more than latency: `hack/scale-observe.py` merges in
+the webhook-server's **cold-start time**
+(`dco_webhook_initial_sync_duration_seconds`) and its **loaded working
+set** (from the kubelet Summary API), so the two numbers this page's memory
+and cold-start sections are about are trended by the same job. Both are
+gated against the previous run alongside the latency figures.
+
+The working set is a single sample taken once the replicas are Ready again
+after the restart, so it is the **steady state with the fleet loaded, not
+the transient peak** — the peak happens before readiness, where nothing is
+sampling. The peak-versus-steady table above is what measures that, from
+`make bench-mem`.
+
+#### Why 300 CRDs, and not the 1000 the proposal asked for
+
+The target in [the phase proposal](../proposals/next-phases.md) is 1000
+CRDs, on the reasoning that it is roughly the CRD count of a mature
+Crossplane cluster. The scheduled run does not reach it yet, and
+configuring an aspirational number that always fails would be worse than
+publishing a smaller one that always runs.
+
+A standard GitHub-hosted runner is 4 vCPU and 16 GiB, hosting a
+single-node kind cluster whose apiserver, etcd, the operator and the
+webhook-server replicas all share those four cores. Two terms make CRD
+count, rather than object count, the binding constraint there:
+
+- **Applying CRDs is apiserver-CPU-bound, not IO-bound.** Each `CustomResourceDefinition`
+  write makes the apiserver rebuild parts of its aggregated OpenAPI
+  document and re-establish the resource's handler. On the workstation runs
+  below that cost is invisible next to object creation; on four shared
+  cores it is not.
+- **Every CRD is watched three times over** — by the apiserver, by the
+  operator, and by each webhook-server replica — and each replica also
+  holds its schemas resident. At 1000 CRDs that is the informer footprint
+  the [sizing section](#worked-example) puts at several hundred MiB per
+  replica, against a 16 GiB box already running a control plane.
+
+300 × 20 completes in roughly 25 minutes end to end and has headroom
+against the job's 75-minute timeout, which is what "reliable" has to mean
+for something that runs unattended. The envelope is a `workflow_dispatch`
+input precisely so the ceiling can be probed upward with evidence rather
+than moved by assertion: run it at 500, then 750, and raise the default
+when a higher number has run clean several times. A run at a different
+envelope publishes its numbers and skips the comparison, so probing cannot
+produce a false regression.
+
 | Flag / env | Default | Meaning |
 |---|---|---|
 | `--targets` / `TARGETS` | 4 | Number of CRDs (each with 3 versions) |
@@ -363,6 +743,7 @@ the serving path.
 | `--list-repeats` / `LIST_REPEATS` | 3 | List calls per CRD per spoke version |
 | `--get-repeats` / `GET_REPEATS` | 1 | Get calls per instance per spoke version |
 | `--dry-run` | false | Print strategy coverage only (no cluster) |
+| `--result-json` / `RESULT_JSON` | unset | Write the run's measurements as JSON, and merge in the cluster-side observations |
 
 Native CRDs are used on purpose: they exercise the same `pkg/engine` +
 webhook-server path as XRDs without requiring Crossplane. Times above include

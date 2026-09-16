@@ -389,6 +389,29 @@ func convertParams(r ConversionRule) (engine.RuleParams, error) {
 			Renames: r.MapKeyRename.Renames,
 		}, nil
 
+	case StrategyBranchMap:
+		if r.BranchMap == nil {
+			return nil, errors.New("requires branchMap params")
+		}
+		branches := make([]engine.BranchMapping, 0, len(r.BranchMap.Branches))
+		for i, b := range r.BranchMap.Branches {
+			nested, err := convertRules(b.Rules)
+			if err != nil {
+				return nil, fmt.Errorf("branch %d (%s): %w", i, b.HubBranch, err)
+			}
+			branches = append(branches, engine.BranchMapping{
+				HubBranch: b.HubBranch, SpokeBranch: b.SpokeBranch,
+				HubDiscriminatorValue:   b.HubDiscriminatorValue,
+				SpokeDiscriminatorValue: b.SpokeDiscriminatorValue,
+				Rules:                   nested,
+			})
+		}
+		return engine.BranchMapParams{
+			HubPath: engine.ParsePath(r.BranchMap.HubPath), SpokePath: engine.ParsePath(r.BranchMap.SpokePath),
+			Discriminator: r.BranchMap.Discriminator,
+			Branches:      branches,
+		}, nil
+
 	case StrategyCEL:
 		if r.CEL == nil {
 			return nil, errors.New("requires cel params")

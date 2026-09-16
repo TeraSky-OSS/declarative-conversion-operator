@@ -23,6 +23,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -52,13 +53,18 @@ func TestManagerCacheOptions_ScopesEveryOwnedType(t *testing.T) {
 	opts := ManagerCacheOptions()
 
 	// Exactly the types ConversionWebhookServerReconciler.SetupWithManager
-	// passes to Owns(). Adding an Owns() without adding it here silently
-	// reintroduces a cluster-wide informer.
+	// passes to Owns() or Watches(), other than the operator's own CRDs.
+	// Adding one without adding it here silently reintroduces a
+	// cluster-wide informer.
 	want := []string{
 		fmt.Sprintf("%T", &appsv1.Deployment{}),
 		fmt.Sprintf("%T", &corev1.Service{}),
 		fmt.Sprintf("%T", &autoscalingv2.HorizontalPodAutoscaler{}),
 		fmt.Sprintf("%T", &policyv1.PodDisruptionBudget{}),
+		// Unscoped, this one is worse than the others: it would hold a
+		// Lease per node from kube-node-lease plus every leader election
+		// in the cluster.
+		fmt.Sprintf("%T", &coordinationv1.Lease{}),
 	}
 	got := map[string]bool{}
 	for obj, by := range opts.ByObject {

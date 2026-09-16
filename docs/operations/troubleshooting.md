@@ -35,6 +35,8 @@ uncovered or which rule is lossy while the config is still `Invalid`.
 | `Invalid` | `Validated=False`, message names the hub version | `spec.hubVersion` isn't the target's storage version (`referenceable: true` on an XRD, `storage: true` on a CRD). | Point `hubVersion` at the real storage version — it can't be an arbitrary spoke. |
 | `Invalid` | `XRDHealthy=False` / `CRDHealthy=False` | The target XRD/CRD doesn't exist, or its `Established` condition isn't `True`. | Check the name in `spec.targetXRD.name`/`spec.targetCRD.name`; `kubectl get crd <name>` and wait for `Established`. |
 | `Validated` | `WebhookServerReady=False` | The assigned `ConversionWebhookServer`'s Deployment isn't `Available`, its Service has no ready endpoints, or its certificate isn't ready. | Debug the `ConversionWebhookServer` first — see [below](#the-conversionwebhookserver-never-becomes-available). Nothing is patched onto the target until it is ready. |
+| `Validated` / `Stale` | `HandoverReady=False`, reason `HandoverPending` | The config has been **moved** to another `ConversionWebhookServer` (a changed `webhookServerRef`, or a sharding rebalance) and the destination has not yet reported that it can serve the target. This is the gate working: the target is still pointed at, and still served by, its current instance. | Usually resolves in seconds. If it does not, check `kubectl get conversionwebhookserver <destination> -o jsonpath='{.status.reportingReplicas}/{.status.servedTargets}'` — a `reportingReplicas` below `readyReplicas` means a ready replica has not published its Lease yet. |
+| `Validated` / `Stale` | `HandoverReady=False`, reason `HandoverUnknown` | A replica of the destination could not state what it serves (its target set exceeded the annotation cap, or the annotation would not decode). | The instance is holding an implausible number of targets, or something else is writing its Leases. Check `kubectl -n <ns> get leases -l conversion.terasky.com/webhook-server=<destination>`. |
 | `Failed` | — | An unexpected error, distinct from a validation failure. | Manager logs. This is the phase that should never be normal; it's worth an issue if the cause isn't obviously environmental. |
 
 **The target resource is never patched in any of these phases.** A config that
@@ -109,6 +111,35 @@ fixtures:
 ```console
 convctl test --xrd xrd.yaml --config config.yaml --live
 ```
+
+## `Applied`, but the last move was never verified
+
+`HandoverReady=True` with reason `HandoverUnverified` is not a failure: the
+move completed and the target is patched. What it says is that the
+destination published no served-target Leases *within the 30-second grace
+period*, so the operator could not confirm the instance was ready before
+repointing — it proceeded the way every release before this feature did.
+
+Seeing `HandoverReady=False` with reason `HandoverAwaitingReports` instead
+means that wait is still running. It resolves on its own within thirty
+seconds, either into a verified move or into the unverified one below.
+
+| Cause | Fix |
+|---|---|
+| The instance's replicas cannot write Leases in their namespace. | Almost always missing RBAC. An instance whose `spec.namespace` is not the release namespace needs the webhook-server Lease `Role` and `RoleBinding` created there — see [RBAC](../security/rbac.md). |
+| A fleet mid-upgrade, where the replicas predate the feature. | Nothing to do; it resolves once every replica is on a version that publishes. |
+| The replicas have no downward-API identity (`POD_NAME`/`POD_NAMESPACE`/`POD_UID`). | The operator sets these on every Deployment it reconciles. A Deployment that predates that is re-applied on the next reconcile of its `ConversionWebhookServer`. |
+
+```console
+kubectl -n <instance-namespace> get leases -l conversion.terasky.com/webhook-server=<instance>
+kubectl get conversionwebhookserver <instance> -o jsonpath='{.status.reportingReplicas}'
+```
+
+Until it is fixed, a move onto that instance is unverified — which is the
+pre-existing behaviour, not a new hazard, but it is the one window in which
+a rebalance could briefly fail conversions. The grace period narrows that
+window to fleets that genuinely cannot publish, rather than every fleet
+whose replicas had not got round to it.
 
 ## `Applied` but not `Propagated`
 
