@@ -102,6 +102,50 @@ jobs:
           convctl version
           convctl validate --help >/dev/null
 
+  # The `binary` input had no coverage at all, and shipped broken: the step
+  # chmod'd the symlink it had just created, chmod dereferenced to the
+  # target, and the whole job died with "Operation not permitted" whenever
+  # that target was not owned by the job's user. Root ownership is not an
+  # edge case for this input — a binary vendored into a container image and
+  # copied in by an init container is the normal self-hosted-runner setup,
+  # which is exactly what `binary` exists to serve.
+  supplied-binary:
+    name: setup-convctl accepts a root-owned supplied binary
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Owned by root, mode 0755, outside the workspace — the shape an
+      # init container leaves behind.
+      - name: Vendor a root-owned convctl
+        run: |
+          set -euo pipefail
+          go build -o /tmp/convctl ./cmd/convctl
+          sudo install -d -o root -g root -m 0755 /opt/convctl
+          sudo install -o root -g root -m 0755 /tmp/convctl /opt/convctl/convctl
+          test "$(stat -c '%U' /opt/convctl/convctl)" = root
+
+      - name: Install from the supplied binary
+        id: supplied
+        uses: ./.github/actions/setup-convctl
+        with:
+          binary: /opt/convctl/convctl
+
+      - name: It is on PATH as `convctl` and reports a version
+        run: |
+          set -euo pipefail
+          test -n "${{ steps.supplied.outputs.version }}"
+          command -v convctl
+          convctl version
+
   # actions/cache saves in the job's post step, so a second install inside
   # one job can never hit it. The cached path is a LATER job or run — which
   # is also the one that runs in practice, and the one that silently rots.

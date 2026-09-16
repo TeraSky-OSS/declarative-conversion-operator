@@ -78,9 +78,21 @@ runs:
         name=convctl
         case "$RUNNER_OS" in Windows) name=convctl.exe ;; esac
         rm -f "$dir/$name"
-        ln -s "$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" "$dir/$name" 2>/dev/null \
-          || cp "$BINARY" "$dir/$name"
-        chmod +x "$dir/$name"
+        if ln -s "$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" "$dir/$name" 2>/dev/null; then
+          # Deliberately no chmod on the symlink. chmod dereferences, so it
+          # would try to change the mode of the TARGET — and fail with
+          # "Operation not permitted" whenever that target is not owned by
+          # the job's user. A binary vendored into a container image and
+          # copied in as root is the normal case for a self-hosted runner,
+          # so this failed for exactly the setup the binary input exists to
+          # serve. Nothing needs doing either way: the guard above already
+          # established that the target is executable, and the target's
+          # mode is what runs.
+          :
+        else
+          cp "$BINARY" "$dir/$name"
+          chmod +x "$dir/$name"
+        fi
 
         echo "$dir" >> "$GITHUB_PATH"
         {
