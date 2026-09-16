@@ -198,6 +198,20 @@ of 0.45 s — which is the trade a memory limit is asking for. Set
 `GOMEMLIMIT` yourself in `spec.extraEnv` to override the derived value; the
 operator leaves an explicit one alone.
 
+!!! warning "`GOMEMLIMIT` is a soft target, not a cap"
+    It makes the collector work harder as the heap approaches the number —
+    it cannot free memory that is still live, and it does not cover
+    allocations outside the Go runtime. Against a **transient** peak, which
+    is what the table above measures, that is exactly the right lever. Against
+    a **live** working set larger than the limit it does nothing except
+    collect continuously, and the container is OOM-killed anyway, now with a
+    CPU burn in front of it.
+
+    So `GOMEMLIMIT` is not a substitute for sizing the limit. Size it for the
+    live set — registry plus informer cache, the two terms below — and leave
+    headroom on top; `GOMEMLIMIT` is what stops the cold-start transient from
+    needing headroom of its own.
+
 #### Worked example
 
 A cluster with **1000 targets averaging 200 leaves per version**, on the
@@ -211,16 +225,21 @@ chart's default 256 MiB limit:
 
 So: **set `cacheSelector`, or raise the limit to ~1 GiB.** The registry is
 not the problem at any plausible scale; the informer cache is, and it is the
-one term this operator can only narrow, never shrink. `GOMEMLIMIT` then
-keeps the cold start inside whatever limit you chose rather than spiking
-past it.
+one term this operator can only narrow, never shrink.
+
+Note which term `GOMEMLIMIT` can and cannot help with here, because this
+example is the case that makes the distinction concrete: the ~400 MiB
+informer cache is **live**, so no GC setting brings it under a 256 MiB
+limit — only `cacheSelector` or a bigger limit will. What `GOMEMLIMIT` does
+is stop the cold-start transient from adding several hundred MiB on top of
+whatever limit you land on.
 
 The chart's 256 MiB default was reviewed against these numbers and left
 alone. It is right for the cluster it is a default for — a few dozen
 targets, a few hundred CRDs — and raising it would silently raise the
 scheduling floor for every install to serve the minority that need it. What
-was wrong was that nothing made the Go runtime respect it, which is what
-`GOMEMLIMIT` fixes.
+was wrong was that the Go runtime had no idea the limit existed, so the
+cold-start transient was sized by `GOGC` alone. `GOMEMLIMIT` tells it.
 
 ### How these numbers were taken
 
