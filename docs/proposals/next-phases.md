@@ -1065,6 +1065,54 @@ apiserver's write path".
 
 ## Phase 16 — Engine and strategy expansion
 
+> **Shipped.** All three deliverables landed, and two of them came out
+> differently from the way this section describes them:
+>
+> - **The `$ref`/`allOf` item was reframed by its own investigation, and it
+>   turned out to be a correctness fix rather than a capability.** Before
+>   designing anything, the work asserted what apiextensions actually
+>   accepts — against the apiserver's own validator, in
+>   `pkg/engine/structural_facts_test.go`, so the engine's model cannot
+>   drift from what a cluster accepts. One of the five facts decides
+>   everything: **every property named inside a junctor must also be
+>   declared outside it.** A junctor in a legal CRD can therefore only
+>   *constrain* fields the engine already sees; it can never introduce one.
+>   So flattening through an `allOf` is not a discovery, and marking a node
+>   opaque because it carried one was not incomplete — it was wrong. A node
+>   with `allOf: [{required: [bucket]}]` had its entire field set disappear
+>   because of a constraint. `$ref` is reframed too: it is rejected outright
+>   in a CRD, so resolving it serves only the offline path, where an
+>   unresolvable reference is an authoring mistake that deserves a message
+>   naming the reference rather than an opaque leaf.
+> - **The same fact decided how `branchMap` works.** Because a branch is an
+>   ordinary declared, addressable property, the active branch is identified
+>   by *which branch property is present* rather than by validating the
+>   object against each branch schema — structural matching would put a JSON
+>   Schema validator on the apiserver's admission path to learn what a map
+>   lookup already knows. It also forced the un-hiding: once a branch's
+>   leaves are visible, a complete mapping has to claim all of them, so
+>   `oneOf`/`anyOf` over declared properties stopped being opaque. The
+>   int-or-string shape, which has no type of its own, still is.
+> - **Spoke-to-spoke closed as a documented no, which this section already
+>   expected.** What it did not expect is how flat the answer is. Swept from
+>   0 to 1000 `forEach` elements, the second hop costs ~2× at *every* size —
+>   exactly 2× the allocations and 2× the bytes — because it does the same
+>   work as the first over an object of the same shape. There is no fixed
+>   overhead to amortise and nothing super-linear, so the answer does not
+>   vary with workload. At realistic object sizes that is 0.6–4 µs inside a
+>   request that has already paid milliseconds of apiserver overhead. The
+>   2.3× quoted below was one point on that curve, not a constant.
+>
+> Two things were added that this section does not mention. A `route` label
+> on `dco_webhook_conversion_objects_total`, because the acceptance criteria
+> asked to measure real spoke-to-spoke frequency and the existing labels
+> cannot: whether a version pair is spoke-to-spoke depends on which version
+> is the hub, which is a per-target fact rather than a label. And a fix it
+> surfaced — `dco_webhook_lossy_conversion_total` used a hub-or-nothing test,
+> so a spoke-to-spoke conversion, which can lose something on each of its two
+> hops, counted neither. The traffic class carrying the most loss was
+> reporting none.
+
 - ~~**Required-field satisfaction analysis**~~ — **shipped in 12.3**, where it
   belonged: it converts a production admission failure into a compile-time
   error, which is the same job as the rest of that deliverable.
