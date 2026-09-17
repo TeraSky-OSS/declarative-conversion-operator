@@ -60,10 +60,20 @@ homebrew_casks:
     repository:
       owner: terasky-oss
       name: homebrew-tap
-      # index rather than .Env.X: the dotted form errors when the variable
-      # is unset, which would fail a release because a tap repository does
-      # not exist yet. Unset means skip, below.
-      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+      # The dotted form is not a style choice: GoReleaser validates this
+      # field with a strict regex and rejects anything else with
+      # "expected {{ .Env.VAR_NAME }} only". `index .Env "..."` parses as
+      # a template but fails that check at publish time — which only bites
+      # once skip_upload is false, so it stayed hidden while the tokens
+      # were unset.
+      #
+      # The reason index was used — that the dotted form errors on an
+      # unset variable — does not apply here. The workflow always defines
+      # HOMEBREW_TAP_TOKEN, to the empty string when the secret is absent,
+      # so the key is present in .Env either way and skip_upload below is
+      # what decides whether anything is pushed. Set it when running
+      # GoReleaser by hand.
+      token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
       branch: main
     homepage: https://terasky-oss.github.io/declarative-conversion-operator/
     description: CLI for the declarative conversion operator
@@ -82,7 +92,8 @@ scoops:
     repository:
       owner: terasky-oss
       name: scoop-bucket
-      token: '{{ index .Env "SCOOP_BUCKET_TOKEN" }}'
+      # Dotted form required — see the cask above.
+      token: '{{ .Env.SCOOP_BUCKET_TOKEN }}'
     homepage: https://terasky-oss.github.io/declarative-conversion-operator/
     description: CLI for the declarative conversion operator
     license: Apache-2.0
