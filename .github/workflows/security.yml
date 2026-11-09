@@ -107,7 +107,7 @@ jobs:
         # resolve — which this job did, silently, on every run on main,
         # because Scorecard skips on pull requests and so was never red
         # where anyone was looking.
-        uses: ossf/scorecard-action@v2.4.4
+        uses: ossf/scorecard-action@v2.5.0
         with:
           results_file: scorecard.sarif
           results_format: sarif
